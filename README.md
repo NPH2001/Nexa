@@ -5,9 +5,10 @@ Trợ lý AI chạy trên máy tính cá nhân, tích hợp LiteLLM và MCP Atla
 Triển khai theo `Nexa_Tai_lieu_thiet_ke_va_trien_khai_MVP_v1.1.docx`. Comment trong mã nguồn
 tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chiếu được hai chiều.
 
-> **Đọc trước khi làm gì khác:** [`docs/OPEN-QUESTIONS.md`](docs/OPEN-QUESTIONS.md) — mọi giả
-> định đã dùng để viết code, và những gì còn phải chốt. Có 6 mục 🔴 BLOCKER cần trả lời trước
-> khi chạy với hạ tầng thật.
+> **Đọc trước khi làm gì khác:** [`docs/ISSUES.md`](docs/ISSUES.md) — sổ đăng ký mọi vấn đề còn
+> tồn đọng, kèm ai giải quyết được. **7 mục chặn phát hành**, không mục nào là việc lập trình.
+>
+> Chi tiết từng giả định đã dùng để viết code: [`docs/OPEN-QUESTIONS.md`](docs/OPEN-QUESTIONS.md).
 >
 > **Sai lệch so với thiết kế:** Nexa có kết nối OpenAI trực tiếp, trái với §6 (*"Nexa không kết
 > nối trực tiếp provider"*). Đã được chấp nhận 2026-08-01 nhưng **cần ATTT duyệt trước khi phát
@@ -71,7 +72,8 @@ nexa/
 │  ├─ document-processor/      TXT/PDF/DOCX, worker, chunking (EPIC-06)
 │  └─ agent-runtime/           Vòng lặp tool, confirmation guard, operation tracker (EPIC-08)
 ├─ docs/
-│  ├─ OPEN-QUESTIONS.md        ⚠️ Câu hỏi cần review
+│  ├─ ISSUES.md                ⚠️ Sổ đăng ký vấn đề còn tồn đọng — đọc đầu tiên
+│  ├─ OPEN-QUESTIONS.md        Chi tiết từng giả định + chỗ cần sửa nếu quyết khác
 │  ├─ RUNBOOK.md               Điều tra sự cố, đối chiếu request_id (§15.2)
 │  ├─ design-doc-v1.1.md       Bản trích xuất tài liệu thiết kế (grep/diff được)
 │  ├─ architecture/adr/        Quyết định kiến trúc

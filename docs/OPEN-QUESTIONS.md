@@ -6,6 +6,9 @@
 >
 > Cập nhật lần cuối: 2026-08-01 (lần 3 — sau khi thêm kết nối OpenAI trực tiếp)
 
+> Muốn xem **tổng quan còn gì chưa xong và ai giải quyết được** thì đọc
+> [`ISSUES.md`](ISSUES.md). File này là chi tiết từng mục.
+
 ## Cách đọc
 
 | Nhãn | Ý nghĩa |
@@ -53,7 +56,7 @@ Hiện tại tôi **mã hóa cả `conversations.title`** và tên file đính k
 
 ---
 
-### A3. 🔴 Atlassian PAT: 1 hay 2? Scope nào? Cùng domain không?
+### A3. 🟠 Atlassian PAT: 1 hay 2? Scope nào? Cùng domain không?
 
 **Câu hỏi:** Jira và Confluence có dùng chung tài khoản/PAT không? PAT cần scope gì tối thiểu?
 
@@ -64,6 +67,10 @@ Hiện tại tôi **mã hóa cả `conversations.title`** và tên file đính k
 
 **Chưa làm được:** không validate scope của PAT vì Atlassian Server/DC PAT **không expose scope**
 qua API. Nexa chỉ phát hiện thiếu quyền khi hệ thống đích trả 403 → map thành `ATLASSIAN_AUTH_FAILED`.
+
+**Vì sao hạ từ 🔴 xuống 🟠:** mục này không chặn phát hành một cách độc lập — code hỗ trợ cả hai
+phương án (dùng chung một PAT thì người dùng nhập cùng giá trị hai lần). Nó là **câu hỏi con của
+C2** (test với Atlassian thật): trả lời được A3 là điều kiện để làm C2, và C2 mới là mục chặn.
 
 ---
 
@@ -342,10 +349,10 @@ TASKLIST T-02-5.
 Đã code phát hiện heuristic (trang có < 20 ký tự text ⇒ nghi là scan) và cảnh báo. Chưa có mẫu PDF
 scan nội bộ để hiệu chỉnh ngưỡng.
 
-### C5. 🟡 Chưa có `nexa-icon.ico`
+### C5. 🟢 Icon — xem E8
 
-`electron-builder.yml` trỏ tới `apps/desktop/resources/icon.ico` nhưng tôi không tạo được file icon
-nhị phân. Cần design cấp file. Build sẽ dùng icon mặc định của Electron cho tới lúc đó.
+Đã có bản tạm sinh bằng script. (Mục này trùng E8; giữ lại để các tham chiếu cũ tới "C5" không
+bị treo.)
 
 ---
 
@@ -483,15 +490,27 @@ ra khoảng 8 tuần một lần.
 
 Cần một chính sách nâng cấp Electron (ai theo dõi, bao lâu nâng một lần). Chưa có.
 
-### E8. 🟡 Chưa có file icon
+### E8. 🟢 Icon — đã có bản TẠM
 
-`electron-builder.yml` trỏ tới `apps/desktop/resources/icon.ico` nhưng file đó chưa tồn tại —
-tôi không tạo được file nhị phân. Build sẽ dùng icon mặc định của Electron. Cần design cấp file.
+`scripts/generate-placeholder-icon.mjs` sinh `icon.ico` hợp lệ (7 kích thước 16→256, PNG nhúng
+trong vỏ ICO). Đủ để đóng gói chạy được.
 
-### E9. 🟡 Repo chưa được khởi tạo git
+**Đây KHÔNG phải nhận diện thương hiệu** — chỉ là chữ "N" trên nền tối. Khi design cấp file thật
+thì xoá script và commit file của họ.
 
-Tôi không chạy `git init` hay tạo commit nào. `.gitignore` và `.github/workflows/ci.yml` đã sẵn
-sàng. Việc khởi tạo repo, đặt branch protection và bật gitleaks là việc của bạn.
+### E9. 🟠 Git đã có — branch protection và CODEOWNERS thì chưa
+
+Repo đã được khởi tạo và push (`git@github.com:NPH2001/Nexa.git`).
+
+**Còn lại, và đều là việc trên GitHub chứ không phải trong code:**
+
+1. **`.github/CODEOWNERS` tham chiếu team CHƯA TỒN TẠI** (`@nexa/security-team`, `@nexa/ops-team`).
+   Bật "Require review from Code Owners" trước khi tạo team thật sẽ **kẹt mọi PR**.
+2. Branch protection trên `main` — yêu cầu PR, yêu cầu `quality` + `security-scan` xanh, cấm
+   force-push. Xem `CONTRIBUTING.md`.
+3. Bật gitleaks (job đã có trong CI, chỉ cần repo cho phép chạy).
+4. **`TASKLIST.md` đang bị `.gitignore` loại ra** nhưng 6 tài liệu đã commit tham chiếu tới các
+   mã `T-xx-yy` trong đó. Người clone về không tra được. Cần quyết: bỏ ignore, hay gỡ tham chiếu.
 
 
 ---

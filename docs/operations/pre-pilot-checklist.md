@@ -2,6 +2,8 @@
 
 Hiện thực T-13-16. Mười mục theo đúng Phụ lục C của tài liệu thiết kế, kèm trạng thái thật.
 
+> Tổng quan mọi vấn đề còn tồn đọng: [`../ISSUES.md`](../ISSUES.md).
+
 **Trạng thái tổng: 3/10 đạt.** Bảy mục còn lại cần quyết định của tổ chức, máy Windows, hoặc
 hệ thống thật — không phải việc viết thêm mã.
 
