@@ -13,12 +13,21 @@ tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chi�
 
 | Hạng mục | Trạng thái |
 |---|---|
-| Test | 273 pass |
+| Test | 289 pass (gồm test hiệu năng §17.1) |
 | Lint · typecheck | sạch |
 | Build (main/preload/renderer) | chạy được |
-| Chạy thử Electron GUI | **chưa** — môi trường phát triển không có display server (OPEN-QUESTIONS C1) |
+| Chạy app thật | ✅ trên Linux — `window-ready` sau 304 ms |
+| Xác minh DPAPI trên Windows | **chưa** (OPEN-QUESTIONS C1) |
 | Kết nối LiteLLM / Jira / Confluence thật | **chưa** — mới chạy với mock server (C2) |
 | Ký số bộ cài | **chưa có certificate** (C3) |
+
+Startup log của lần chạy thật:
+
+```
+app-starting → master-key-created → local-db-opened (node:sqlite)
+→ migration-applied v1 → profile-created → ipc-registered (33 channel)
+→ window-ready (304 ms)
+```
 
 ## Bắt đầu
 
@@ -30,8 +39,9 @@ pnpm dev        # chạy app ở chế độ phát triển
 pnpm package:win
 ```
 
-Yêu cầu Node ≥ 20.19. Test dùng `node:sqlite` nên cần Node ≥ 22.5 để chạy đầy đủ
-(xem [ADR 0003](docs/architecture/adr/0003-sqlite-driver-abstraction.md)).
+Yêu cầu **Node ≥ 22.5** (dùng `node:sqlite`). Electron 43 mang sẵn Node 24, nên bộ cài không
+phụ thuộc bắt buộc vào native module — `better-sqlite3` là `optionalDependency`, chỉ để tăng
+hiệu năng. Xem [ADR 0003](docs/architecture/adr/0003-sqlite-driver-abstraction.md).
 
 ## Cấu trúc
 
@@ -54,7 +64,10 @@ nexa/
 │  └─ agent-runtime/           Vòng lặp tool, confirmation guard, operation tracker (EPIC-08)
 ├─ docs/
 │  ├─ OPEN-QUESTIONS.md        ⚠️ Câu hỏi cần review
-│  └─ architecture/adr/        Quyết định kiến trúc
+│  ├─ RUNBOOK.md               Điều tra sự cố, đối chiếu request_id (§15.2)
+│  ├─ architecture/adr/        Quyết định kiến trúc
+│  ├─ integration/             Hợp đồng LiteLLM · MCP · IPC · update (§9)
+│  └─ security/threat-model.md Threat model §11.3 + trường cấm log
 ├─ tests/
 │  ├─ fixtures/                Mock MCP server
 │  └─ support/                 Factory dùng chung cho test
@@ -84,6 +97,7 @@ nexa/
 | `pnpm verify` | lint + typecheck + test |
 | `pnpm test` | test |
 | `pnpm test -- packages/agent-runtime` | test một package |
+| `pnpm test -- tests/performance.test.ts` | test hiệu năng, in số đo thật |
 | `pnpm typecheck` | `tsc --noEmit` toàn repo |
 | `pnpm dev` | chạy app |
 | `pnpm build` | build main/preload/renderer |
@@ -103,9 +117,7 @@ NEXA_MCP_COMMAND=uvx NEXA_MCP_ARGS="mcp-atlassian" pnpm dev
 
 ## Điều tra sự cố
 
-Mỗi lỗi đều kèm `request_id`; mỗi thao tác write kèm `operation_id`. Đối chiếu ba nguồn theo
-§15.2:
+Xem [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
-1. **Log cục bộ** — Cài đặt → Chẩn đoán → Xuất gói chẩn đoán (đã che thông tin nhạy cảm)
-2. **LiteLLM** — usage log, tra theo `request_id`
-3. **Jira/Confluence** — activity/audit, tra theo tài khoản người dùng và thời điểm
+Tóm tắt: mỗi lỗi kèm `request_id`, mỗi thao tác write kèm `operation_id`. Ghép ba nguồn — log
+cục bộ (Cài đặt → Chẩn đoán → Xuất gói chẩn đoán), usage log LiteLLM, activity/audit Atlassian.

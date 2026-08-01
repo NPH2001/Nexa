@@ -21,6 +21,11 @@ const nodeRequire = createRequire(import.meta.url)
  *
  * Chỉ dùng tham số vị trí `?`. Không dùng named parameter, không truyền boolean hay `undefined`
  * — hai driver xử lý khác nhau ở đúng chỗ đó, nên ta chuẩn hoá về `0/1` và `null` ở tầng repository.
+ *
+ * `better-sqlite3` là **optionalDependency**: Electron 43 chạy Node 24 và có sẵn `node:sqlite`,
+ * nên app vẫn chạy đầy đủ khi native module không build được. Ưu tiên better-sqlite3 khi có
+ * (nhanh hơn), rơi xuống node:sqlite khi không — và ghi lại driver nào được dùng vào log
+ * khởi động để biết mình đang chạy trên cái nào.
  */
 
 export type SqlParam = string | number | bigint | Buffer | Uint8Array | null

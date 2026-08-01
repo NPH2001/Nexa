@@ -149,6 +149,7 @@ export const IPC_SCHEMAS = {
   'tool:approve': toolApproveSchema,
   'tool:cancel': toolCancelSchema,
   'tool:lookupUncertain': toolLookupSchema,
+  'tool:listUncertain': emptySchema,
   'tool:list': emptySchema,
 
   'settings:get': emptySchema,

@@ -34,6 +34,7 @@ export const IPC_CHANNEL_NAMES = [
   'tool:approve',
   'tool:cancel',
   'tool:lookupUncertain',
+  'tool:listUncertain',
   'tool:list',
 
   'settings:get',

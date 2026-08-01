@@ -13,6 +13,7 @@ import { ChatView } from './components/ChatView.js'
 import { SettingsView } from './components/SettingsView.js'
 import { ConfirmationDialog } from './components/ConfirmationDialog.js'
 import { Toasts, type Toast } from './components/Toasts.js'
+import { UncertainBanner } from './components/UncertainBanner.js'
 
 export type View = 'chat' | 'settings'
 
@@ -298,6 +299,17 @@ export function App(): React.JSX.Element {
       />
 
       <main className="main">
+        {/* §16: thao tác chưa rõ kết quả phải hiện ở chỗ người dùng nhìn thấy ngay, không
+            chỉ nằm trong bong bóng tin nhắn cũ. */}
+        <UncertainBanner
+          onOpenConversation={(id) => {
+            setView('chat')
+            void selectConversation(id)
+          }}
+          onNotice={(message) => pushToast({ kind: 'info', title: message })}
+          onError={reportError}
+        />
+
         {view === 'chat' ? (
           <ChatView
             conversation={conversations.find((c) => c.id === activeId) ?? null}

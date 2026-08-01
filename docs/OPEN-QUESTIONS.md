@@ -4,7 +4,7 @@
 > từ bên ngoài (admin LiteLLM, admin Atlassian, ATTT).
 > Mỗi mục có: câu hỏi → **giả định tôi đã dùng để code** → chỗ cần sửa nếu bạn quyết khác.
 >
-> Cập nhật lần cuối: 2026-08-01
+> Cập nhật lần cuối: 2026-08-01 (lần 2 — sau khi chạy thử app thật)
 
 ## Cách đọc
 
@@ -290,16 +290,32 @@ chỗ sửa là `packages/llm-client/src/sse-parser.ts`.
 
 ## C. Việc tôi KHÔNG làm được trong môi trường này
 
-### C1. 🔴 Chưa chạy thử Electron GUI
+### C1. 🟠 Đã chạy thử trên Linux — Windows vẫn chưa
 
-Môi trường dev là Linux headless, không có display server. Tôi đã:
-- build được main/preload/renderer bundle,
-- chạy toàn bộ logic nghiệp vụ qua unit + integration test (chạy trong Node, không cần Electron),
-- **nhưng chưa mở được cửa sổ app thật.**
+**Cập nhật:** môi trường có sẵn X11, nên tôi ĐÃ chạy được app thật. Kết quả:
 
-`packages/security` có 2 backend: `SafeStorageBackend` (Electron thật) và `DevFileBackend` (dev/test).
-Đường đi qua `safeStorage` **chưa được kiểm chứng bằng tay trên Windows**. Đây là việc đầu tiên
-cần làm khi có máy Windows.
+```
+app-starting
+master-key-created        (safeStorage thật: gnome_libsecret)
+local-db-opened           driver=node:sqlite
+migration-applied         version=1
+profile-created
+ipc-registered            channelCount=33
+window-ready              durationMs=304
+```
+
+Nghĩa là đường đi qua `safeStorage` **đã được kiểm chứng** — nhưng trên keyring của Linux, không
+phải DPAPI của Windows. Việc còn lại trên máy Windows:
+
+1. Xác nhận `safeStorage` chọn đúng DPAPI và credential mở lại được sau khi khởi động lại máy.
+2. Xác nhận credential KHÔNG mở được từ tài khoản Windows khác (đó là điểm mấu chốt của §8.2).
+3. Đo RAM và thời gian khởi động thật để so với §12.1.
+4. Kiểm thử giao diện bằng tay — tôi chưa tương tác được với UI, chỉ xác nhận nó render.
+
+**Ba lỗi thật được tìm ra nhờ lần chạy này** (đều đã sửa):
+- `showFatalError` hiện dialog mà không ghi log → app không mở được thì không có dấu vết nào.
+- Redactor nuốt cả đường dẫn file → log chẩn đoán thành dãy `[REDACTED]` vô dụng.
+- Master key được tạo lười → secure storage hỏng chỉ lộ ra khi người dùng gửi tin nhắn đầu tiên.
 
 ### C2. 🔴 Chưa test với LiteLLM / Jira / Confluence thật
 
@@ -362,19 +378,27 @@ dựng hệ thống i18n. Nếu sau này cần tiếng Anh thì phải refactor.
 Những mục dưới đây không có trong tài liệu và cũng không phải câu hỏi mở lúc lập kế hoạch.
 Chúng xuất hiện khi viết code, và tôi đã tự quyết định.
 
-### E1. 🟠 Hai driver SQLite khác nhau giữa test và bản phát hành
+### E1. 🟢 Hai driver SQLite — đã giải quyết bằng cách nâng Electron
 
 `better-sqlite3` là native module, cần toolchain C++ hoặc prebuild khớp phiên bản. Máy phát
 triển không có toolchain và Node 24 chưa có prebuild, nên **toàn bộ test tầng lưu trữ sẽ không
 chạy được** — mất luôn khả năng kiểm chứng phần mã hoá và migration.
 
-**Giải pháp đã dùng:** tách một interface driver mỏng, production dùng `better-sqlite3`,
-test dùng `node:sqlite` (có sẵn từ Node 22.5+). Chi tiết ở
-[ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md).
+**Giải pháp ban đầu:** tách interface driver, production dùng `better-sqlite3`, test dùng
+`node:sqlite`. Rủi ro: hai driver khác nhau giữa test và production.
 
-**Rủi ro còn lại:** test chạy driver A, production chạy driver B. Giảm thiểu bằng job
-`build-windows` trong CI — nó rebuild native module cho Electron rồi chạy lại toàn bộ test
-với driver thật. **Job đó chưa từng chạy** vì chưa có repo trên GitHub.
+**Cập nhật sau khi chạy thử:** Electron 43 mang Node 24.18, và Node 24 có sẵn `node:sqlite`
+(đã bỏ cờ experimental). Vì vậy:
+
+- nâng lên **Electron 43**
+- `better-sqlite3` chuyển thành **optionalDependency** — app chạy đầy đủ khi không có nó
+- bước rebuild native trong CI thành `continue-on-error`
+
+Rủi ro "test driver A, chạy driver B" gần như biến mất, và bộ cài không còn phụ thuộc bắt buộc
+vào native module. Chi tiết ở [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md).
+
+**Câu hỏi còn lại cho bạn:** có chấp nhận `node:sqlite` (Node đánh dấu experimental) làm driver
+chính không, hay muốn bắt buộc build `better-sqlite3` trong pipeline phát hành?
 
 ### E2. 🟡 `jira.create_issue` được xếp mức WRITE_LOW
 
@@ -422,13 +446,19 @@ Hệ quả cần biết: nếu sau này ai đó muốn nhúng ảnh từ Conflue
 trực tiếp, việc đó **sẽ không chạy** và phải đi đường IPC. Đây là chủ ý (§11.3 "Renderer bị XSS
 và đọc token"), nhưng nó là một ràng buộc thật lên các tính năng sau này.
 
-### E7. 🟡 Chưa có màn hình quản lý thao tác `uncertain` tập trung
+### E7. 🟢 Màn hình quản lý thao tác `uncertain` — đã bổ sung
 
-Hiện nút "Kiểm tra kết quả" chỉ xuất hiện trong bong bóng tin nhắn chứa tool call đó. Nếu người
-dùng đóng app rồi mở lại, họ phải tự tìm đúng hội thoại.
+Đã thêm channel `tool:listUncertain` và banner ở đầu màn hình chính, liệt kê mọi thao tác write
+còn treo. Danh sách đọc thẳng từ bảng `tool_calls` nên sống sót qua các lần khởi động lại —
+`OperationTracker` chỉ sống trong RAM.
 
-`ConversationRepository.listUncertainOperations()` đã có sẵn để dựng một màn hình tập trung,
-nhưng UI chưa dùng. Đề nghị bổ sung trước pilot.
+### E10. 🟠 Electron 43 là bản rất mới
+
+Nâng từ 33 lên 43 để có `node:sqlite`. Electron chỉ hỗ trợ 3 major gần nhất, nên bản mới là
+lựa chọn đúng về vòng đời bảo mật — nhưng nó cũng nghĩa là ta đang ở sát mép, và bản major mới
+ra khoảng 8 tuần một lần.
+
+Cần một chính sách nâng cấp Electron (ai theo dõi, bao lâu nâng một lần). Chưa có.
 
 ### E8. 🟡 Chưa có file icon
 

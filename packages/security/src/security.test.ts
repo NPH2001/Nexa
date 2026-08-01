@@ -276,6 +276,37 @@ describe('SafeStorageBackend', () => {
     expect(new SafeStorageBackend(fakeSafeStorage(false), dir).isAvailable()).toBe(false)
   })
 
+  it('coi backend basic_text của Linux là KHÔNG đạt chuẩn dù isEncryptionAvailable() trả true', () => {
+    // Cái bẫy thật: không có keyring thì Electron vẫn báo "có mã hoá", nhưng đó là khoá cố định.
+    const insecure = { ...fakeSafeStorage(), getSelectedStorageBackend: () => 'basic_text' }
+    const backend = new SafeStorageBackend(insecure, dir)
+    expect(backend.isAvailable()).toBe(true)
+    expect(backend.productionGrade).toBe(false)
+    expect(backend.name).toContain('basic_text')
+  })
+
+  it('chấp nhận keyring thật của Linux', () => {
+    const secure = { ...fakeSafeStorage(), getSelectedStorageBackend: () => 'gnome_libsecret' }
+    expect(new SafeStorageBackend(secure, dir).productionGrade).toBe(true)
+  })
+
+  it('coi là đạt chuẩn khi không có API chọn backend (Windows/macOS)', () => {
+    expect(new SafeStorageBackend(fakeSafeStorage(), dir).productionGrade).toBe(true)
+  })
+
+  it('bản build phát hành từ chối khởi động trên backend basic_text', () => {
+    const { logger } = makeLogger()
+    const insecure = { ...fakeSafeStorage(), getSelectedStorageBackend: () => 'basic_text' }
+    expect(
+      () =>
+        new SecurityService({
+          backend: new SafeStorageBackend(insecure, dir),
+          logger,
+          requireProductionGrade: true,
+        }),
+    ).toThrow(expect.objectContaining({ code: ERROR_CODES.SECRET_UNAVAILABLE }))
+  })
+
   it('xoá sạch được', () => {
     const backend = new SafeStorageBackend(fakeSafeStorage(), dir)
     backend.set('a', 'v-0123456789')

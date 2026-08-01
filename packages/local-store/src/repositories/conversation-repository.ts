@@ -57,6 +57,11 @@ export interface RecordToolCallInput {
   readonly payloadHash?: string
 }
 
+/** Một tool call còn treo, kèm hội thoại chứa nó. */
+export interface UncertainOperation extends ToolCallRecord {
+  readonly conversationId: string
+}
+
 export interface UpdateToolCallInput {
   readonly approvalStatus?: ApprovalStatus
   readonly operationStatus?: OperationStatus
@@ -373,18 +378,26 @@ export class ConversationRepository {
     return row === undefined ? null : this.mapToolCall(row)
   }
 
-  /** Thao tác write còn treo từ phiên trước — hiện lại cho người dùng lúc khởi động (§16). */
-  listUncertainOperations(profileId: string): ToolCallRecord[] {
+  /**
+   * Thao tác write còn treo từ phiên trước — hiện lại cho người dùng lúc khởi động (§16).
+   *
+   * Trả kèm `conversationId` để UI mở được đúng hội thoại. `ToolCallRecord` chỉ có `messageId`,
+   * và đi từ message về conversation ở phía renderer sẽ tốn thêm một vòng IPC cho mỗi bản ghi.
+   */
+  listUncertainOperations(profileId: string): UncertainOperation[] {
     return this.store.handle
       .prepare(
-        `SELECT tc.* FROM tool_calls tc
+        `SELECT tc.*, m.conversation_id AS conversation_id FROM tool_calls tc
            JOIN messages m ON m.id = tc.message_id
            JOIN conversations c ON c.id = m.conversation_id
          WHERE c.profile_id = ? AND tc.operation_status IN ('uncertain','running')
          ORDER BY tc.created_at DESC`,
       )
       .all(profileId)
-      .map((r) => this.mapToolCall(r))
+      .map((r) => ({
+        ...this.mapToolCall(r),
+        conversationId: String(r['conversation_id']),
+      }))
   }
 
   private toolCallsFor(messageIds: readonly string[]): Map<string, ToolCallRecord[]> {

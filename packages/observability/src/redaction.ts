@@ -86,8 +86,18 @@ const BEARER_RE = /\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g
 /** Key kiểu OpenAI/LiteLLM. */
 const SK_KEY_RE = /\bsk-[A-Za-z0-9_-]{16,}\b/g
-/** Atlassian PAT (Server/DC) thường là chuỗi base64-ish rất dài, không có khoảng trắng. */
-const LONG_OPAQUE_RE = /\b[A-Za-z0-9+/=_-]{40,}\b/g
+/**
+ * Atlassian PAT (Server/DC) thường là chuỗi base64-ish rất dài, không có khoảng trắng.
+ *
+ * KHÔNG đưa `/` vào lớp ký tự: nếu có, biểu thức sẽ nuốt trọn đường dẫn file
+ * (`/home/user/project/node_modules/...`) và biến log chẩn đoán thành một dãy [REDACTED]
+ * vô dụng — đúng lỗi đã gặp khi điều tra một sự cố khởi động thật.
+ *
+ * Base64 có chứa `/` vẫn được che bởi hai lớp còn lại: giá trị đã đăng ký, và các pattern
+ * Bearer/JWT/sk-. Một secret vừa chưa đăng ký vừa chứa `/` gần như không xảy ra, vì mọi
+ * credential đều đi qua `registerSecret` ngay khi được lưu hoặc đọc.
+ */
+const LONG_OPAQUE_RE = /\b[A-Za-z0-9+=_-]{40,}\b/g
 
 /** Độ dài tối thiểu để một secret đã đăng ký được thay thế trong chuỗi tự do. */
 const MIN_REGISTERED_SECRET_LEN = 6

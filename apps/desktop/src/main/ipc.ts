@@ -213,6 +213,13 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         },
       )
     },
+    /**
+     * §16: thao tác write còn treo từ phiên trước phải hiện lại, nếu không người dùng sẽ
+     * không bao giờ biết để đi tra cứu. Đọc từ DB chứ không từ OperationTracker trong RAM —
+     * tracker mất sạch khi app đóng.
+     */
+    'tool:listUncertain': () => services.conversations.listUncertainOperations(services.profileId),
+
     'tool:list': () =>
       (services.mcp?.availableTools() ?? []).map((t) => ({
         name: t.name,

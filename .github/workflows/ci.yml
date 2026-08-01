@@ -11,7 +11,8 @@ on:
 
 env:
   PNPM_VERSION: '9.15.0'
-  NODE_VERSION: '22.x'
+  # Node 24: khớp với Node bên trong Electron 43, và `node:sqlite` đã bỏ cờ experimental.
+  NODE_VERSION: '24.x'
 
 jobs:
   # §18.1 bước 1: Lint, type-check và unit test.
@@ -30,9 +31,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      # Test dùng `node:sqlite` — cùng driver mà app sẽ dùng khi better-sqlite3 không build được.
       - run: pnpm test
-        # node:sqlite cần Node >= 22.5; test dùng driver này thay cho better-sqlite3 để
-        # không phụ thuộc toolchain C++ trên runner.
 
   # §18.1 bước 2: Scan dependency, secret và license.
   security-scan:
@@ -79,8 +79,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      # Native module phải khớp ABI của Electron, không phải của Node.
-      - name: Rebuild native module cho Electron
+      # better-sqlite3 là optionalDependency: khi build được thì app dùng nó (nhanh hơn),
+      # khi không thì rơi xuống node:sqlite có sẵn trong Node 24 của Electron 43.
+      # Vì vậy bước này KHÔNG được làm đỏ pipeline.
+      - name: Rebuild native module cho Electron (tuỳ chọn)
+        continue-on-error: true
         run: pnpm dlx @electron/rebuild -f -w better-sqlite3
 
       - run: pnpm build

@@ -1,7 +1,7 @@
 # ADR 0003 — Tách lớp driver SQLite
 
 **Trạng thái:** Đề xuất
-**Ngày:** 2026-08-01
+**Ngày:** 2026-08-01 · **Cập nhật:** 2026-08-01 sau khi chạy thử app thật
 
 ## Bối cảnh
 
@@ -36,16 +36,42 @@ Chỉ dùng mẫu số chung, được ghi rõ trong `driver.ts`:
 - không truyền `boolean` hay `undefined` — chuẩn hoá về `0/1` và `null` bằng helper `b()` và `n()`
 - transaction bằng `BEGIN`/`SAVEPOINT` tường minh, không dùng `.transaction()` của better-sqlite3
 
+## Cập nhật sau khi chạy thử app thật
+
+Khi chạy Electron lần đầu, app dừng ở `LOCAL_DB_LOCKED`: Electron 33 mang Node 20, mà Node 20
+không có `node:sqlite`. Cả hai driver đều không nạp được.
+
+Kiểm tra lại các bản Electron mới cho kết quả quan trọng:
+
+```
+Electron 43.2.0 → Node 24.18.0 → node:sqlite CÓ SẴN (đã bỏ cờ experimental)
+```
+
+Điều này đổi bản chất của quyết định. `node:sqlite` không còn là "driver chỉ dùng cho test" —
+nó chạy được cả trong bản phát hành. Vì vậy:
+
+1. **Nâng lên Electron 43.**
+2. **`better-sqlite3` chuyển thành `optionalDependency`.** App chạy đầy đủ khi không có nó.
+3. **Bước rebuild native trong CI thành `continue-on-error`.** Nó là tối ưu hiệu năng, không
+   còn là điều kiện để phát hành.
+
+App đã được chạy thật và xác nhận: `local-db-opened {"driver":"node:sqlite"}`, migration v1 áp
+dụng, `window-ready` sau 304 ms.
+
 ## Hệ quả
 
 **Tích cực**
 - Test tầng lưu trữ chạy ở mọi nơi, kể cả CI không có toolchain C++.
-- Nếu `better-sqlite3` gặp vấn đề với một phiên bản Electron nào đó, có đường lui.
+- **Bộ cài không còn phụ thuộc bắt buộc vào native module.** Bỏ được một mắt xích hay gãy nhất
+  trong packaging Electron: không cần toolchain trên máy build, không cần asarUnpack để chạy.
+- Test và bản phát hành có thể chạy **cùng một driver**, nên rủi ro "hành vi lệch giữa hai driver"
+  giảm mạnh so với đánh giá ban đầu.
 
 **Tiêu cực**
-- Test chạy trên `node:sqlite`, production chạy trên `better-sqlite3` — **hai driver khác nhau**.
-  Rủi ro có hành vi lệch mà test không bắt được là thật. Giảm thiểu: bề mặt API dùng tới rất hẹp,
-  và job `build-windows` trong CI chạy `@electron/rebuild` rồi chạy lại toàn bộ test trên
-  Windows với driver thật.
-- `node:sqlite` còn được đánh dấu experimental trong Node. Nó chỉ nằm ở đường test, không nằm
-  ở đường phát hành.
+- `node:sqlite` vẫn được Node đánh dấu experimental. Nếu Electron tắt nó ở bản sau, đường lui là
+  better-sqlite3 — vẫn còn nguyên, chỉ là tuỳ chọn.
+- Chậm hơn better-sqlite3. Số đo hiện tại (`tests/performance.test.ts`): ghi 2.400 message đã mã
+  hoá mất 343 ms, liệt kê 100 hội thoại mất 4 ms. Ở quy mô một app desktop đơn người dùng, chênh
+  lệch này không đáng kể.
+- Log khởi động ghi rõ driver nào đang dùng (`local-db-opened`), nên khi điều tra sự cố luôn biết
+  mình đang chạy trên cái nào.

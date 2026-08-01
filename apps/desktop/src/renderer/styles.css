@@ -764,3 +764,37 @@ code {
   align-items: center;
   gap: 6px;
 }
+
+/* ── Banner thao tác chưa rõ kết quả (§16) ────────────────────────────── */
+
+.uncertain-banner {
+  margin: 12px 20px 0;
+  border: 1px solid var(--warning);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: rgba(240, 161, 58, 0.08);
+  padding: 12px 14px;
+}
+.uncertain-banner-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.uncertain-banner p {
+  margin: 4px 0 8px;
+}
+.uncertain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.uncertain-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}

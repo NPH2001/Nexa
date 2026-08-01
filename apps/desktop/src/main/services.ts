@@ -113,6 +113,13 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   })
   security.primeRedactor()
 
+  // Tạo/đọc master key NGAY tại đây thay vì đợi lần mã hoá đầu tiên.
+  //
+  // Nếu để lười, một secure storage hỏng chỉ lộ ra khi người dùng gửi tin nhắn đầu tiên —
+  // lúc đó họ đã gõ xong câu hỏi và mất dữ liệu nháp. §3 fail closed: hỏng thì hỏng ngay
+  // lúc khởi động, kèm dialog nói rõ nguyên nhân.
+  security.getMasterKey()
+
   const store = LocalStore.open({
     path: join(userData, 'nexa.db'),
     cipher: {

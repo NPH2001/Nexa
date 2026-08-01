@@ -13,6 +13,7 @@ import type {
   ModelConfig,
   OrgPolicy,
   RiskLevel,
+  ToolCallRecord,
   ToolStatusEvent,
 } from '@nexa/shared-types'
 
@@ -142,6 +143,8 @@ export const api = {
       call<{ name: string; description: string; riskLevel: RiskLevel; targetSystem: string }[]>(
         'tool:list',
       ),
+    listUncertain: () =>
+      call<(ToolCallRecord & { conversationId: string })[]>('tool:listUncertain'),
   },
 
   settings: {

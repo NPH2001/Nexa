@@ -305,3 +305,22 @@ describe('request id', () => {
     expect(ids.size).toBe(500)
   })
 })
+
+describe('Redactor — hồi quy từ sự cố thật', () => {
+  const r = new Redactor()
+
+  it('KHÔNG che đường dẫn file — log chẩn đoán phải đọc được', () => {
+    // Lỗi đã gặp: pattern token dài có `/` trong lớp ký tự nên nuốt trọn cả đường dẫn,
+    // biến thông báo "không tìm thấy binding" thành một dãy [REDACTED] vô nghĩa.
+    const message =
+      'Could not locate the bindings file. Tried: /home/meow/Project/Nexa/node_modules/better-sqlite3/build/better_sqlite3.node'
+    const output = r.redactString(message)
+    expect(output).toContain('better_sqlite3.node')
+    expect(output).toContain('/home/meow/Project/Nexa/node_modules')
+    expect(output).not.toContain(REDACTED)
+  })
+
+  it('vẫn che token dài không có dấu gạch chéo', () => {
+    expect(r.redactString(`token=${'A1b2C3d4E5'.repeat(5)}`)).toContain(REDACTED)
+  })
+})

@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog } from 'electron'
 import { NEXA_EVENTS, NexaError, type McpStatusEvent } from '@nexa/shared-types'
+import { FileSink, Logger, globalRedactor } from '@nexa/observability'
 import { ChatController } from './chat-controller.js'
 import { registerIpc } from './ipc.js'
 import { bootstrapServices, type NexaServices } from './services.js'
@@ -37,6 +38,11 @@ function start(): void {
   } catch (error) {
     // Fail closed (§3): không mở app khi secure storage hoặc DB không dùng được. Người dùng
     // cần một thông báo rõ ràng chứ không phải một cửa sổ trắng.
+    //
+    // Ghi log TRƯỚC khi hiện dialog: lúc này `services` chưa tồn tại nên logger chính chưa có,
+    // và nếu chỉ hiện dialog rồi thoát thì không còn dấu vết nào để hỗ trợ điều tra vì sao
+    // app không mở được (§15.1 "Application log: startup, trạng thái module, error code").
+    logStartupFailure(error)
     showFatalError(error)
     app.quit()
     return
@@ -154,6 +160,30 @@ function scheduleUpdateCheck(activeServices: NexaServices): void {
 function emitMcpStatus(event: McpStatusEvent): void {
   if (mainWindow === null || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(NEXA_EVENTS.mcpStatus, event)
+}
+
+/**
+ * Ghi lại lỗi khởi động khi logger chính chưa dựng được.
+ *
+ * Dùng FileSink trực tiếp vào đúng thư mục log mà `bootstrapServices` sẽ dùng, để người hỗ trợ
+ * tìm thấy nó ở chỗ quen thuộc. Nếu cả việc này cũng hỏng thì đành chịu — không được để một
+ * lỗi ghi log che mất lỗi gốc.
+ */
+function logStartupFailure(error: unknown): void {
+  const nexa = NexaError.wrap(error)
+  try {
+    const sink = new FileSink({ dir: join(app.getPath('userData'), 'logs'), baseName: 'nexa' })
+    new Logger({ sink, redactor: globalRedactor, minLevel: 'error' }).error('app-startup-failed', {
+      errorCode: nexa.code,
+      detail: nexa.safeDetail,
+      appVersion: app.getVersion(),
+      platform: `${process.platform} ${process.arch}`,
+      electron: process.versions['electron'] ?? 'unknown',
+      node: process.versions.node,
+    })
+  } catch {
+    // Không ghi được log thì dialog vẫn còn — đó là lý do có cả hai.
+  }
 }
 
 function showFatalError(error: unknown): void {

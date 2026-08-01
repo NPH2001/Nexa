@@ -26,7 +26,19 @@ export interface SafeStorageLike {
   isEncryptionAvailable(): boolean
   encryptString(plainText: string): Buffer
   decryptString(encrypted: Buffer): string
+  /** Chỉ có trên Linux. Windows/macOS luôn dùng backend của hệ điều hành. */
+  getSelectedStorageBackend?(): string
 }
+
+/**
+ * Trên Linux, khi không tìm thấy keyring nào, Electron rơi xuống backend `basic_text`:
+ * `isEncryptionAvailable()` VẪN trả true nhưng dữ liệu chỉ được xáo bằng một khoá cố định,
+ * ai cũng giải được. Đây là cái bẫy im lặng — phải coi nó là KHÔNG đạt chuẩn.
+ *
+ * Windows luôn dùng DPAPI nên không dính; guard này bảo vệ môi trường dev và trường hợp
+ * sau này có port sang Linux.
+ */
+const INSECURE_LINUX_BACKENDS = new Set(['basic_text'])
 
 /**
  * Backend chính cho Windows.
@@ -38,8 +50,6 @@ export interface SafeStorageLike {
  * CHƯA ĐƯỢC KIỂM CHỨNG BẰNG TAY TRÊN WINDOWS — xem docs/OPEN-QUESTIONS.md C1.
  */
 export class SafeStorageBackend implements SecureStorageBackend {
-  readonly name = 'electron-safeStorage'
-  readonly productionGrade = true
   private readonly file: string
   private cache: Record<string, string> | null = null
 
@@ -48,6 +58,25 @@ export class SafeStorageBackend implements SecureStorageBackend {
     private readonly dir: string,
   ) {
     this.file = join(dir, 'credentials.bin')
+  }
+
+  get name(): string {
+    const backend = this.selectedBackend()
+    return backend === null ? 'electron-safeStorage' : `electron-safeStorage (${backend})`
+  }
+
+  /** false khi Electron rơi xuống backend giả — xem INSECURE_LINUX_BACKENDS. */
+  get productionGrade(): boolean {
+    const backend = this.selectedBackend()
+    return backend === null || !INSECURE_LINUX_BACKENDS.has(backend)
+  }
+
+  private selectedBackend(): string | null {
+    try {
+      return this.safeStorage.getSelectedStorageBackend?.() ?? null
+    } catch {
+      return null
+    }
   }
 
   isAvailable(): boolean {
