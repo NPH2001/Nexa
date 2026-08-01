@@ -141,11 +141,37 @@ function scheduleUpdateCheck(activeServices: NexaServices): void {
       .then((result) => {
         activeServices.logger.info('update-checked', { status: result.status })
         if (mainWindow === null || mainWindow.isDestroyed()) return
-        if (result.status === 'available' || result.status === 'mandatory') {
-          mainWindow.webContents.send(NEXA_EVENTS.connectionStatus, {
-            kind: 'update',
-            status: result.status,
+        // §18.2: "Bắt buộc cập nhật chỉ khi có lỗi bảo mật hoặc API không tương thích."
+        // Ba trạng thái này phải chặn sử dụng, không chỉ hiện thông báo — nếu chỉ hiện toast
+        // thì người dùng sẽ tắt nó và tiếp tục chạy một bản đã bị thu hồi.
+        const blocking =
+          result.status === 'mandatory' ||
+          result.status === 'rollback-required' ||
+          result.status === 'unsupported-client'
+
+        if (blocking) {
+          const target = result.manifest?.rollbackTo ?? result.manifest
+          dialog.showMessageBoxSync(mainWindow, {
+            type: 'warning',
+            title: 'Nexa cần được cập nhật',
             message: result.message,
+            detail: [
+              'Hãy liên hệ bộ phận IT để cài phiên bản được chỉ định. Nexa sẽ đóng lại.',
+              target === undefined ? '' : `Phiên bản cần cài: ${target.version}`,
+            ]
+              .filter((line) => line !== '')
+              .join('\n'),
+            buttons: ['Đóng Nexa'],
+          })
+          app.quit()
+          return
+        }
+
+        if (result.status === 'available') {
+          mainWindow.webContents.send(NEXA_EVENTS.updateAvailable, {
+            version: result.manifest?.version ?? '',
+            message: result.message,
+            notes: result.manifest?.notes,
           })
         }
       })

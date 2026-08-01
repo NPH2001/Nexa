@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
+import { PROVIDER_LABELS, RETENTION_CHOICES, isExternalProvider } from '@nexa/shared-types'
 import type {
   AppSettings,
   Connection,
   ConnectionTestResult,
   ConnectionType,
+  LlmProvider,
   ModelConfig,
 } from '@nexa/shared-types'
 import { api } from '../bridge.js'
 import type { Toast } from './Toasts.js'
 
-type Tab = 'litellm' | 'models' | 'jira' | 'confluence' | 'data' | 'about'
+type Tab = 'litellm' | 'openai' | 'models' | 'jira' | 'confluence' | 'data' | 'about'
 
 export function SettingsView(props: {
   models: readonly ModelConfig[]
@@ -41,6 +43,7 @@ export function SettingsView(props: {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'litellm', label: 'LiteLLM' },
+    { id: 'openai', label: 'OpenAI' },
     { id: 'models', label: 'Model' },
     { id: 'jira', label: 'Jira' },
     { id: 'confluence', label: 'Confluence' },
@@ -73,6 +76,23 @@ export function SettingsView(props: {
             secretLabel="API key"
             requiresUsername={false}
             connection={connections.find((c) => c.type === 'litellm') ?? null}
+            onChanged={reload}
+            onError={props.onError}
+            onToast={props.onToast}
+          />
+        )}
+
+        {tab === 'openai' && (
+          <ConnectionForm
+            type="openai"
+            title="Kết nối OpenAI (ChatGPT)"
+            description="Nexa gọi TRỰC TIẾP api.openai.com, không đi qua LiteLLM của tổ chức. Nghĩa là mọi câu hỏi bạn gửi tới model OpenAI đều ra ngoài hạ tầng nội bộ, và không có usage log hay hạn mức của tổ chức áp lên nó."
+            urlLabel="Endpoint"
+            secretLabel="OpenAI API key"
+            requiresUsername={false}
+            defaultBaseUrl="https://api.openai.com"
+            externalWarning="Đây là dịch vụ bên ngoài tổ chức. Không dán dữ liệu nhạy cảm vào hội thoại dùng model OpenAI, và việc đính kèm tài liệu bị CHẶN theo mặc định."
+            connection={connections.find((c) => c.type === 'openai') ?? null}
             onChanged={reload}
             onError={props.onError}
             onToast={props.onToast}
@@ -121,6 +141,7 @@ export function SettingsView(props: {
         {tab === 'data' && props.settings !== null && (
           <DataPanel
             settings={props.settings}
+            models={props.models}
             lockedFeatures={lockedFeatures}
             onChanged={props.onSettingsChanged}
             onError={props.onError}
@@ -143,12 +164,16 @@ function ConnectionForm(props: {
   urlLabel: string
   secretLabel: string
   requiresUsername: boolean
+  /** Điền sẵn khi chưa có kết nối — endpoint của provider công khai là cố định. */
+  defaultBaseUrl?: string
+  /** Cảnh báo hiện nổi bật khi provider nằm ngoài tổ chức (§11.2). */
+  externalWarning?: string
   connection: Connection | null
   onChanged: () => Promise<void>
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
-  const [baseUrl, setBaseUrl] = useState(props.connection?.baseUrl ?? '')
+  const [baseUrl, setBaseUrl] = useState(props.connection?.baseUrl ?? props.defaultBaseUrl ?? '')
   const [username, setUsername] = useState(props.connection?.username ?? '')
   const [secret, setSecret] = useState('')
   const [enabled, setEnabled] = useState(props.connection?.enabled ?? true)
@@ -158,12 +183,12 @@ function ConnectionForm(props: {
   )
 
   useEffect(() => {
-    setBaseUrl(props.connection?.baseUrl ?? '')
+    setBaseUrl(props.connection?.baseUrl ?? props.defaultBaseUrl ?? '')
     setUsername(props.connection?.username ?? '')
     setEnabled(props.connection?.enabled ?? true)
     setTestResult(props.connection?.lastTest ?? null)
     setSecret('')
-  }, [props.connection])
+  }, [props.connection, props.defaultBaseUrl])
 
   const save = (): void => {
     void (async () => {
@@ -224,6 +249,9 @@ function ConnectionForm(props: {
   return (
     <section className="panel">
       <h2>{props.title}</h2>
+      {props.externalWarning !== undefined && (
+        <p className="external-warning">⚠ {props.externalWarning}</p>
+      )}
       <p className="muted">{props.description}</p>
 
       <label className="field">
@@ -310,6 +338,7 @@ function ModelsPanel(props: {
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
+  const [provider, setProvider] = useState<LlmProvider>('litellm')
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [contextWindow, setContextWindow] = useState(128_000)
@@ -325,6 +354,18 @@ function ModelsPanel(props: {
       </p>
 
       <div className="model-add">
+        <select
+          className="input input-compact"
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as LlmProvider)}
+          aria-label="Provider"
+        >
+          {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
         <input
           className="input"
           placeholder="Model id (ví dụ gpt-5.x-internal)"
@@ -354,6 +395,7 @@ function ModelsPanel(props: {
             void (async () => {
               try {
                 await api.models.add({
+                  provider,
                   modelId: modelId.trim(),
                   displayName: displayName.trim() === '' ? modelId.trim() : displayName.trim(),
                   contextWindowTokens: contextWindow,
@@ -375,6 +417,7 @@ function ModelsPanel(props: {
         <thead>
           <tr>
             <th>Model</th>
+            <th>Provider</th>
             <th>Ngữ cảnh</th>
             <th>Trạng thái</th>
             <th />
@@ -388,6 +431,13 @@ function ModelsPanel(props: {
                 <br />
                 <code className="muted small">{model.modelId}</code>
                 {model.isDefault && <span className="tag">mặc định</span>}
+              </td>
+              <td>
+                {isExternalProvider(model.provider) ? (
+                  <span className="external-tag">{PROVIDER_LABELS[model.provider]}</span>
+                ) : (
+                  <span className="muted small">{PROVIDER_LABELS[model.provider]}</span>
+                )}
               </td>
               <td>{model.contextWindowTokens.toLocaleString('vi-VN')} token</td>
               <td>
@@ -429,7 +479,7 @@ function ModelsPanel(props: {
           ))}
           {props.models.length === 0 && (
             <tr>
-              <td colSpan={4} className="muted center">
+              <td colSpan={5} className="muted center">
                 Chưa có model nào. Hãy thêm ít nhất một model để bắt đầu chat.
               </td>
             </tr>
@@ -443,7 +493,8 @@ function ModelsPanel(props: {
         onClick={() => {
           void (async () => {
             try {
-              const result = await api.models.verifyAll()
+              // Mỗi provider có endpoint /v1/models riêng — kiểm chứng theo provider đang chọn.
+              const result = await api.models.verifyAll(provider)
               await refresh()
               props.onToast({
                 kind: result.unknown.length === 0 ? 'success' : 'warning',
@@ -459,7 +510,7 @@ function ModelsPanel(props: {
           })()
         }}
       >
-        Kiểm chứng với LiteLLM
+        Kiểm chứng với {PROVIDER_LABELS[provider]}
       </button>
     </section>
   )
@@ -469,12 +520,14 @@ function ModelsPanel(props: {
 
 function DataPanel(props: {
   settings: AppSettings
+  models: readonly ModelConfig[]
   lockedFeatures: readonly string[]
   onChanged: (settings: AppSettings) => void
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
   const [purgeConfirm, setPurgeConfirm] = useState('')
+  const externalModels = props.models.filter((m) => isExternalProvider(m.provider))
 
   const update = (patch: Partial<AppSettings>): void => {
     void (async () => {
@@ -510,10 +563,12 @@ function DataPanel(props: {
             value={props.settings.historyRetentionDays}
             onChange={(e) => update({ historyRetentionDays: Number(e.target.value) })}
           >
-            <option value={0}>Không tự xoá</option>
-            <option value={30}>30 ngày</option>
-            <option value={90}>90 ngày</option>
-            <option value={180}>180 ngày</option>
+            {/* Danh sách lấy từ shared-types để UI và validate ở main không lệch nhau. */}
+            {RETENTION_CHOICES.map((days) => (
+              <option key={days} value={days}>
+                {days === 0 ? 'Không tự xoá' : `${String(days)} ngày`}
+              </option>
+            ))}
           </select>
         </label>
 
@@ -569,6 +624,47 @@ function DataPanel(props: {
             </label>
           )
         })}
+      </section>
+
+      <section className="panel">
+        <h2>Tài liệu và provider bên ngoài</h2>
+        <p className="muted">
+          Model chạy qua LiteLLM nội bộ được nhận tài liệu theo mặc định. Model của provider bên
+          ngoài (OpenAI) thì <strong>không</strong> — phải được cho phép từng model một ở đây.
+        </p>
+
+        {externalModels.length === 0 ? (
+          <p className="muted small">Chưa có model nào thuộc provider bên ngoài.</p>
+        ) : (
+          externalModels.map((model) => {
+            const key = `${model.provider}:${model.modelId}`
+            const allowed = props.settings.externalDocumentAllowedModels.includes(key)
+            return (
+              <label key={model.id} className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={allowed}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                      ? [...props.settings.externalDocumentAllowedModels, key]
+                      : props.settings.externalDocumentAllowedModels.filter((k) => k !== key)
+                    update({ externalDocumentAllowedModels: next })
+                  }}
+                />
+                <span>
+                  Cho phép gửi tài liệu tới <code>{model.modelId}</code>{' '}
+                  <span className="external-tag">{PROVIDER_LABELS[model.provider]}</span>
+                </span>
+              </label>
+            )
+          })
+        )}
+
+        <p className="external-warning">
+          ⚠ Bật một mục ở đây nghĩa là tài liệu nội bộ sẽ được gửi ra ngoài tổ chức, không qua
+          LiteLLM, và không có usage log của tổ chức. Chỉ bật khi bộ phận an toàn thông tin đã
+          cho phép.
+        </p>
       </section>
 
       <section className="panel danger-zone">

@@ -2,7 +2,7 @@ import type {
   ChatRequest,
   ChatStreamEvent,
   ChatToolCall,
-  LiteLlmClient,
+  OpenAiCompatibleClient,
 } from '@nexa/llm-client'
 
 /** Một lượt trả lời đã kịch bản hoá. */
@@ -59,8 +59,8 @@ export class FakeLlmClient {
     yield { type: 'finish', reason: 'stop' }
   }
 
-  asClient(): LiteLlmClient {
-    return this as unknown as LiteLlmClient
+  asClient(): OpenAiCompatibleClient {
+    return this as unknown as OpenAiCompatibleClient
   }
 }
 

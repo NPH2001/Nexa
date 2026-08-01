@@ -1,0 +1,38 @@
+# Chủ sở hữu mã nguồn — người được yêu cầu review tự động.
+#
+# ⚠️ Đây là KHUNG. Các nhóm dưới đây CHƯA TỒN TẠI trên GitHub. Phải thay bằng team hoặc
+# username thật rồi mới bật "Require review from Code Owners" trong branch protection,
+# nếu không mọi PR sẽ bị chặn vì không tìm được reviewer.
+#
+# Nguyên tắc: chỗ nào chạm tới secret, mã hoá, hoặc cơ chế xác nhận thì đội an toàn thông tin
+# phải review — §19 xếp những phần đó là điều kiện tiên quyết của tool write.
+
+*                                   @NPH2001
+
+# ── Bắt buộc ATTT review ─────────────────────────────────────────────────
+# Mã hoá, secure storage, URL validation, payload hash.
+/packages/security/                 @NPH2001 @nexa/security-team
+
+# Confirmation guard + operation tracker — §17.2 có 7 kịch bản bắt buộc.
+/packages/agent-runtime/            @NPH2001 @nexa/security-team
+
+# Redaction: lớp phòng vệ cuối chống rò rỉ qua log.
+/packages/observability/src/redaction.ts  @NPH2001 @nexa/security-team
+
+# Ranh giới tin cậy renderer ↔ main.
+/apps/desktop/src/preload/          @NPH2001 @nexa/security-team
+/apps/desktop/src/main/window.ts    @NPH2001 @nexa/security-team
+/apps/desktop/src/main/ipc.ts       @NPH2001 @nexa/security-team
+/apps/desktop/src/main/file-broker.ts     @NPH2001 @nexa/security-team
+
+# Schema DB và mã hoá trường — sai một chỗ là hỏng dữ liệu người dùng.
+/packages/local-store/src/migrations.ts   @NPH2001 @nexa/security-team
+
+# Threat model và các quyết định kiến trúc.
+/docs/security/                     @NPH2001 @nexa/security-team
+/docs/architecture/adr/             @NPH2001
+
+# ── Vận hành / IT ────────────────────────────────────────────────────────
+/electron-builder.yml               @NPH2001 @nexa/ops-team
+/.github/workflows/                 @NPH2001 @nexa/ops-team
+/apps/desktop/resources/policy.json @NPH2001 @nexa/ops-team @nexa/security-team

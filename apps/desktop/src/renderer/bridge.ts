@@ -5,7 +5,9 @@ import type {
   ConfirmationRequest,
   Connection,
   ConnectionTestResult,
+  ConnectionType,
   Conversation,
+  LlmProvider,
   Envelope,
   ErrorEnvelope,
   McpStatusEvent,
@@ -80,32 +82,39 @@ export const api = {
   connections: {
     list: () => call<Connection[]>('connection:list'),
     save: (input: {
-      type: 'litellm' | 'jira' | 'confluence'
+      type: ConnectionType
       baseUrl: string
       username: string | null
       secret?: string
       enabled: boolean
     }) => call<Connection>('connection:save', input),
-    test: (type: 'litellm' | 'jira' | 'confluence') =>
-      call<ConnectionTestResult>('connection:test', { type }),
-    remove: (type: 'litellm' | 'jira' | 'confluence') =>
-      call<{ deleted: boolean }>('connection:delete', { type }),
+    test: (type: ConnectionType) => call<ConnectionTestResult>('connection:test', { type }),
+    remove: (type: ConnectionType) => call<{ deleted: boolean }>('connection:delete', { type }),
   },
 
   models: {
     list: () => call<ModelConfig[]>('model:list'),
-    add: (input: { modelId: string; displayName: string; contextWindowTokens: number }) =>
-      call<ModelConfig>('model:add', input),
+    add: (input: {
+      provider: LlmProvider
+      modelId: string
+      displayName: string
+      contextWindowTokens: number
+    }) => call<ModelConfig>('model:add', input),
     remove: (id: string) => call<{ removed: boolean }>('model:remove', { id }),
     setDefault: (id: string) => call<{ ok: boolean }>('model:setDefault', { id }),
-    verifyAll: () => call<{ verified: string[]; unknown: string[] }>('model:verifyAll'),
+    verifyAll: (provider: LlmProvider) =>
+      call<{ verified: string[]; unknown: string[] }>('model:verifyAll', { provider }),
   },
 
   conversations: {
     list: (includeArchived = false) =>
       call<Conversation[]>('conversation:list', { includeArchived, limit: 100, offset: 0 }),
-    create: (title: string, modelId: string | null) =>
-      call<Conversation>('conversation:create', { title, modelId }),
+    create: (title: string, model: { modelId: string; provider: LlmProvider } | null) =>
+      call<Conversation>('conversation:create', {
+        title,
+        modelId: model?.modelId ?? null,
+        modelProvider: model?.provider ?? null,
+      }),
     rename: (id: string, title: string) => call<{ ok: boolean }>('conversation:rename', { id, title }),
     remove: (id: string) => call<{ ok: boolean }>('conversation:delete', { id }),
     archive: (id: string) => call<{ ok: boolean }>('conversation:archive', { id }),
@@ -120,8 +129,13 @@ export const api = {
   },
 
   chat: {
-    send: (input: { conversationId: string; content: string; fileTokens: string[]; modelId?: string }) =>
-      call<{ requestId: string; messageId: string }>('chat:send', input),
+    send: (input: {
+      conversationId: string
+      content: string
+      fileTokens: string[]
+      modelId?: string
+      modelProvider?: LlmProvider
+    }) => call<{ requestId: string; messageId: string }>('chat:send', input),
     cancel: (requestId: string) => call<{ ok: boolean }>('chat:cancel', { requestId }),
   },
 
@@ -202,4 +216,7 @@ export const events = {
     bridge().on('nexa:tool-status', (p) => fn(p as ToolStatusEvent)),
   onMcpStatus: (fn: (e: McpStatusEvent) => void) =>
     bridge().on('nexa:mcp-status', (p) => fn(p as McpStatusEvent)),
+  onUpdateAvailable: (
+    fn: (e: { version: string; message: string; notes?: string }) => void,
+  ) => bridge().on('nexa:update-available', (p) => fn(p as Parameters<typeof fn>[0])),
 }

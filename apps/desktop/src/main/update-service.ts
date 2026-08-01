@@ -26,10 +26,24 @@ export interface VersionManifest {
   readonly requireSignature?: boolean
   /** Client cũ hơn mức này bị chặn (§16 "Client quá cũ"). */
   readonly minimumSupportedVersion?: string
+  /**
+   * §18.2 Rollback: bản ổn định gần nhất để quay về khi bản hiện tại có lỗi.
+   *
+   * Nexa KHÔNG tự gỡ và cài lại — làm vậy cần quyền ghi vào thư mục cài đặt và một tiến trình
+   * sống sót qua lúc gỡ. Thay vào đó nó chỉ ra rằng có bản thay thế và cung cấp đường tải,
+   * còn việc cài do người dùng hoặc IT thực hiện. Xem docs/operations/release-recall.md.
+   */
+  readonly rollbackTo?: { readonly version: string; readonly url: string; readonly sha256: string }
 }
 
 export interface UpdateCheckResult {
-  readonly status: 'up-to-date' | 'available' | 'mandatory' | 'unsupported-client' | 'unavailable'
+  readonly status:
+    | 'up-to-date'
+    | 'available'
+    | 'mandatory'
+    | 'rollback-required'
+    | 'unsupported-client'
+    | 'unavailable'
   readonly manifest?: VersionManifest
   readonly message: string
 }
@@ -76,6 +90,20 @@ export class UpdateService {
         status: 'unsupported-client',
         manifest,
         message: `Phiên bản ${this.currentVersion} không còn được hỗ trợ. Cần cập nhật lên ${manifest.version}.`,
+      }
+    }
+
+    // §18.2 Rollback: bản đang chạy bị thu hồi. Kiểm tra TRƯỚC nhánh "up-to-date", vì
+    // phiên bản bị thu hồi thường mới HƠN bản được khuyến nghị quay về.
+    if (
+      manifest.rollbackTo !== undefined &&
+      compareVersions(this.currentVersion, manifest.rollbackTo.version) > 0 &&
+      compareVersions(this.currentVersion, manifest.version) >= 0
+    ) {
+      return {
+        status: 'rollback-required',
+        manifest,
+        message: `Phiên bản ${this.currentVersion} đã bị thu hồi. Hãy cài lại bản ${manifest.rollbackTo.version}.`,
       }
     }
 
@@ -145,7 +173,20 @@ function parseManifest(raw: unknown): VersionManifest {
     ...(typeof m['minimumSupportedVersion'] === 'string'
       ? { minimumSupportedVersion: m['minimumSupportedVersion'] }
       : {}),
+    ...parseRollback(m['rollbackTo']),
   }
+}
+
+function parseRollback(raw: unknown): Pick<VersionManifest, 'rollbackTo'> {
+  if (typeof raw !== 'object' || raw === null) return {}
+  const r = raw as Record<string, unknown>
+  const version = String(r['version'] ?? '')
+  const url = String(r['url'] ?? '')
+  const sha256 = String(r['sha256'] ?? '')
+  // Manifest rollback sai định dạng thì BỎ QUA thay vì làm hỏng cả lần kiểm tra cập nhật —
+  // người dùng vẫn cần biết có bản mới hay không.
+  if (!/^\d+\.\d+\.\d+/.test(version) || url === '' || !/^[0-9a-f]{64}$/i.test(sha256)) return {}
+  return { rollbackTo: { version, url, sha256 } }
 }
 
 /** So sánh semver đơn giản. Trả <0 nếu a cũ hơn b. */

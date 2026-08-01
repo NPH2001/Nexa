@@ -204,6 +204,45 @@ describe('UpdateService', () => {
     expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe('unavailable')
   })
 
+  it('phát hiện phiên bản đang chạy đã bị thu hồi (§18.2 rollback)', async () => {
+    const service = new UpdateService(
+      logger(),
+      '1.3.0',
+      fetchOk({
+        ...manifest,
+        version: '1.3.0',
+        rollbackTo: { version: '1.2.0', url: 'https://updates.corp.local/nexa-1.2.0.exe', sha256: 'b'.repeat(64) },
+      }),
+    )
+    const result = await service.check('https://updates.corp.local/m.json', [])
+    expect(result.status).toBe('rollback-required')
+    expect(result.manifest?.rollbackTo?.version).toBe('1.2.0')
+  })
+
+  it('không báo rollback khi đang chạy đúng bản được khuyến nghị', async () => {
+    const service = new UpdateService(
+      logger(),
+      '1.2.0',
+      fetchOk({
+        ...manifest,
+        version: '1.2.0',
+        rollbackTo: { version: '1.2.0', url: 'https://updates.corp.local/x.exe', sha256: 'b'.repeat(64) },
+      }),
+    )
+    expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe('up-to-date')
+  })
+
+  it('bỏ qua khối rollback sai định dạng thay vì làm hỏng cả lần kiểm tra', async () => {
+    const service = new UpdateService(
+      logger(),
+      '1.1.0',
+      fetchOk({ ...manifest, rollbackTo: { version: 'không-phải-semver' } }),
+    )
+    const result = await service.check('https://updates.corp.local/m.json', [])
+    expect(result.status).toBe('available')
+    expect(result.manifest?.rollbackTo).toBeUndefined()
+  })
+
   it('từ chối gói cài sai checksum', () => {
     const service = new UpdateService(logger(), '1.0.0')
     expect(() => service.verifyPackage(Buffer.from('nội dung giả'), manifest as never)).toThrow()

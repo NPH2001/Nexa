@@ -6,26 +6,25 @@ import { ERROR_CODES, NexaError } from '@nexa/shared-types'
  *
  * Lý do: cả Vite (khi chạy test) lẫn electron-vite (khi build) đều cố phân giải `import()`
  * lúc bundle — Vite thì làm rụng mất tiền tố `node:` của `node:sqlite`, còn electron-vite thì
- * muốn kéo native binding của better-sqlite3 vào bundle. `createRequire` đi thẳng ra runtime,
- * không bundler nào chạm vào.
+ * muốn kéo native binding vào bundle. `createRequire` đi thẳng ra runtime, không bundler nào
+ * chạm vào.
  */
 const nodeRequire = createRequire(import.meta.url)
 
 /**
  * Lớp trừu tượng mỏng trên SQLite.
  *
- * Tồn tại vì hai lý do:
- *  1. Bản phát hành Electron dùng `better-sqlite3` — nhanh, ổn định, nhưng là native module
- *     phải rebuild theo ABI của Electron.
- *  2. Test và máy dev không có toolchain C++ dùng `node:sqlite` (có sẵn từ Node 22.5+).
+ * **`node:sqlite` là driver được dùng thật** — cả trong test lẫn trong bản phát hành. Electron 43
+ * mang Node 24 nên nó có sẵn, và bộ cài không chứa native module nào. Xem ADR 0003.
+ *
+ * `better-sqlite3` **KHÔNG được cài và KHÔNG được đóng gói**. Đường dẫn tới nó giữ lại làm lối
+ * thoát: nếu một bản Electron sau này bỏ `node:sqlite`, chỉ cần `pnpm add better-sqlite3` rồi đổi
+ * `driver: 'better-sqlite3'` là quay về được, không phải viết lại tầng lưu trữ. Dữ liệu là file
+ * SQLite chuẩn nên không cần chuyển đổi gì.
  *
  * Chỉ dùng tham số vị trí `?`. Không dùng named parameter, không truyền boolean hay `undefined`
- * — hai driver xử lý khác nhau ở đúng chỗ đó, nên ta chuẩn hoá về `0/1` và `null` ở tầng repository.
- *
- * `better-sqlite3` là **optionalDependency**: Electron 43 chạy Node 24 và có sẵn `node:sqlite`,
- * nên app vẫn chạy đầy đủ khi native module không build được. Ưu tiên better-sqlite3 khi có
- * (nhanh hơn), rơi xuống node:sqlite khi không — và ghi lại driver nào được dùng vào log
- * khởi động để biết mình đang chạy trên cái nào.
+ * — hai driver xử lý khác nhau ở đúng chỗ đó, nên ta chuẩn hoá về `0/1` và `null` bằng `b()`
+ * và `n()` ở tầng repository.
  */
 
 export type SqlParam = string | number | bigint | Buffer | Uint8Array | null
@@ -47,7 +46,7 @@ export interface SqlDatabase {
   readonly driverName: string
 }
 
-export type DriverKind = 'better-sqlite3' | 'node:sqlite'
+export type DriverKind = 'node:sqlite' | 'better-sqlite3'
 
 /** Điều kiện chung cho mọi kết nối, áp ngay sau khi mở. */
 const PRAGMAS = [
@@ -63,24 +62,29 @@ const PRAGMAS = [
   'PRAGMA temp_store = MEMORY',
 ]
 
-export function openDatabase(
-  path: string,
-  preferred: DriverKind = 'better-sqlite3',
-): SqlDatabase {
+/**
+ * Mở database, thử driver ưu tiên trước rồi tới driver còn lại.
+ *
+ * Khi CẢ HAI đều không nạp được thì lỗi phải nói rõ vì sao từng cái thất bại — đây chính là
+ * tình huống đã gặp thật khi Electron 33 (Node 20) không có `node:sqlite` và cũng không có
+ * binding của better-sqlite3. Một thông báo "không mở được DB" không kèm nguyên nhân thì
+ * mất hàng giờ để chẩn đoán.
+ */
+export function openDatabase(path: string, preferred: DriverKind = 'node:sqlite'): SqlDatabase {
   const order: DriverKind[] =
-    preferred === 'better-sqlite3'
-      ? ['better-sqlite3', 'node:sqlite']
-      : ['node:sqlite', 'better-sqlite3']
+    preferred === 'node:sqlite'
+      ? ['node:sqlite', 'better-sqlite3']
+      : ['better-sqlite3', 'node:sqlite']
 
   const failures: string[] = []
   for (const kind of order) {
     try {
-      const db = kind === 'better-sqlite3' ? openBetterSqlite(path) : openNodeSqlite(path)
+      const db = kind === 'node:sqlite' ? openNodeSqlite(path) : openBetterSqlite(path)
       for (const pragma of PRAGMAS) {
         try {
           db.exec(pragma)
         } catch {
-          // node:sqlite từ chối một vài pragma trả về giá trị; không ảnh hưởng tính đúng đắn.
+          // Một vài pragma trả về giá trị thay vì chạy im lặng; không ảnh hưởng tính đúng đắn.
         }
       }
       return db
@@ -92,24 +96,6 @@ export function openDatabase(
   throw new NexaError(ERROR_CODES.LOCAL_DB_LOCKED, {
     safeDetail: `no sqlite driver available (${failures.join('; ')})`,
   })
-}
-
-function openBetterSqlite(path: string): SqlDatabase {
-  const Ctor = nodeRequire('better-sqlite3') as new (p: string) => BetterSqliteHandle
-  const db = new Ctor(path)
-  return {
-    driverName: 'better-sqlite3',
-    exec: (sql) => db.exec(sql),
-    prepare: (sql) => {
-      const st = db.prepare(sql)
-      return {
-        run: (...p) => ({ changes: Number(st.run(...p).changes) }),
-        get: (...p) => st.get(...p) as Record<string, unknown> | undefined,
-        all: (...p) => st.all(...p) as Record<string, unknown>[],
-      }
-    },
-    close: () => db.close(),
-  }
 }
 
 function openNodeSqlite(path: string): SqlDatabase {
@@ -129,6 +115,25 @@ function openNodeSqlite(path: string): SqlDatabase {
           return row === undefined ? undefined : { ...(row as Record<string, unknown>) }
         },
         all: (...p) => (st.all(...p) as Record<string, unknown>[]).map((r) => ({ ...r })),
+      }
+    },
+    close: () => db.close(),
+  }
+}
+
+/** Lối thoát — chỉ chạy nếu ai đó cài better-sqlite3 bằng tay. Xem ghi chú ở đầu file. */
+function openBetterSqlite(path: string): SqlDatabase {
+  const Ctor = nodeRequire('better-sqlite3') as new (p: string) => BetterSqliteHandle
+  const db = new Ctor(path)
+  return {
+    driverName: 'better-sqlite3',
+    exec: (sql) => db.exec(sql),
+    prepare: (sql) => {
+      const st = db.prepare(sql)
+      return {
+        run: (...p) => ({ changes: Number(st.run(...p).changes) }),
+        get: (...p) => st.get(...p) as Record<string, unknown> | undefined,
+        all: (...p) => st.all(...p) as Record<string, unknown>[],
       }
     },
     close: () => db.close(),

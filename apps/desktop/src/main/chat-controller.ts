@@ -7,6 +7,7 @@ import {
   type ChatDoneEvent,
   type ChatSendInput,
   type ConfirmationRequest,
+  type LlmProvider,
   type ToolStatusEvent,
 } from '@nexa/shared-types'
 import { newRequestId, type Logger } from '@nexa/observability'
@@ -59,11 +60,17 @@ export class ChatController {
       })
     }
 
+    // Người dùng đổi model ở dropdown thì `input` mang cả model id và provider; nếu không,
+    // dùng model đang gán cho hội thoại.
     const model = this.services.models.resolveForConversation(
       input.modelId ?? conversation.modelId,
+      input.modelProvider ?? conversation.modelProvider,
     )
-    if (conversation.modelId !== model.modelId) {
-      this.services.conversations.setModel(conversation.id, model.modelId)
+    if (conversation.modelId !== model.modelId || conversation.modelProvider !== model.provider) {
+      this.services.conversations.setModel(conversation.id, {
+        modelId: model.modelId,
+        provider: model.provider,
+      })
     }
 
     // §7.2 bước 1–3: đọc và trích xuất file TRƯỚC khi ghi message, để nếu file hỏng thì
@@ -117,6 +124,7 @@ export class ChatController {
       conversationId: conversation.id,
       assistantMessageId: assistantMessage.id,
       modelId: model.modelId,
+      modelProvider: model.provider,
       contextWindowTokens: model.contextWindowTokens,
       documents,
       controller,
@@ -200,6 +208,7 @@ export class ChatController {
     conversationId: string
     assistantMessageId: string
     modelId: string
+    modelProvider: LlmProvider
     contextWindowTokens: number
     documents: readonly ProcessedDocument[]
     controller: AbortController
@@ -219,7 +228,10 @@ export class ChatController {
 
     try {
       const runtime = new AgentRuntime({
-        llm: this.services.connections.buildLiteLlmClient(this.services.settings.get().llmTimeoutMs),
+        llm: this.services.connections.buildLlmClient(
+          params.modelProvider,
+          this.services.settings.get().llmTimeoutMs,
+        ),
         mcp: this.services.mcp,
         guard: this.services.guard,
         tracker: this.services.tracker,
@@ -241,6 +253,7 @@ export class ChatController {
         requestId,
         conversationId,
         modelId: params.modelId,
+        modelProvider: params.modelProvider,
         contextWindowTokens: params.contextWindowTokens,
         history,
         ...(params.documents.length > 0 ? { documents: params.documents } : {}),

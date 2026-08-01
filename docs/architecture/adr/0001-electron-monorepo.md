@@ -42,5 +42,7 @@ Nguyên tắc §13.1 *"Không import trực tiếp code main process vào render
 
 - RAM cao hơn Tauri. §12.1 đặt mục tiêu idle < 500 MB, chat < 800 MB. Chưa đo được trên máy
   thật (xem OPEN-QUESTIONS C1) — cần đo ở pilot trước khi khẳng định đạt.
-- Native module (`better-sqlite3`) phải rebuild theo ABI Electron trong CI. Đã có bước
-  `@electron/rebuild` trong `.github/workflows/ci.yml`.
+- Bộ cài **không chứa native module nào** — xem [ADR 0003](0003-sqlite-driver-abstraction.md).
+  Nhờ đó CI không cần `@electron/rebuild`, và không cần toolchain C++ trên máy build.
+  Nhưng bộ cài Windows vẫn **phải build trên Windows**: bước nhúng icon/version info vào .exe
+  cần công cụ Windows. Job `build-windows` trong CI làm việc đó.

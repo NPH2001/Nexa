@@ -122,6 +122,9 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
 
   const store = LocalStore.open({
     path: join(userData, 'nexa.db'),
+    // Chỉ định tường minh dù đây cũng là mặc định: đây là quyết định đã được chốt (ADR 0003),
+    // và nó nên hiện ra ở composition root thay vì ẩn trong một giá trị mặc định.
+    driver: 'node:sqlite',
     cipher: {
       encrypt: (ctx, pt) => security.encrypt(ctx, pt),
       decrypt: (ctx, ct) => security.decrypt(ctx, ct),
@@ -183,6 +186,15 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
       profileId: profile.id,
       policy,
       logger,
+      /**
+       * §11.2 chỉ cho phép HTTPS. Ngoại lệ duy nhất là loopback trong bản dev CHƯA đóng gói,
+       * để E2E trỏ được vào mock server cục bộ.
+       *
+       * `app.isPackaged` là điều kiện duy nhất — không có biến môi trường hay cờ dòng lệnh nào
+       * bật được nó. Bản phát hành vì thế KHÔNG THỂ chấp nhận http://, kể cả khi ai đó sửa
+       * cấu hình hay policy.
+       */
+      allowInsecureLoopback: opts.isDevelopment,
       testAtlassian: async (type) => {
         const manager = services.mcp
         if (manager === null) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
-import { LiteLlmClient, SseAccumulator, parseNonStreamResponse } from './index.js'
+import { OpenAiCompatibleClient, SseAccumulator, parseNonStreamResponse } from './index.js'
 import { testLogger } from '../../../tests/support/factories.js'
 
 function collect(acc: SseAccumulator, chunks: string[]): ReturnType<SseAccumulator['push']> {
@@ -122,10 +122,11 @@ describe('parseNonStreamResponse', () => {
   })
 })
 
-function makeClient(fetchImpl: typeof fetch, timeoutMs = 5_000): LiteLlmClient {
+function makeClient(fetchImpl: typeof fetch, timeoutMs = 5_000): OpenAiCompatibleClient {
   const { logger } = testLogger()
-  return new LiteLlmClient({
+  return new OpenAiCompatibleClient({
     baseUrl: 'https://litellm.internal',
+    provider: 'litellm',
     getApiKey: () => 'sk-test-key-abcdefghijklmnop',
     logger,
     timeoutMs,
@@ -133,7 +134,7 @@ function makeClient(fetchImpl: typeof fetch, timeoutMs = 5_000): LiteLlmClient {
   })
 }
 
-describe('LiteLlmClient', () => {
+describe('OpenAiCompatibleClient', () => {
   it('sends the bearer token and X-Request-ID, and never puts the key in the URL', async () => {
     let seen: { url: string; headers: Headers } | null = null
     const client = makeClient(async (url, init) => {

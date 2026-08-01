@@ -31,8 +31,10 @@ CurrentUser).
 
 1. **Mô tả trong §8.2 chính là per-field AEAD.** SQLCipher mã hoá theo *page*, không theo bản
    ghi; câu "mỗi bản ghi cần nonce/IV riêng" không mô tả SQLCipher.
-2. **SQLCipher là native module phải build theo ABI của Electron.** Thêm một mắt xích có thể
-   gãy trong CI/CD và packaging, trong khi ta đã có sẵn một native module (better-sqlite3).
+2. **SQLCipher là native module phải build theo ABI của Electron.** Lý lẽ này còn mạnh hơn lúc
+   đầu: sau [ADR 0003](0003-sqlite-driver-abstraction.md), bộ cài **không còn native module nào**.
+   Chọn SQLCipher là mang trở lại đúng thứ đã bỏ đi được — kèm theo yêu cầu toolchain C++ trên
+   máy build và việc không cross-compile được.
 3. **Per-field cho phép để metadata không nhạy cảm ở dạng rõ** (`created_at`, `role`, `status`),
    nên vẫn index và sort được. Với SQLCipher thì mọi thứ đều mờ như nhau — an toàn hơn một chút
    nhưng phải giải mã cả page cho mỗi truy vấn.

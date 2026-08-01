@@ -40,7 +40,7 @@ describe('§17.1 — lịch sử 100+ hội thoại', () => {
     const repo = new ConversationRepository(store.store)
     store.store.transaction(() => {
       for (let c = 0; c < CONVERSATIONS; c++) {
-        const conv = repo.create(store.profileId, `Hội thoại số ${String(c)}`, 'model-a')
+        const conv = repo.create(store.profileId, `Hội thoại số ${String(c)}`, { modelId: 'model-a', provider: 'litellm' })
         for (let m = 0; m < MESSAGES_EACH; m++) {
           repo.appendMessage({
             conversationId: conv.id,

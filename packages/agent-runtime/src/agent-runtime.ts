@@ -4,6 +4,7 @@ import {
   type ApprovalStatus,
   type AppSettings,
   type ConfirmationRequest,
+  type LlmProvider,
   type MessageRole,
   type OperationStatus,
   type RiskLevel,
@@ -15,7 +16,7 @@ import type {
   ChatMessage,
   ChatToolCall,
   ChatToolSpec,
-  LiteLlmClient,
+  OpenAiCompatibleClient,
   TokenUsage,
 } from '@nexa/llm-client'
 import type { ProcessedDocument } from '@nexa/document-processor'
@@ -62,7 +63,7 @@ export interface ToolCallSink {
 }
 
 export interface AgentRuntimeDeps {
-  readonly llm: LiteLlmClient
+  readonly llm: OpenAiCompatibleClient
   /** null khi người dùng chưa cấu hình Atlassian — chat vẫn phải chạy được. */
   readonly mcp: AtlassianMcpManager | null
   readonly guard: ConfirmationGuard
@@ -81,6 +82,7 @@ export interface RunTurnInput {
   readonly requestId: string
   readonly conversationId: string
   readonly modelId: string
+  readonly modelProvider: LlmProvider
   readonly contextWindowTokens: number
   readonly history: readonly { role: MessageRole; content: string }[]
   readonly documents?: readonly ProcessedDocument[]
@@ -122,8 +124,8 @@ export class AgentRuntime {
     const settings = this.deps.settings()
 
     if (input.documents !== undefined && input.documents.length > 0) {
-      // §11.2 — chặn trước khi bất kỳ byte nào rời máy.
-      assertModelMayReceiveDocuments(input.modelId, settings)
+      // §11.2 — chặn trước khi bất kỳ byte nào rời máy. Provider ngoài là fail-closed.
+      assertModelMayReceiveDocuments(input.modelProvider, input.modelId, settings)
     }
 
     const budget: ContextBudget = { contextWindowTokens: input.contextWindowTokens }

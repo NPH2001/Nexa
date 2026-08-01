@@ -4,7 +4,7 @@
 > từ bên ngoài (admin LiteLLM, admin Atlassian, ATTT).
 > Mỗi mục có: câu hỏi → **giả định tôi đã dùng để code** → chỗ cần sửa nếu bạn quyết khác.
 >
-> Cập nhật lần cuối: 2026-08-01 (lần 2 — sau khi chạy thử app thật)
+> Cập nhật lần cuối: 2026-08-01 (lần 3 — sau khi thêm kết nối OpenAI trực tiếp)
 
 ## Cách đọc
 
@@ -290,7 +290,7 @@ chỗ sửa là `packages/llm-client/src/sse-parser.ts`.
 
 ## C. Việc tôi KHÔNG làm được trong môi trường này
 
-### C1. 🟠 Đã chạy thử trên Linux — Windows vẫn chưa
+### C1. 🟠 Đã chạy thử trên Linux + có E2E; xác minh DPAPI chuyển sang CI Windows
 
 **Cập nhật:** môi trường có sẵn X11, nên tôi ĐÃ chạy được app thật. Kết quả:
 
@@ -305,12 +305,21 @@ window-ready              durationMs=304
 ```
 
 Nghĩa là đường đi qua `safeStorage` **đã được kiểm chứng** — nhưng trên keyring của Linux, không
-phải DPAPI của Windows. Việc còn lại trên máy Windows:
+phải DPAPI của Windows.
 
-1. Xác nhận `safeStorage` chọn đúng DPAPI và credential mở lại được sau khi khởi động lại máy.
-2. Xác nhận credential KHÔNG mở được từ tài khoản Windows khác (đó là điểm mấu chốt của §8.2).
-3. Đo RAM và thời gian khởi động thật để so với §12.1.
-4. Kiểm thử giao diện bằng tay — tôi chưa tương tác được với UI, chỉ xác nhận nó render.
+**Cập nhật lần 2:** đã bổ sung 8 test E2E chạy Electron thật bằng Playwright (`pnpm test:e2e`) —
+cấu hình LiteLLM, chat streaming, xác nhận tool write, lịch sử sống qua khởi động lại, và ba test
+khẳng định renderer không lấy được credential / không gọi được mạng.
+
+Và `tests/e2e/windows-secure-storage.e2e.ts` xác minh DPAPI, chạy trong job CI `verify-windows`
+trên `windows-latest` — **không cần máy Windows vật lý** cho phần lớn việc này.
+
+Việc còn lại **bắt buộc phải làm bằng tay trên Windows**:
+
+1. Xác nhận credential **KHÔNG** mở được từ tài khoản Windows khác. CI chỉ có một tài khoản nên
+   không kiểm chứng được — mà đây chính là điểm mấu chốt của §8.2.
+2. Đo RAM thật so với §12.1 (idle < 500 MB, chat < 800 MB).
+3. Duyệt giao diện bằng mắt — E2E khẳng định hành vi, không khẳng định nó *trông* đúng.
 
 **Ba lỗi thật được tìm ra nhờ lần chạy này** (đều đã sửa):
 - `showFatalError` hiện dialog mà không ghi log → app không mở được thì không có dấu vết nào.
@@ -378,7 +387,7 @@ dựng hệ thống i18n. Nếu sau này cần tiếng Anh thì phải refactor.
 Những mục dưới đây không có trong tài liệu và cũng không phải câu hỏi mở lúc lập kế hoạch.
 Chúng xuất hiện khi viết code, và tôi đã tự quyết định.
 
-### E1. 🟢 Hai driver SQLite — đã giải quyết bằng cách nâng Electron
+### E1. ✅ Driver SQLite — ĐÃ CHỐT: dùng `node:sqlite`
 
 `better-sqlite3` là native module, cần toolchain C++ hoặc prebuild khớp phiên bản. Máy phát
 triển không có toolchain và Node 24 chưa có prebuild, nên **toàn bộ test tầng lưu trữ sẽ không
@@ -388,17 +397,31 @@ chạy được** — mất luôn khả năng kiểm chứng phần mã hoá và
 `node:sqlite`. Rủi ro: hai driver khác nhau giữa test và production.
 
 **Cập nhật sau khi chạy thử:** Electron 43 mang Node 24.18, và Node 24 có sẵn `node:sqlite`
-(đã bỏ cờ experimental). Vì vậy:
+(đã bỏ cờ experimental).
 
-- nâng lên **Electron 43**
-- `better-sqlite3` chuyển thành **optionalDependency** — app chạy đầy đủ khi không có nó
-- bước rebuild native trong CI thành `continue-on-error`
+Rồi khi thử đóng gói, `better-sqlite3` chặn hẳn đường: node-gyp **không cross-compile được**
+native module, nên không thể build bộ cài Windows từ bất kỳ máy nào không phải Windows, và cả
+CI cũng phải thêm bước rebuild.
 
-Rủi ro "test driver A, chạy driver B" gần như biến mất, và bộ cài không còn phụ thuộc bắt buộc
-vào native module. Chi tiết ở [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md).
+Vì vậy tôi **bỏ hẳn `better-sqlite3` khỏi bộ cài**:
 
-**Câu hỏi còn lại cho bạn:** có chấp nhận `node:sqlite` (Node đánh dấu experimental) làm driver
-chính không, hay muốn bắt buộc build `better-sqlite3` trong pipeline phát hành?
+- Electron 43, driver là `node:sqlite` — chỉ định rõ trong `services.ts`, không dựa vào mặc định
+- không còn native module nào ⇒ `npmRebuild: false`, không cần `asarUnpack`, không cần
+  `@electron/rebuild` trong CI
+- **test và production chạy CÙNG một driver** — rủi ro "test driver A, chạy driver B" biến mất
+- `pnpm install` không còn phun lỗi node-gyp
+
+Lớp trừu tượng driver vẫn còn (~60 dòng) làm đường lui: cài lại `better-sqlite3` và đổi một
+tham số là quay về được. Chi tiết ở [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md).
+
+**✅ ĐÃ CHỐT 2026-08-01:** dùng `node:sqlite`. Chủ sở hữu sản phẩm đã xác nhận sau khi biết rõ
+API này được Node đánh dấu *experimental*.
+
+Rủi ro còn lại và cách theo dõi: khi nâng Electron (xem E10), phải đọc ghi chú phát hành của
+Node/Electron về `node:sqlite` **trước** khi nâng. Nếu API đổi hoặc bị bỏ, lối thoát là cài lại
+`better-sqlite3` và đổi một tham số trong `services.ts` — dữ liệu là file SQLite chuẩn nên không
+cần chuyển đổi. [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md) đã ở trạng thái
+*Đã chấp nhận*.
 
 ### E2. 🟡 `jira.create_issue` được xếp mức WRITE_LOW
 
@@ -469,3 +492,68 @@ tôi không tạo được file nhị phân. Build sẽ dùng icon mặc định
 
 Tôi không chạy `git init` hay tạo commit nào. `.gitignore` và `.github/workflows/ci.yml` đã sẵn
 sàng. Việc khởi tạo repo, đặt branch protection và bật gitleaks là việc của bạn.
+
+
+---
+
+## F. Kết nối OpenAI trực tiếp — sai lệch có chủ ý so với thiết kế
+
+### F1. 🔴 Nexa gọi thẳng api.openai.com, bỏ qua LiteLLM
+
+**Yêu cầu:** chủ sở hữu sản phẩm yêu cầu thêm kết nối ChatGPT/OpenAI, ngày 2026-08-01.
+Tôi đã nêu rõ hệ quả trước khi làm; quyết định được giữ nguyên.
+
+**Điều này trái với tài liệu thiết kế.** §6 ghi: *"Model Provider — Cung cấp LLM phía sau
+LiteLLM; **Nexa không kết nối trực tiếp provider**"*. §4.1 đặt LiteLLM làm chỗ duy nhất áp
+quota, usage log và quyết định key nào gọi được model nào.
+
+**Hệ quả cần ATTG duyệt trước khi phát hành:**
+
+| Vấn đề | Trạng thái |
+|---|---|
+| Dữ liệu hội thoại rời hạ tầng nội bộ, ra cloud công cộng | Người dùng **được cảnh báo trong UI**, nhưng không bị chặn |
+| Không còn usage log / quota của tổ chức cho các lời gọi này | Không có biện pháp bù. LiteLLM không thấy chúng |
+| §6.1 "Dữ liệu có thể phát sinh ngoài laptop" không còn đủ | **Cần cập nhật tài liệu thiết kế** |
+| `allowedDomains` phải mở `api.openai.com` | Nếu tổ chức đã dùng allowlist thì phải thêm tay |
+| Tài liệu nội bộ gửi ra ngoài | **Fail-closed** — xem dưới |
+
+**Biện pháp tôi đã dựng để việc rò rỉ không xảy ra do vô tình:**
+
+1. **Chính sách tài liệu fail-closed cho provider ngoài.** Model nội bộ giữ hành vi fail-open
+   (rỗng = cho phép, theo A5). Model ngoài thì **rỗng = TỪ CHỐI** — phải khai từng model vào
+   `externalDocumentAllowedModels` dạng `openai:gpt-4o`.
+2. **Hai danh sách allowlist riêng biệt.** Ban đầu tôi dùng chung một danh sách và test bắt được
+   lỗi thiết kế: admin thêm một model ngoài vào đó sẽ **vô tình chặn mọi model nội bộ khác**.
+   Hai chính sách ngược chiều nhau không dùng chung một danh sách được.
+3. **Cảnh báo trong UI** ở ba chỗ: tab Cài đặt → OpenAI, nhãn "ngoài tổ chức" cạnh model đang
+   chọn, và một dòng cảnh báo trong khung soạn tin khi model ngoài được chọn.
+4. **Mã lỗi riêng** (`OPENAI_*`) để thông báo dẫn người dùng tới đúng màn hình cài đặt.
+
+**Câu hỏi cần bạn/ATTT trả lời:**
+
+- Có chấp nhận việc **chat** (không kèm tài liệu) đi ra OpenAI mà không có kiểm soát nội dung
+  không? Hiện Nexa chỉ cảnh báo, không chặn. Chặn được nếu cần — nhưng chặn chat thì tính năng
+  gần như vô dụng.
+- Có nên dùng `forcedFeatures` trong `policy.json` để **IT tắt hẳn** kết nối OpenAI trên máy
+  của một số nhóm? Hiện chưa có cờ cho việc này.
+- Tài liệu thiết kế §6 và §6.1 **cần được cập nhật** để phản ánh thực tế mới. Ai làm?
+
+### F2. 🟠 Không có usage log cho lời gọi OpenAI
+
+§15.2 dựa vào usage log của LiteLLM để đối chiếu `request_id`. Với provider ngoài, nguồn đó
+không tồn tại.
+
+Nexa vẫn ghi `request_id` và độ trễ vào log cục bộ, nên vẫn truy vết được **trên máy người
+dùng**. Nhưng không có cái nhìn tập trung ở phía tổ chức: không ai biết tổng cộng bao nhiêu
+request đã ra OpenAI, tốn bao nhiêu token, hay ai gọi nhiều nhất.
+
+Nếu tổ chức cần con số đó thì phải có telemetry tập trung — điều §11.2 hiện cấm theo mặc định.
+Đây là hai yêu cầu xung đột và cần một quyết định.
+
+### F3. 🟡 Endpoint OpenAI cố định, không cấu hình proxy
+
+Mặc định `https://api.openai.com`, người dùng sửa được trong Cài đặt. Chưa hỗ trợ khai báo
+proxy công ty riêng (biến môi trường `HTTPS_PROXY` chưa được đọc).
+
+Nếu mạng nội bộ chặn ra ngoài trừ qua proxy thì kết nối này sẽ không chạy, và lỗi hiện ra sẽ là
+`UPSTREAM_UNAVAILABLE` chung chung.

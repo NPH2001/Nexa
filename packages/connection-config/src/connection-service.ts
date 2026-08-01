@@ -1,16 +1,18 @@
 import {
   ERROR_CODES,
   NexaError,
+  isLlmConnection,
   type Connection,
   type ConnectionSaveInput,
   type ConnectionTestResult,
   type ConnectionType,
+  type LlmProvider,
   type OrgPolicy,
 } from '@nexa/shared-types'
 import { AUDIT_EVENTS, type AuditRepository, type ConfigRepository } from '@nexa/local-store'
 import { SECURITY_EVENTS, newRequestId, type Logger } from '@nexa/observability'
 import { credentialRef, validateBaseUrl, type SecurityService } from '@nexa/security'
-import { LiteLlmClient } from '@nexa/llm-client'
+import { OpenAiCompatibleClient } from '@nexa/llm-client'
 
 export interface ConnectionServiceOptions {
   readonly repo: ConfigRepository
@@ -36,6 +38,14 @@ export interface ConnectionServiceOptions {
  *
  * Nếu bước 1 hỏng thì chưa có gì được lưu. Nếu bước 3 hỏng thì bước 2 bị rollback.
  */
+/** Mã lỗi khi chưa có kết nối. Bảng tra để thêm provider mới là lỗi biên dịch nếu quên điền. */
+const MISSING_CONNECTION_CODE: Readonly<Record<ConnectionType, string>> = {
+  litellm: ERROR_CODES.LITELLM_CONFIG_REQUIRED,
+  openai: ERROR_CODES.OPENAI_CONFIG_REQUIRED,
+  jira: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
+  confluence: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
+}
+
 export class ConnectionService {
   private readonly opts: ConnectionServiceOptions
   private readonly log: Logger
@@ -63,7 +73,8 @@ export class ConnectionService {
   save(input: ConnectionSaveInput): Connection {
     const baseUrl = this.validateUrl(input.baseUrl, input.type)
 
-    if (input.type !== 'litellm' && (input.username === null || input.username.trim() === '')) {
+    // Chỉ Atlassian cần username; provider LLM xác thực bằng API key.
+    if (!isLlmConnection(input.type) && (input.username === null || input.username.trim() === '')) {
       throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
         safeDetail: 'Atlassian connections require a username',
       })
@@ -80,7 +91,7 @@ export class ConnectionService {
     const connection = this.opts.repo.upsertConnection(this.opts.profileId, {
       type: input.type,
       baseUrl,
-      username: input.type === 'litellm' ? null : (input.username?.trim() ?? null),
+      username: isLlmConnection(input.type) ? null : (input.username?.trim() ?? null),
       enabled: input.enabled,
       credentialRef: credentialRef(input.type),
     })
@@ -107,11 +118,17 @@ export class ConnectionService {
   /**
    * Xoá kết nối VÀ credential tương ứng (§8.2).
    *
+   * Với provider LLM, xoá luôn mọi model của nó: model trỏ tới provider không còn cấu hình sẽ
+   * làm lần chat sau báo lỗi mà người dùng không hiểu vì sao.
+   *
    * Xoá secret trước: nếu tiến trình chết giữa chừng, để lại metadata không có secret thì chỉ
    * bất tiện; để lại secret không có metadata thì là secret mồ côi không ai xoá được nữa.
    */
   delete(type: ConnectionType): void {
     this.opts.security.deleteCredential(type)
+    if (isLlmConnection(type)) {
+      this.opts.repo.removeModelsByProvider(this.opts.profileId, type)
+    }
     this.opts.repo.deleteConnection(this.opts.profileId, type)
     this.opts.audit.record({
       profileId: this.opts.profileId,
@@ -128,16 +145,14 @@ export class ConnectionService {
       return this.record(type, {
         ok: false,
         checkedAt: new Date().toISOString(),
-        errorCode:
-          type === 'litellm'
-            ? ERROR_CODES.LITELLM_CONFIG_REQUIRED
-            : ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
+        errorCode: MISSING_CONNECTION_CODE[type],
       })
     }
 
     try {
-      const result =
-        type === 'litellm' ? await this.testLiteLlm(connection) : await this.testAtlassian(type)
+      const result = isLlmConnection(type)
+        ? await this.testLlmProvider(type)
+        : await this.testAtlassian(type)
       return this.record(type, result)
     } catch (error) {
       const nexa = NexaError.wrap(error)
@@ -153,18 +168,14 @@ export class ConnectionService {
     }
   }
 
-  private async testLiteLlm(connection: Connection): Promise<ConnectionTestResult> {
-    const defaultModel = this.opts.repo.getDefaultModel(this.opts.profileId)
-    const client = new LiteLlmClient({
-      baseUrl: connection.baseUrl,
-      getApiKey: () => this.opts.security.readCredential('litellm'),
-      logger: this.opts.logger,
-      timeoutMs: 20_000,
-    })
+  private async testLlmProvider(provider: LlmProvider): Promise<ConnectionTestResult> {
+    // Dùng một model CỦA CHÍNH provider này làm mẫu thử, không phải model mặc định chung —
+    // nếu không, thử kết nối OpenAI bằng một model id của LiteLLM sẽ báo lỗi sai nguyên nhân.
+    const probe = this.opts.repo.listModelsByProvider(this.opts.profileId, provider)[0]
 
-    const outcome = await client.testConnection(
+    const outcome = await this.buildLlmClient(provider, 20_000).testConnection(
       { requestId: newRequestId() },
-      defaultModel?.modelId,
+      probe?.modelId,
     )
     return { ok: true, checkedAt: new Date().toISOString(), detail: outcome.detail }
   }
@@ -179,15 +190,25 @@ export class ConnectionService {
     return tester(type)
   }
 
-  /** Đọc model đã cấu hình để LiteLLM client dùng. Tách ra để test wiring dễ hơn. */
-  buildLiteLlmClient(timeoutMs: number): LiteLlmClient {
-    const connection = this.get('litellm')
+  /**
+   * Dựng client cho một provider cụ thể.
+   *
+   * Secret được đọc trong closure `getApiKey`, không phải lúc dựng client — §6 yêu cầu
+   * "Secret chỉ được giải mã ngay trước khi tạo kết nối".
+   */
+  buildLlmClient(provider: LlmProvider, timeoutMs: number): OpenAiCompatibleClient {
+    const connection = this.get(provider)
     if (connection === null || !connection.enabled) {
-      throw new NexaError(ERROR_CODES.LITELLM_CONFIG_REQUIRED)
+      throw new NexaError(
+        provider === 'openai'
+          ? ERROR_CODES.OPENAI_CONFIG_REQUIRED
+          : ERROR_CODES.LITELLM_CONFIG_REQUIRED,
+      )
     }
-    return new LiteLlmClient({
+    return new OpenAiCompatibleClient({
       baseUrl: connection.baseUrl,
-      getApiKey: () => this.opts.security.readCredential('litellm'),
+      provider,
+      getApiKey: () => this.opts.security.readCredential(provider),
       logger: this.opts.logger,
       timeoutMs,
     })

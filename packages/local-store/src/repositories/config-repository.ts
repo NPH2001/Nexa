@@ -3,8 +3,10 @@ import type {
   Connection,
   ConnectionTestResult,
   ConnectionType,
+  LlmProvider,
   ModelConfig,
 } from '@nexa/shared-types'
+import { isLlmConnection } from '@nexa/shared-types'
 import { b, n } from '../driver.js'
 import type { LocalStore } from '../store.js'
 
@@ -59,7 +61,8 @@ export class ConfigRepository {
              ON CONFLICT(connection_id, secret_kind)
              DO UPDATE SET secure_storage_key = excluded.secure_storage_key`,
           )
-          .run(id, input.type === 'litellm' ? 'api_key' : 'pat', input.credentialRef, now)
+          // Provider LLM dùng API key; Atlassian dùng PAT.
+          .run(id, isLlmConnection(input.type) ? 'api_key' : 'pat', input.credentialRef, now)
       }
 
       const saved = this.findConnection(profileId, input.type)
@@ -107,12 +110,18 @@ export class ConfigRepository {
 
   addModel(
     profileId: string,
-    input: { modelId: string; displayName: string; contextWindowTokens: number },
+    input: {
+      provider: LlmProvider
+      modelId: string
+      displayName: string
+      contextWindowTokens: number
+    },
   ): ModelConfig {
     return this.store.transaction(() => {
+      // Cùng model id ở hai provider là hai bản ghi khác nhau — khoá tra cứu phải gồm provider.
       const existing = this.store.handle
-        .prepare('SELECT id FROM models WHERE profile_id = ? AND model_id = ?')
-        .get(profileId, input.modelId)
+        .prepare('SELECT id FROM models WHERE profile_id = ? AND provider = ? AND model_id = ?')
+        .get(profileId, input.provider, input.modelId)
       if (existing !== undefined) {
         return this.getModel(String(existing['id'])) as ModelConfig
       }
@@ -128,12 +137,15 @@ export class ConfigRepository {
       const now = this.store.nowIso()
       this.store.handle
         .prepare(
-          `INSERT INTO models (id, profile_id, model_id, display_name, is_default, verified, context_window_tokens, created_at)
-           VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+          `INSERT INTO models
+             (id, profile_id, provider, model_id, display_name, is_default, verified,
+              context_window_tokens, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         )
         .run(
           id,
           profileId,
+          input.provider,
           input.modelId,
           input.displayName,
           b(isFirst),
@@ -142,6 +154,7 @@ export class ConfigRepository {
         )
       return {
         id,
+        provider: input.provider,
         modelId: input.modelId,
         displayName: input.displayName,
         isDefault: isFirst,
@@ -157,11 +170,46 @@ export class ConfigRepository {
     return row === undefined ? null : mapModel(row)
   }
 
-  findModelByModelId(profileId: string, modelId: string): ModelConfig | null {
+  findModelByModelId(
+    profileId: string,
+    provider: LlmProvider,
+    modelId: string,
+  ): ModelConfig | null {
     const row = this.store.handle
-      .prepare('SELECT * FROM models WHERE profile_id = ? AND model_id = ?')
-      .get(profileId, modelId)
+      .prepare('SELECT * FROM models WHERE profile_id = ? AND provider = ? AND model_id = ?')
+      .get(profileId, provider, modelId)
     return row === undefined ? null : mapModel(row)
+  }
+
+  /** Model của một provider — dùng khi xoá kết nối thì phải xoá luôn model của nó. */
+  listModelsByProvider(profileId: string, provider: LlmProvider): ModelConfig[] {
+    return this.store.handle
+      .prepare('SELECT * FROM models WHERE profile_id = ? AND provider = ? ORDER BY created_at')
+      .all(profileId, provider)
+      .map(mapModel)
+  }
+
+  /**
+   * Xoá mọi model của một provider.
+   *
+   * Gọi khi người dùng xoá kết nối: để lại model trỏ tới một provider không còn cấu hình sẽ
+   * khiến lần chat sau báo lỗi mà người dùng không hiểu vì sao.
+   */
+  removeModelsByProvider(profileId: string, provider: LlmProvider): number {
+    return this.store.transaction(() => {
+      const removed = this.store.handle
+        .prepare('DELETE FROM models WHERE profile_id = ? AND provider = ?')
+        .run(profileId, provider).changes
+
+      // Nếu vừa xoá mất model mặc định thì chỉ định model khác, nếu còn.
+      if (removed > 0 && this.getDefaultModel(profileId) === null) {
+        const next = this.store.handle
+          .prepare('SELECT id FROM models WHERE profile_id = ? ORDER BY created_at LIMIT 1')
+          .get(profileId)
+        if (next !== undefined) this.setDefaultModel(profileId, String(next['id']))
+      }
+      return removed
+    })
   }
 
   listModels(profileId: string): ModelConfig[] {
@@ -254,6 +302,7 @@ function mapConnection(row: Record<string, unknown>): Connection {
 function mapModel(row: Record<string, unknown>): ModelConfig {
   return {
     id: String(row['id']),
+    provider: String(row['provider']) as LlmProvider,
     modelId: String(row['model_id']),
     displayName: String(row['display_name']),
     isDefault: Number(row['is_default']) === 1,

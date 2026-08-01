@@ -1,11 +1,18 @@
-import { ERROR_CODES, NexaError } from '@nexa/shared-types'
+import { ERROR_CODES, NexaError, type LlmProvider } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
 import { joinUrl } from '@nexa/security'
 import { SseAccumulator, SseStreamError, parseNonStreamResponse } from './sse-parser.js'
 import type { ChatRequest, ChatResult, ChatStreamEvent } from './types.js'
 
-export interface LiteLlmClientOptions {
+export interface OpenAiCompatibleClientOptions {
   readonly baseUrl: string
+  /**
+   * Provider nào đứng sau baseUrl này.
+   *
+   * Chỉ dùng để chọn mã lỗi: `LITELLM_AUTH_FAILED` và `OPENAI_AUTH_FAILED` dẫn người dùng tới
+   * hai màn hình Cài đặt khác nhau, nên không được trộn.
+   */
+  readonly provider: LlmProvider
   /**
    * Lấy API key ngay trước khi gửi request.
    *
@@ -26,23 +33,29 @@ export interface RequestContext {
 }
 
 /**
- * LLM Client (§5.2): gọi LiteLLM bằng API key cục bộ, streaming, cancellation, timeout,
- * test kết nối và chuẩn hoá lỗi.
+ * LLM Client (§5.2): streaming, cancellation, timeout, test kết nối và chuẩn hoá lỗi.
+ *
+ * Tên gọi là "OpenAI-compatible" chứ không phải "LiteLLM" vì client này chỉ nói đúng giao thức
+ * đó — `POST /v1/chat/completions`, `GET /v1/models`, `Authorization: Bearer`. LiteLLM là một
+ * hiện thực của giao thức ấy; api.openai.com là một hiện thực khác. Không có gì trong file này
+ * riêng cho LiteLLM.
  *
  * Client này KHÔNG biết gì về hội thoại hay tool — nó chỉ nói HTTP. Việc dựng context và
  * vòng lặp tool nằm ở @nexa/agent-runtime.
  */
-export class LiteLlmClient {
+export class OpenAiCompatibleClient {
   private readonly baseUrl: string
+  private readonly provider: LlmProvider
   private readonly getApiKey: () => string
   private readonly log: Logger
   private readonly timeoutMs: number
   private readonly fetchImpl: typeof fetch
 
-  constructor(opts: LiteLlmClientOptions) {
+  constructor(opts: OpenAiCompatibleClientOptions) {
     this.baseUrl = opts.baseUrl
+    this.provider = opts.provider
     this.getApiKey = opts.getApiKey
-    this.log = opts.logger.child({ module: 'llm-client' })
+    this.log = opts.logger.child({ module: 'llm-client', provider: opts.provider })
     this.timeoutMs = opts.timeoutMs ?? 120_000
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
   }
@@ -227,10 +240,12 @@ export class LiteLlmClient {
     switch (response.status) {
       case 401:
       case 403:
-        return new NexaError(ERROR_CODES.LITELLM_AUTH_FAILED, {
-          requestId: ctx.requestId,
-          safeDetail: detail,
-        })
+        return new NexaError(
+          this.provider === 'openai'
+            ? ERROR_CODES.OPENAI_AUTH_FAILED
+            : ERROR_CODES.LITELLM_AUTH_FAILED,
+          { requestId: ctx.requestId, safeDetail: detail },
+        )
       case 404:
       case 405:
         // Không phải lỗi key — endpoint không tồn tại. testConnection dựa vào đúng mã này
@@ -246,13 +261,15 @@ export class LiteLlmClient {
           safeDetail: detail,
         })
       case 429:
-        return new NexaError(ERROR_CODES.LITELLM_RATE_LIMITED, {
-          requestId: ctx.requestId,
-          safeDetail: detail,
-        })
+        return new NexaError(
+          this.provider === 'openai'
+            ? ERROR_CODES.OPENAI_RATE_LIMITED
+            : ERROR_CODES.LITELLM_RATE_LIMITED,
+          { requestId: ctx.requestId, safeDetail: detail },
+        )
       case 400:
       case 422:
-        // Model id sai là nguyên nhân phổ biến nhất của 400 tại LiteLLM.
+        // Model id sai là nguyên nhân phổ biến nhất của 400 ở cả hai provider.
         return new NexaError(ERROR_CODES.MODEL_NOT_CONFIGURED, {
           requestId: ctx.requestId,
           safeDetail: detail,

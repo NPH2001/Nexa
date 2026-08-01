@@ -2,20 +2,23 @@ appId: net.fimaster.nexa
 productName: Nexa
 copyright: © 2026
 
+# Electron được hoist lên node_modules gốc của workspace, nên electron-builder không tự suy ra
+# phiên bản từ apps/desktop. Khai tường minh và giữ khớp với devDependency đã pin.
+electronVersion: 43.2.0
+
+# Chạy từ repo root; `app` trỏ vào workspace của ứng dụng. Mọi đường dẫn trong `files`
+# tính tương đối với `directories.app`, KHÔNG phải với repo root.
 directories:
+  app: apps/desktop
   output: release/${version}
   buildResources: apps/desktop/resources
 
 files:
-  - apps/desktop/out/**/*
-  - apps/desktop/package.json
+  - out/**/*
   - package.json
-  # Native module phải đi kèm ở dạng đã rebuild cho ABI của Electron.
-  - node_modules/better-sqlite3/**/*
-  - node_modules/bindings/**/*
-  - node_modules/file-uri-to-path/**/*
-  - node_modules/mammoth/**/*
-  - node_modules/pdfjs-dist/**/*
+  # Dependency được hoist lên node_modules của workspace root.
+  - ../../node_modules/mammoth/**/*
+  - ../../node_modules/pdfjs-dist/**/*
   # Loại rác không cần trong bộ cài.
   - '!**/*.map'
   - '!**/test/**'
@@ -29,9 +32,10 @@ extraResources:
     to: policy.json
 
 asar: true
-# Native binding không chạy được từ trong asar.
-asarUnpack:
-  - node_modules/better-sqlite3/**/*
+
+# Không còn native module nào trong bộ cài, nên không cần rebuild và không cần asarUnpack.
+# SQLite dùng `node:sqlite` có sẵn trong Node 24 của Electron 43 — xem ADR 0003.
+npmRebuild: false
 
 win:
   # §21: "Cài và gỡ trên Windows không cần quyền admin nếu chính sách cho phép" — NSIS per-user.
@@ -44,6 +48,11 @@ win:
   icon: apps/desktop/resources/icon.ico
   # §11.1 "Ký số bộ cài và executable" — điền khi có certificate (TASKLIST T-02-5).
   # certificateSubjectName: 'Ten To Chuc'
+  #
+  # ⚠️ `signAndEditExecutable` cần công cụ Windows (rcedit) để nhúng icon và version info.
+  # Trên Linux nó cần wine. Đã thử: từ Linux ra được `win-unpacked` (cấu hình `files` đúng)
+  # nhưng bước tạo NSIS cuối thì không. **Bộ cài phát hành PHẢI build trên Windows** —
+  # job `build-windows` trong CI làm việc đó.
   signAndEditExecutable: true
   # Nexa không cần quyền nâng cao.
   requestedExecutionLevel: asInvoker

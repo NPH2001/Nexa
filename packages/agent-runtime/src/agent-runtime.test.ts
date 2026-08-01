@@ -12,7 +12,14 @@ import {
 } from '@nexa/shared-types'
 import { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
 import { computePayloadHash } from '@nexa/security'
-import { AgentRuntime, ConfirmationGuard, OperationTracker, type ToolCallSink } from './index.js'
+import {
+  AgentRuntime,
+  ConfirmationGuard,
+  OperationTracker,
+  assertModelMayReceiveDocuments,
+  mayReceiveDocuments,
+  type ToolCallSink,
+} from './index.js'
 import { testLogger, fakeClock } from '../../../tests/support/factories.js'
 import { FakeLlmClient, type ScriptedTurn } from '../../../tests/support/fake-llm.js'
 
@@ -170,6 +177,7 @@ async function makeHarness(opts: {
         requestId: 'req_test',
         conversationId: '00000000-0000-4000-8000-000000000001',
         modelId: 'model-a',
+        modelProvider: 'litellm',
         contextWindowTokens: 128_000,
         history: [{ role: 'user', content: 'Tạo cho tôi một task' }],
         emit: (e) => emitted.push(e),
@@ -536,6 +544,7 @@ describe('AgentRuntime — vòng lặp tool', () => {
         requestId: 'req_doc',
         conversationId: '00000000-0000-4000-8000-000000000002',
         modelId: 'model-a',
+        modelProvider: 'litellm',
         contextWindowTokens: 128_000,
         history: [{ role: 'user', content: 'tóm tắt file' }],
         documents: [
@@ -685,3 +694,127 @@ function fakePreview(): ToolPreview {
     riskLevel: 'WRITE_LOW',
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Provider ngoài tổ chức — chính sách tài liệu FAIL-CLOSED (OPEN-QUESTIONS F1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('chính sách tài liệu theo provider', () => {
+  const doc = {
+    fileName: 'bao-cao-noi-bo.txt',
+    kind: 'txt' as const,
+    sizeBytes: 100,
+    sourcePathHash: 'a'.repeat(64),
+    text: 'Số liệu doanh thu nội bộ',
+    chunks: [],
+    charCount: 24,
+    estimatedTokens: 6,
+    truncated: false,
+  }
+
+  function runWithDocument(h: Harness, provider: 'litellm' | 'openai', modelId: string) {
+    return h.runtime.runTurn({
+      requestId: 'req_doc',
+      conversationId: '00000000-0000-4000-8000-00000000000d',
+      modelId,
+      modelProvider: provider,
+      contextWindowTokens: 128_000,
+      history: [{ role: 'user', content: 'tóm tắt tài liệu' }],
+      documents: [doc],
+      emit: () => undefined,
+      toolCalls: h.sink,
+    })
+  }
+
+  it('provider NỘI BỘ: allowlist rỗng ⇒ cho phép (fail-open)', async () => {
+    const h = await makeHarness({ script: [{ text: 'Đã tóm tắt.' }] })
+    const result = await runWithDocument(h, 'litellm', 'model-a')
+    expect(result.text).toBe('Đã tóm tắt.')
+  })
+
+  it('provider NGOÀI: allowlist rỗng ⇒ TỪ CHỐI (fail-closed)', async () => {
+    const h = await makeHarness({ script: [{ text: 'không nên tới đây' }] })
+
+    await expect(runWithDocument(h, 'openai', 'gpt-4o')).rejects.toMatchObject({
+      code: ERROR_CODES.EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS,
+    })
+    // Bất biến quan trọng nhất: KHÔNG byte nào rời máy.
+    expect(h.llm.requests).toHaveLength(0)
+  })
+
+  it('provider NGOÀI: chỉ cho phép khi model được allowlist TƯỜNG MINH', async () => {
+    const h = await makeHarness({
+      script: [{ text: 'Đã tóm tắt.' }],
+      settings: { externalDocumentAllowedModels: ['openai:gpt-4o'] },
+    })
+    const result = await runWithDocument(h, 'openai', 'gpt-4o')
+    expect(result.text).toBe('Đã tóm tắt.')
+  })
+
+  it('allowlist cho model KHÁC không mở đường cho model ngoài đang chọn', async () => {
+    const h = await makeHarness({
+      script: [{ text: 'không nên tới đây' }],
+      settings: { externalDocumentAllowedModels: ['openai:gpt-4o-mini'] },
+    })
+
+    await expect(runWithDocument(h, 'openai', 'gpt-4o')).rejects.toMatchObject({
+      code: ERROR_CODES.EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS,
+    })
+    expect(h.llm.requests).toHaveLength(0)
+  })
+
+  it('chat KHÔNG kèm tài liệu vẫn chạy với provider ngoài', async () => {
+    // Chính sách này chặn rò rỉ hàng loạt do đính kèm file, không phải kiểm duyệt nội dung.
+    const h = await makeHarness({ script: [{ text: 'Xin chào từ model ngoài.' }] })
+
+    const result = await h.runtime.runTurn({
+      requestId: 'req_chat',
+      conversationId: '00000000-0000-4000-8000-00000000000e',
+      modelId: 'gpt-4o',
+      modelProvider: 'openai',
+      contextWindowTokens: 128_000,
+      history: [{ role: 'user', content: 'xin chào' }],
+      emit: () => undefined,
+      toolCalls: h.sink,
+    })
+    expect(result.text).toBe('Xin chào từ model ngoài.')
+  })
+})
+
+describe('mayReceiveDocuments (dùng cho UI)', () => {
+  const settings = {
+    ...DEFAULT_APP_SETTINGS,
+    externalDocumentAllowedModels: ['openai:gpt-4o'],
+  }
+
+  it.each([
+    // Hai danh sách độc lập: cho phép một model NGOÀI không được làm hẹp model NỘI BỘ.
+    ['litellm', 'bat-ky-model-nao', true],
+    ['litellm', 'gpt-4o', true],
+    ['openai', 'gpt-4o', true],
+    ['openai', 'gpt-4o-mini', false],
+  ] as const)('%s / %s → %s', (provider, modelId, expected) => {
+    expect(mayReceiveDocuments(provider, modelId, settings)).toBe(expected)
+  })
+
+  it('cho phép model ngoài KHÔNG làm hẹp chính sách của model nội bộ', () => {
+    // Đây là lỗi thiết kế đã gặp khi dùng chung một danh sách: admin thêm 'gpt-4o' để mở cho
+    // model ngoài, và vô tình chặn mọi model nội bộ khác.
+    expect(mayReceiveDocuments('litellm', 'model-noi-bo-bat-ky', settings)).toBe(true)
+  })
+
+  it('khớp với hàm assert ở main — UI không được nói khác chốt chặn thật', () => {
+    for (const provider of ['litellm', 'openai'] as const) {
+      for (const modelId of ['gpt-4o', 'gpt-4o-mini']) {
+        const allowedByHelper = mayReceiveDocuments(provider, modelId, settings)
+        let allowedByAssert = true
+        try {
+          assertModelMayReceiveDocuments(provider, modelId, settings)
+        } catch {
+          allowedByAssert = false
+        }
+        expect(allowedByHelper).toBe(allowedByAssert)
+      }
+    }
+  })
+})

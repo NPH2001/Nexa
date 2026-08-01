@@ -58,7 +58,8 @@ export const NEXA_EVENTS = {
   toolConfirmation: 'nexa:tool-confirmation',
   toolStatus: 'nexa:tool-status',
   mcpStatus: 'nexa:mcp-status',
-  connectionStatus: 'nexa:connection-status',
+  /** Có bản cập nhật không bắt buộc. Trường hợp bắt buộc/thu hồi do main chặn thẳng. */
+  updateAvailable: 'nexa:update-available',
 } as const
 
 export type NexaEventName = (typeof NEXA_EVENTS)[keyof typeof NEXA_EVENTS]

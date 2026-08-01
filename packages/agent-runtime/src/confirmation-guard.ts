@@ -8,7 +8,7 @@ import {
   type ToolPreview,
 } from '@nexa/shared-types'
 import { SECURITY_EVENTS, newOperationId, type Logger } from '@nexa/observability'
-import { computePayloadHash } from '@nexa/security'
+import { computePayloadHash, safeEqual } from '@nexa/security'
 
 /**
  * Confirmation Guard (§5.2, §10.2, §10.3).
@@ -117,7 +117,10 @@ export class ConfirmationGuard {
   approve(operationId: string, payloadHashFromUi: string): ApprovalRecord {
     const entry = this.requirePending(operationId)
 
-    if (entry.request.payloadHash !== payloadHashFromUi) {
+    // So sánh hằng thời gian. Ở đây renderer đã biết hash nên tấn công thời gian không
+    // mang lại gì, nhưng đây là token bảo mật và so sánh token bằng `!==` là thói quen sai
+    // — chỗ khác sao chép cách viết này thì mới thành lỗ hổng thật.
+    if (!safeEqual(entry.request.payloadHash, payloadHashFromUi)) {
       this.pending.delete(operationId)
       this.log.security(SECURITY_EVENTS.approvalMismatch, { operationId }, 'error')
       throw new NexaError(ERROR_CODES.TOOL_PAYLOAD_MISMATCH, { operationId })
@@ -210,7 +213,7 @@ export class ConfirmationGuard {
 
     // §17.2 kịch bản 3, kiểm tra lần cuối trên payload THẬT SỰ sắp gửi.
     const actualHash = computePayloadHash(toolName, payloadAboutToBeSent)
-    if (actualHash !== entry.request.payloadHash) {
+    if (!safeEqual(actualHash, entry.request.payloadHash)) {
       this.pending.delete(operationId)
       this.log.security(SECURITY_EVENTS.approvalMismatch, { operationId }, 'error')
       throw new NexaError(ERROR_CODES.TOOL_PAYLOAD_MISMATCH, { operationId })

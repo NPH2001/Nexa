@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSettings, Conversation, Message, ModelConfig } from '@nexa/shared-types'
+import {
+  PROVIDER_LABELS,
+  isExternalProvider,
+  type AppSettings,
+  type Conversation,
+  type LlmProvider,
+  type ModelConfig,
+  type Message,
+} from '@nexa/shared-types'
 import { api } from '../bridge.js'
 import type { Toast } from './Toasts.js'
 
@@ -15,7 +23,11 @@ export function ChatView(props: {
   models: readonly ModelConfig[]
   settings: AppSettings | null
   streaming: boolean
-  onSend: (content: string, fileTokens: string[], modelId?: string) => void
+  onSend: (
+    content: string,
+    fileTokens: string[],
+    model?: { modelId: string; provider: LlmProvider },
+  ) => void
   onCancel: () => void
   onCreateConversation: () => void
   onError: (error: unknown, fallback: string) => void
@@ -27,21 +39,59 @@ export function ChatView(props: {
   const [modelOverride, setModelOverride] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const selectedModelId =
-    modelOverride ??
-    props.conversation?.modelId ??
-    props.models.find((m) => m.isDefault)?.modelId ??
-    ''
+  /**
+   * Model đang chọn, xác định bằng khoá tổng hợp `provider:modelId`.
+   *
+   * Không dùng riêng model id: cùng một id có thể tồn tại ở LiteLLM và ở OpenAI, và hai lựa
+   * chọn đó gửi dữ liệu tới hai nơi khác nhau. Nhầm ở đây là gửi sai đích.
+   */
+  const modelKey = (m: ModelConfig): string => `${m.provider}:${m.modelId}`
+  const conversationKey =
+    props.conversation?.modelId !== null &&
+    props.conversation?.modelId !== undefined &&
+    props.conversation.modelProvider !== null
+      ? `${props.conversation.modelProvider}:${props.conversation.modelId}`
+      : null
+  const defaultModel = props.models.find((m) => m.isDefault) ?? props.models[0]
+  const selectedKey =
+    modelOverride ?? conversationKey ?? (defaultModel === undefined ? '' : modelKey(defaultModel))
+  const selectedModel = props.models.find((m) => modelKey(m) === selectedKey) ?? null
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [props.messages])
 
-  const documentPolicyBlocked = useMemo(() => {
+  /**
+   * Chính sách tài liệu, phản chiếu đúng logic ở main (`document-policy.ts`).
+   *
+   * Provider ngoài là FAIL-CLOSED: phải được allowlist tường minh. Kiểm tra ở đây để khoá nút
+   * Gửi trước khi người dùng bấm — main vẫn là chốt chặn thật, đây chỉ là để không dẫn người
+   * dùng vào một hành động sẽ bị từ chối.
+   */
+  const documentPolicy = useMemo(() => {
+    if (selectedModel === null) return { blocked: false, reason: '' }
     const allowlist = props.settings?.documentAllowedModels ?? []
-    if (allowlist.length === 0) return false
-    return !allowlist.includes(selectedModelId)
-  }, [props.settings, selectedModelId])
+    if (isExternalProvider(selectedModel.provider)) {
+      // Danh sách RIÊNG và fail-closed — xem document-policy.ts.
+      const key = `${selectedModel.provider}:${selectedModel.modelId}`
+      return (props.settings?.externalDocumentAllowedModels ?? []).includes(key)
+        ? { blocked: false, reason: '' }
+        : {
+            blocked: true,
+            reason:
+              'Không thể gửi tài liệu tới model bên ngoài tổ chức. Hãy chọn một model chạy qua LiteLLM nội bộ.',
+          }
+    }
+    if (allowlist.length === 0 || allowlist.includes(selectedModel.modelId)) {
+      return { blocked: false, reason: '' }
+    }
+    return {
+      blocked: true,
+      reason: 'Model đang chọn không nằm trong danh sách được phép nhận tài liệu nội bộ.',
+    }
+  }, [props.settings, selectedModel])
+
+  const externalSelected = selectedModel !== null && isExternalProvider(selectedModel.provider)
 
   if (props.conversation === null) {
     return (
@@ -86,7 +136,9 @@ export function ChatView(props: {
     props.onSend(
       content,
       attachments.map((a) => a.token),
-      selectedModelId === '' ? undefined : selectedModelId,
+      selectedModel === null
+        ? undefined
+        : { modelId: selectedModel.modelId, provider: selectedModel.provider },
     )
     setDraft('')
     setAttachments([])
@@ -99,17 +151,31 @@ export function ChatView(props: {
           <h2>{props.conversation.title}</h2>
           <span className="muted small">
             {props.conversation.messageCount} tin nhắn
-            {selectedModelId !== '' && ` · model: ${selectedModelId}`}
+            {selectedModel !== null && ` · ${selectedModel.modelId}`}
           </span>
         </div>
-        <ModelSelector
-          models={props.models}
-          value={selectedModelId}
-          onChange={(modelId) => {
-            setModelOverride(modelId)
-            props.onToast({ kind: 'info', title: `Lượt trả lời tiếp theo sẽ dùng ${modelId}` })
-          }}
-        />
+        <div className="chat-header-right">
+          {externalSelected && (
+            <span className="external-tag" title="Dữ liệu gửi ra ngoài tổ chức">
+              ngoài tổ chức
+            </span>
+          )}
+          <ModelSelector
+            models={props.models}
+            value={selectedKey}
+            onChange={(key) => {
+              setModelOverride(key)
+              const picked = props.models.find((m) => modelKey(m) === key)
+              props.onToast({
+                kind: picked !== undefined && isExternalProvider(picked.provider) ? 'warning' : 'info',
+                title:
+                  picked === undefined
+                    ? 'Đã đổi model'
+                    : `Lượt sau dùng ${picked.modelId} — ${PROVIDER_LABELS[picked.provider]}`,
+              })
+            }}
+          />
+        </div>
       </header>
 
       <div className="messages">
@@ -142,18 +208,25 @@ export function ChatView(props: {
           </div>
         )}
 
-        {attachments.length > 0 && props.settings?.warnBeforeSendingDocuments === true && (
-          // §11.2: "Nexa phải hiển thị cảnh báo dữ liệu".
-          <p className="warning-inline">
-            Nội dung các file này sẽ được gửi tới model qua LiteLLM. Chỉ đính kèm tài liệu mà bạn
-            được phép chia sẻ với dịch vụ AI của tổ chức.
-          </p>
+        {attachments.length > 0 &&
+          !documentPolicy.blocked &&
+          props.settings?.warnBeforeSendingDocuments === true && (
+            // §11.2: "Nexa phải hiển thị cảnh báo dữ liệu".
+            <p className="warning-inline">
+              Nội dung các file này sẽ được gửi tới{' '}
+              {selectedModel === null ? 'model' : PROVIDER_LABELS[selectedModel.provider]}. Chỉ
+              đính kèm tài liệu mà bạn được phép chia sẻ.
+            </p>
+          )}
+
+        {documentPolicy.blocked && attachments.length > 0 && (
+          <p className="error-inline">{documentPolicy.reason}</p>
         )}
 
-        {documentPolicyBlocked && attachments.length > 0 && (
-          <p className="error-inline">
-            Model đang chọn không nằm trong danh sách được phép nhận tài liệu nội bộ. Hãy đổi model
-            trước khi gửi.
+        {externalSelected && attachments.length === 0 && (
+          <p className="warning-inline">
+            Model đang chọn nằm ngoài tổ chức. Câu hỏi của bạn sẽ được gửi tới{' '}
+            {PROVIDER_LABELS[selectedModel.provider]} — đừng dán dữ liệu nhạy cảm.
           </p>
         )}
 
@@ -183,7 +256,9 @@ export function ChatView(props: {
               type="button"
               className="btn btn-primary"
               onClick={submit}
-              disabled={draft.trim() === '' || documentPolicyBlocked}
+              disabled={
+                draft.trim() === '' || (attachments.length > 0 && documentPolicy.blocked)
+              }
             >
               Gửi
             </button>
@@ -210,8 +285,9 @@ function ModelSelector(props: {
       aria-label="Chọn model"
     >
       {props.models.map((model) => (
-        <option key={model.id} value={model.modelId}>
+        <option key={model.id} value={`${model.provider}:${model.modelId}`}>
           {model.displayName}
+          {isExternalProvider(model.provider) ? ' ⚠ ngoài tổ chức' : ''}
           {model.verified ? '' : ' (chưa kiểm chứng)'}
         </option>
       ))}

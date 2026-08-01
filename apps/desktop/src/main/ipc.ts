@@ -120,9 +120,10 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       services.models.setDefault(input.id)
       return { ok: true }
     },
-    'model:verifyAll': () =>
+    'model:verifyAll': (input) =>
       services.models.verifyAll(
-        services.connections.buildLiteLlmClient(services.settings.get().llmTimeoutMs),
+        input.provider,
+        services.connections.buildLlmClient(input.provider, services.settings.get().llmTimeoutMs),
       ),
 
     // ── Conversations ─────────────────────────────────────────────────────
@@ -133,7 +134,13 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         offset: input.offset,
       }),
     'conversation:create': (input) =>
-      services.conversations.create(services.profileId, input.title, input.modelId),
+      services.conversations.create(
+        services.profileId,
+        input.title,
+        input.modelId === null || input.modelProvider === null
+          ? null
+          : { modelId: input.modelId, provider: input.modelProvider },
+      ),
     'conversation:rename': (input) => {
       services.conversations.rename(input.id, input.title)
       return { ok: true }

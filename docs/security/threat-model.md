@@ -20,9 +20,18 @@ Cập nhật: 2026-08-01 · Trạng thái: **chưa có pentest độc lập** (T
           │ HTTPS + Bearer            │ stdio + env
      ┌────▼─────┐                ┌────▼──────────────┐
      │ LiteLLM  │                │ MCP Atlassian     │ ── KHÔNG tin output
-     └──────────┘                │ (process con)     │
-                                 └───────────────────┘
+     │ (nội bộ) │                │ (process con)     │
+     └──────────┘                └───────────────────┘
+          │
+     ┌────▼──────────────┐
+     │ api.openai.com    │ ── NGOÀI tầm kiểm soát tổ chức
+     │ (tuỳ chọn, F1)    │    Không quota, không usage log của tổ chức.
+     └───────────────────┘    Tài liệu bị chặn theo mặc định (T16).
 ```
+
+⚠️ Nhánh OpenAI là **sai lệch có chủ ý** so với §6 của tài liệu thiết kế
+(*"Nexa không kết nối trực tiếp provider"*), được chấp nhận ngày 2026-08-01.
+Xem [`OPEN-QUESTIONS.md`](../OPEN-QUESTIONS.md) mục F1.
 
 Ba nguồn dữ liệu **không được tin**: đầu vào từ renderer, output của LLM, và kết quả trả về
 từ MCP server.
@@ -51,6 +60,9 @@ từ MCP server.
 | T13 | Electron rơi xuống backend mã hoá giả trên Linux | `SafeStorageBackend.productionGrade` trả false khi backend là `basic_text` | `security.test.ts` → basic_text guard |
 | T14 | Cài đè bản Nexa cũ lên dữ liệu mới làm hỏng schema | Migration từ chối khi `schemaVersion` trên đĩa mới hơn app | `local-store.test.ts` → migration |
 | T15 | Ciphertext bị chuyển từ cột này sang cột khác | AAD = `version:table.column` | `security.test.ts`, `local-store.test.ts` |
+| T16 | **Tài liệu nội bộ bị gửi ra provider ngoài tổ chức** | Chính sách tài liệu FAIL-CLOSED với provider ngoài: rỗng = từ chối, phải allowlist từng model dạng `openai:gpt-4o`. Danh sách RIÊNG với allowlist nội bộ | `agent-runtime.test.ts` → "chính sách tài liệu theo provider" |
+| T17 | Người dùng không biết mình đang nói với model ngoài tổ chức | Nhãn "ngoài tổ chức" cạnh model, cảnh báo trong khung soạn tin, cảnh báo ở tab Cài đặt | UI — chưa có test tự động |
+| T18 | Cùng model id ở hai provider gây gửi sai đích | Khoá tổng hợp `provider:modelId` ở mọi tầng: DB unique index, resolve model, selector UI | `local-store.test.ts` → migration v2 |
 
 ## Trường CẤM ghi log (T-03-2)
 
@@ -82,6 +94,8 @@ Những điều dưới đây được **giả định đúng**. Nếu một gi�
    kẻ tấn công chạy được mã dưới tài khoản đó thì đọc được mọi thứ Nexa đọc được.
 2. **Máy không bị cài keylogger / infostealer.** Nexa không chống được malware ở tầng OS.
 3. **LiteLLM và Atlassian là hệ thống đáng tin.** Nexa gửi nội dung cho chúng theo đúng thiết kế.
+   **OpenAI thì KHÔNG nằm trong giả định này** — nó là bên thứ ba ngoài tổ chức, và mọi biện
+   pháp ở T16–T18 tồn tại vì lý do đó.
 4. **Người dùng đọc màn hình xác nhận.** Toàn bộ cơ chế user-in-the-loop dựa vào giả định này.
    Đây là mắt xích yếu nhất và không có biện pháp kỹ thuật nào thay thế được.
 
@@ -95,3 +109,6 @@ Những điều dưới đây được **giả định đúng**. Nếu một gi�
 | PAT Jira và Confluence chung một tiến trình MCP | Package MCP nhận cả hai cùng lúc | OPEN-QUESTIONS E3 |
 | Chưa có app-level password | §8.2 chỉ yêu cầu DPAPI | OPEN-QUESTIONS B1 |
 | Allowlist domain mặc định rỗng | Fail-open có chủ ý; đề nghị ATTT bắt buộc điền | OPEN-QUESTIONS D2 |
+| **Chat (không kèm tài liệu) tới provider ngoài chỉ được cảnh báo, không bị chặn** | Chặn chat thì tính năng vô dụng; cần ATTT quyết | OPEN-QUESTIONS F1 |
+| **Không có usage log tập trung cho lời gọi OpenAI** | §11.2 cấm telemetry tập trung theo mặc định — hai yêu cầu xung đột | OPEN-QUESTIONS F2 |
+| IT chưa tắt được kết nối OpenAI qua policy | Chưa có cờ trong `forcedFeatures` | OPEN-QUESTIONS F1 |

@@ -798,3 +798,31 @@ code {
   gap: 10px;
   font-size: 13px;
 }
+
+/* ── Provider bên ngoài tổ chức ────────────────────────────────────────── */
+
+.external-warning {
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: rgba(240, 161, 58, 0.08);
+  padding: 9px 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.external-tag {
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 99px;
+  padding: 0 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.model-add {
+  grid-template-columns: auto 1.4fr 1fr auto auto;
+}

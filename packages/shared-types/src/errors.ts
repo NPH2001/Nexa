@@ -23,6 +23,13 @@ export const ERROR_CODES = {
   // ── Nhóm B: bổ sung ─────────────────────────────────────────────────────
   /** Key hợp lệ nhưng vượt hạn mức LiteLLM (§11.2). */
   LITELLM_RATE_LIMITED: 'LITELLM_RATE_LIMITED',
+  /**
+   * Chưa cấu hình kết nối OpenAI. Mã riêng thay vì dùng lại LITELLM_* để thông báo lỗi nói
+   * đúng nơi người dùng cần vào sửa — hai kết nối này độc lập nhau.
+   */
+  OPENAI_CONFIG_REQUIRED: 'OPENAI_CONFIG_REQUIRED',
+  OPENAI_AUTH_FAILED: 'OPENAI_AUTH_FAILED',
+  OPENAI_RATE_LIMITED: 'OPENAI_RATE_LIMITED',
   /** Người dùng bấm huỷ khi đang streaming (§2.1). Không phải lỗi thật. */
   LLM_CANCELLED: 'LLM_CANCELLED',
   /** LiteLLM/MCP trả lỗi mạng hoặc 5xx. */
@@ -49,6 +56,11 @@ export const ERROR_CODES = {
   DOCUMENT_EXTRACTION_FAILED: 'DOCUMENT_EXTRACTION_FAILED',
   /** Model không nằm trong allowlist nhận tài liệu nội bộ. Xem OPEN-QUESTIONS A5. */
   MODEL_NOT_ALLOWED_FOR_DOCUMENTS: 'MODEL_NOT_ALLOWED_FOR_DOCUMENTS',
+  /**
+   * Model thuộc provider NGOÀI tổ chức và chưa được cho phép nhận tài liệu.
+   * Đây là fail-closed có chủ ý — xem OPEN-QUESTIONS F1.
+   */
+  EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS: 'EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS',
   /** IPC payload không khớp schema Zod (§5.3). */
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   /** Lỗi không phân loại được. Không bao giờ chứa chi tiết nhạy cảm. */
@@ -127,6 +139,21 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     retryable: true,
     hint: 'Chờ hạn mức được đặt lại, hoặc liên hệ quản trị LiteLLM để nâng quota.',
   },
+  OPENAI_CONFIG_REQUIRED: {
+    message: 'Chưa cấu hình endpoint hoặc API key OpenAI.',
+    retryable: false,
+    hint: 'Mở Cài đặt → OpenAI để nhập API key.',
+  },
+  OPENAI_AUTH_FAILED: {
+    message: 'API key OpenAI không hợp lệ hoặc đã bị thu hồi.',
+    retryable: false,
+    hint: 'Kiểm tra lại key tại nền tảng OpenAI, rồi cập nhật trong Cài đặt.',
+  },
+  OPENAI_RATE_LIMITED: {
+    message: 'Đã vượt hạn mức của OpenAI.',
+    retryable: true,
+    hint: 'Chờ hạn mức được đặt lại, hoặc kiểm tra hạn mức của tài khoản OpenAI.',
+  },
   LLM_CANCELLED: { message: 'Đã huỷ yêu cầu.', retryable: true },
   UPSTREAM_UNAVAILABLE: {
     message: 'Không kết nối được tới dịch vụ.',
@@ -181,6 +208,11 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     message: 'Model đang chọn không được phép nhận tài liệu nội bộ.',
     retryable: false,
     hint: 'Chọn model khác trong danh sách được tổ chức cho phép.',
+  },
+  EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS: {
+    message: 'Không thể gửi tài liệu tới một model bên ngoài tổ chức.',
+    retryable: false,
+    hint: 'Hãy chọn một model chạy qua LiteLLM nội bộ. Nếu bạn thực sự cần gửi tài liệu ra ngoài, bộ phận an toàn thông tin phải cho phép model đó trước.',
   },
   VALIDATION_FAILED: { message: 'Dữ liệu gửi lên không hợp lệ.', retryable: false },
   INTERNAL_ERROR: {

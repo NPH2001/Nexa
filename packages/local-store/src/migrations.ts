@@ -172,6 +172,101 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS profiles;
     `,
   },
+
+  {
+    version: 2,
+    name: 'llm-provider-per-model',
+    /**
+     * Thêm provider cho model và cho hội thoại, và mở CHECK constraint của `connections`.
+     *
+     * Trước v2, mọi model đều đi qua LiteLLM nên không cần ghi provider. Từ khi có kết nối
+     * OpenAI trực tiếp (OPEN-QUESTIONS F1), cùng một `model_id` có thể tồn tại ở hai provider,
+     * và một hội thoại mở lại phải biết gửi đi đâu.
+     *
+     * Phần khó nằm ở `connections`: v1 đặt `CHECK (type IN ('litellm','jira','confluence'))`,
+     * và SQLite KHÔNG cho sửa CHECK bằng ALTER TABLE. Phải dựng lại bảng.
+     *
+     * Khi dựng lại, thứ tự DROP là quan trọng: `credential_refs` tham chiếu `connections(id)`
+     * với ON DELETE CASCADE, nên `DROP TABLE connections` khi bật `foreign_keys` sẽ XOÁ SẠCH
+     * credential_refs. Vì vậy phải sao lưu cả hai bảng và drop bảng con TRƯỚC.
+     *
+     * Mất `credential_refs` không làm mất secret (secret nằm trong secure storage), nhưng nó
+     * làm mọi kết nối hiện ra là "chưa có credential" và người dùng phải nhập lại toàn bộ
+     * API key và PAT. Đó là lý do đoạn này viết dài dòng thay vì gọn.
+     *
+     * Backfill 'litellm' cho dữ liệu cũ: đó là provider duy nhất tồn tại trước v2, nên đây là
+     * suy luận chắc chắn đúng, không phải phỏng đoán.
+     */
+    up: `
+      -- ── models: thêm provider ───────────────────────────────────────────
+      ALTER TABLE models ADD COLUMN provider TEXT NOT NULL DEFAULT 'litellm';
+      ALTER TABLE conversations ADD COLUMN model_provider TEXT;
+
+      -- Hội thoại đã có model thì model đó chắc chắn là của LiteLLM.
+      UPDATE conversations SET model_provider = 'litellm' WHERE model_id IS NOT NULL;
+
+      -- Khoá duy nhất phải gồm provider: 'gpt-4o' qua LiteLLM và 'gpt-4o' qua OpenAI là hai
+      -- lựa chọn khác nhau, với đường đi dữ liệu khác nhau.
+      DROP INDEX IF EXISTS idx_models_profile_model;
+      CREATE UNIQUE INDEX idx_models_profile_provider_model
+        ON models(profile_id, provider, model_id);
+
+      -- ── connections: dựng lại để mở CHECK constraint ────────────────────
+      CREATE TABLE _mig2_connections AS SELECT * FROM connections;
+      CREATE TABLE _mig2_credential_refs AS SELECT * FROM credential_refs;
+
+      -- Drop bảng CON trước để không kích hoạt ON DELETE CASCADE.
+      DROP TABLE credential_refs;
+      DROP TABLE connections;
+
+      CREATE TABLE connections (
+        id             TEXT PRIMARY KEY,
+        profile_id     TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        type           TEXT NOT NULL CHECK (type IN ('litellm','openai','jira','confluence')),
+        base_url       TEXT NOT NULL,
+        username       TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        last_test_json TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_connections_profile_type ON connections(profile_id, type);
+
+      CREATE TABLE credential_refs (
+        connection_id      TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+        secret_kind        TEXT NOT NULL,
+        secure_storage_key TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        PRIMARY KEY (connection_id, secret_kind)
+      );
+
+      INSERT INTO connections
+        (id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at)
+        SELECT id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at
+        FROM _mig2_connections;
+
+      INSERT INTO credential_refs (connection_id, secret_kind, secure_storage_key, created_at)
+        SELECT connection_id, secret_kind, secure_storage_key, created_at
+        FROM _mig2_credential_refs;
+
+      DROP TABLE _mig2_connections;
+      DROP TABLE _mig2_credential_refs;
+    `,
+    /**
+     * Quay về v1 sẽ MẤT thông tin provider. Nếu còn model nào thuộc provider ngoài, việc dựng
+     * lại unique index cũ sẽ thất bại và transaction rollback — đúng ý đồ: mất thông tin
+     * provider là mất khả năng biết dữ liệu đã đi đâu.
+     */
+    down: `
+      DELETE FROM connections WHERE type = 'openai';
+
+      DROP INDEX IF EXISTS idx_models_profile_provider_model;
+      CREATE UNIQUE INDEX idx_models_profile_model ON models(profile_id, model_id);
+      ALTER TABLE models DROP COLUMN provider;
+      ALTER TABLE conversations DROP COLUMN model_provider;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0
+

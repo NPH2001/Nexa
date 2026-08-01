@@ -13,7 +13,13 @@ export const featureFlagsSchema = z.object({
   jiraUpdate: z.boolean().default(false),
   confluenceRead: z.boolean().default(true),
   confluenceSearch: z.boolean().default(true),
-  /** §22.3: ngoài MVP. */
+  /**
+   * §22.3: ngoài MVP.
+   *
+   * ⚠️ HIỆN CHƯA CÓ TOOL NÀO dùng cờ này — không tool Confluence write nào được đăng ký trong
+   * `tool-registry.ts`. Bật nó lên KHÔNG có tác dụng gì. Cờ tồn tại để Phụ lục A khớp và để
+   * chỗ cắm sẵn khi Confluence write vào phạm vi. Xem OPEN-QUESTIONS A6.
+   */
   confluenceWrite: z.boolean().default(false),
   /** §22.2 A8: mặc định tắt, để IT phân phối tập trung. */
   autoUpdate: z.boolean().default(false),
@@ -42,10 +48,22 @@ export const appSettingsSchema = z.object({
   /** OPEN-QUESTIONS B3. */
   maxToolIterations: z.number().int().min(1).max(10).default(5),
   /**
-   * Model được phép nhận tài liệu nội bộ (§11.2). Rỗng = không giới hạn.
-   * OPEN-QUESTIONS A5 — ATTT cần chốt có đổi sang fail-closed không.
+   * Model NỘI BỘ (qua LiteLLM) được phép nhận tài liệu (§11.2).
+   * Rỗng = không giới hạn — fail-open. OPEN-QUESTIONS A5.
    */
   documentAllowedModels: z.array(z.string()).default([]),
+  /**
+   * Model của provider NGOÀI được phép nhận tài liệu.
+   *
+   * Rỗng = KHÔNG model ngoài nào được nhận tài liệu — fail-closed (OPEN-QUESTIONS F1).
+   *
+   * Tách khỏi `documentAllowedModels` có chủ ý: nếu dùng chung một danh sách thì việc admin
+   * thêm một model ngoài vào đó sẽ VÔ TÌNH chặn mọi model nội bộ khác — hai chính sách ngược
+   * chiều nhau không thể dùng chung một danh sách.
+   *
+   * Ghi dạng `provider:modelId` để không nhập nhằng khi cùng model id có ở nhiều provider.
+   */
+  externalDocumentAllowedModels: z.array(z.string()).default([]),
   /** Hiện cảnh báo dữ liệu trước mỗi lần gửi file (§11.2). */
   warnBeforeSendingDocuments: z.boolean().default(true),
   features: featureFlagsSchema.default({}),

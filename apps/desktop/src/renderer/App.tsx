@@ -3,6 +3,7 @@ import type {
   AppSettings,
   ConfirmationRequest,
   Conversation,
+  LlmProvider,
   McpStatusEvent,
   Message,
   ModelConfig,
@@ -169,6 +170,16 @@ export function App(): React.JSX.Element {
       }),
 
       events.onMcpStatus((status) => setMcpStatus(status)),
+
+      // §18.2: bản cập nhật không bắt buộc thì chỉ thông báo. Trường hợp bắt buộc hoặc bản
+      // đang chạy bị thu hồi do main process chặn thẳng bằng dialog rồi đóng app.
+      events.onUpdateAvailable((event) => {
+        pushToast({
+          kind: 'info',
+          title: event.message,
+          detail: event.notes ?? 'Liên hệ bộ phận IT để cập nhật.',
+        })
+      }),
     ]
 
     return () => {
@@ -188,7 +199,9 @@ export function App(): React.JSX.Element {
       const defaultModel = models.find((m) => m.isDefault) ?? models[0]
       const created = await api.conversations.create(
         'Hội thoại mới',
-        defaultModel?.modelId ?? null,
+        defaultModel === undefined
+          ? null
+          : { modelId: defaultModel.modelId, provider: defaultModel.provider },
       )
       setConversations((prev) => [created, ...prev])
       setActiveId(created.id)
@@ -202,7 +215,7 @@ export function App(): React.JSX.Element {
   const sendMessage = async (
     content: string,
     fileTokens: string[],
-    modelId?: string,
+    model?: { modelId: string; provider: LlmProvider },
   ): Promise<void> => {
     if (activeId === null) return
     try {
@@ -210,7 +223,9 @@ export function App(): React.JSX.Element {
         conversationId: activeId,
         content,
         fileTokens,
-        ...(modelId !== undefined ? { modelId } : {}),
+        ...(model !== undefined
+          ? { modelId: model.modelId, modelProvider: model.provider }
+          : {}),
       })
       setStreamingRequestId(requestId)
       await loadMessages(activeId)
@@ -317,7 +332,7 @@ export function App(): React.JSX.Element {
             models={models}
             settings={settings}
             streaming={streamingRequestId !== null}
-            onSend={(content, tokens, modelId) => void sendMessage(content, tokens, modelId)}
+            onSend={(content, tokens, model) => void sendMessage(content, tokens, model)}
             onCancel={() => void cancelStreaming()}
             onCreateConversation={() => void createConversation()}
             onError={reportError}

@@ -217,35 +217,35 @@ describe('ConnectionService — credential lifecycle (§8.2)', () => {
 describe('ModelService', () => {
   it('resolves the default model when the conversation has none', () => {
     const { models } = makeServices()
-    models.add({ modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
-    expect(models.resolveForConversation(null).modelId).toBe('model-a')
+    models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
+    expect(models.resolveForConversation(null, null).modelId).toBe('model-a')
   })
 
   it('fails loudly when a conversation references a removed model', () => {
     const { models } = makeServices()
-    const a = models.add({ modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
-    models.add({ modelId: 'model-b', displayName: 'B', contextWindowTokens: 128_000 })
+    const a = models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
+    models.add({ provider: 'litellm', modelId: 'model-b', displayName: 'B', contextWindowTokens: 128_000 })
     models.remove(a.id)
 
     // Không âm thầm chuyển sang model-b: người dùng phải biết model đã đổi.
-    expect(() => models.resolveForConversation('model-a')).toThrow(
+    expect(() => models.resolveForConversation('model-a', 'litellm')).toThrow(
       expect.objectContaining({ code: ERROR_CODES.MODEL_NOT_CONFIGURED }),
     )
   })
 
   it('reports MODEL_NOT_CONFIGURED when nothing is configured at all', () => {
     const { models } = makeServices()
-    expect(() => models.resolveForConversation(null)).toThrow(
+    expect(() => models.resolveForConversation(null, null)).toThrow(
       expect.objectContaining({ code: ERROR_CODES.MODEL_NOT_CONFIGURED }),
     )
   })
 
   it('marks models verified against GET /v1/models', async () => {
     const { models } = makeServices()
-    models.add({ modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
-    models.add({ modelId: 'model-khong-ton-tai', displayName: 'B', contextWindowTokens: 128_000 })
+    models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
+    models.add({ provider: 'litellm', modelId: 'model-khong-ton-tai', displayName: 'B', contextWindowTokens: 128_000 })
 
-    const result = await models.verifyAll({
+    const result = await models.verifyAll('litellm', {
       listModels: () => Promise.resolve(['model-a', 'model-c']),
     } as never)
 
@@ -256,9 +256,9 @@ describe('ModelService', () => {
 
   it('leaves models unverified — not invalid — when the endpoint is unavailable', async () => {
     const { models } = makeServices()
-    models.add({ modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
+    models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
 
-    const result = await models.verifyAll({
+    const result = await models.verifyAll('litellm', {
       listModels: () => Promise.reject(new Error('404')),
     } as never)
 

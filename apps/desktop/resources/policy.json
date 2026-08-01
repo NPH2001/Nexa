@@ -1,5 +1,6 @@
 {
   "_comment": "Chính sách do đội IT đặt lúc phân phối. Người dùng không sửa được file này. Xem docs/OPEN-QUESTIONS.md mục D2 — bộ phận ATTT nên bắt buộc điền allowedDomains.",
+  "_comment_openai": "Bật kết nối OpenAI trực tiếp thì phải thêm api.openai.com vào allowedDomains. Việc này đưa dữ liệu ra ngoài tổ chức — xem OPEN-QUESTIONS F1.",
   "allowedDomains": [],
   "lockedFeatures": [],
   "forcedFeatures": {

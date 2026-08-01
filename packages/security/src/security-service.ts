@@ -1,4 +1,4 @@
-import { ERROR_CODES, NexaError, type ConnectionType } from '@nexa/shared-types'
+import { ERROR_CODES, NexaError, type ConnectionType, type ErrorCode } from '@nexa/shared-types'
 import { SECURITY_EVENTS, type Logger, globalRedactor, type Redactor } from '@nexa/observability'
 import {
   MASTER_KEY_REF,
@@ -11,6 +11,7 @@ import {
   decryptField,
   encryptField,
   generateMasterKey,
+  wipe,
   type MasterKey,
 } from './crypto.js'
 
@@ -23,6 +24,19 @@ export interface SecurityServiceOptions {
    * (§3 Fail closed). Dev/test để false.
    */
   readonly requireProductionGrade?: boolean
+}
+
+/**
+ * Mã lỗi khi thiếu credential, theo từng loại kết nối.
+ *
+ * Bảng tra thay vì chuỗi if: thêm provider mới thì TypeScript bắt buộc điền mã cho nó, không
+ * thể lặng lẽ rơi vào nhánh `else` sai.
+ */
+const MISSING_CREDENTIAL_CODE: Readonly<Record<ConnectionType, ErrorCode>> = {
+  litellm: ERROR_CODES.LITELLM_CONFIG_REQUIRED,
+  openai: ERROR_CODES.OPENAI_CONFIG_REQUIRED,
+  jira: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
+  confluence: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
 }
 
 /**
@@ -145,12 +159,9 @@ export class SecurityService {
       throw NexaError.wrap(cause, ERROR_CODES.SECRET_UNAVAILABLE)
     }
     if (value === null) {
-      throw new NexaError(
-        type === 'litellm'
-          ? ERROR_CODES.LITELLM_CONFIG_REQUIRED
-          : ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
-        { safeDetail: `no credential stored for ${type}` },
-      )
+      throw new NexaError(MISSING_CREDENTIAL_CODE[type], {
+        safeDetail: `no credential stored for ${type}`,
+      })
     }
     this.redactor.registerSecret(value)
     return value
@@ -182,7 +193,7 @@ export class SecurityService {
    * thì một secret vô tình bị log trước đó sẽ lọt.
    */
   primeRedactor(): void {
-    for (const type of ['litellm', 'jira', 'confluence'] as const) {
+    for (const type of ['litellm', 'openai', 'jira', 'confluence'] as const) {
       try {
         const v = this.backend.get(credentialRef(type))
         if (v !== null) this.redactor.registerSecret(v)
@@ -200,6 +211,9 @@ export class SecurityService {
     for (const key of this.backend.listKeys()) {
       this.backend.delete(key)
     }
+    // Ghi đè buffer khoá trước khi bỏ tham chiếu. V8 không đảm bảo bộ nhớ được trả về ngay,
+    // nhưng nó rút ngắn khoảng thời gian khoá còn nằm trong heap — rẻ và không có lý do bỏ qua.
+    if (this.masterKey !== null) wipe(this.masterKey)
     this.masterKey = null
     this.redactor.clearSecrets()
     this.log.security(SECURITY_EVENTS.dataPurged, { scope: 'secrets' }, 'warn')

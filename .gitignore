@@ -20,3 +20,7 @@ sbom.json
 checksums.txt
 Nexa_Tai_lieu_thiet_ke_va_trien_khai_MVP_v1.1.docx
 TASKLIST.md
+
+# Playwright
+test-results/
+playwright-report/

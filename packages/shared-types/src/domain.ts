@@ -24,6 +24,11 @@ export interface Conversation {
   /** Đã giải mã. Trong DB lưu ciphertext. */
   readonly title: string
   readonly modelId: string | null
+  /**
+   * Provider của model đang gán. Lưu cùng `modelId` vì cùng một model id có thể tồn tại ở
+   * hai provider — thiếu trường này thì mở lại hội thoại sẽ không biết gửi đi đâu.
+   */
+  readonly modelProvider: LlmProvider | null
   readonly createdAt: string
   readonly updatedAt: string
   readonly archivedAt: string | null
@@ -146,9 +151,46 @@ export interface PreviewChange {
   readonly after: string
 }
 
+/**
+ * Provider LLM.
+ *
+ * `litellm` là cổng nội bộ của tổ chức — §4.1 đặt nó làm chỗ duy nhất áp quota, usage log và
+ * quyết định key nào gọi được model nào.
+ *
+ * `openai` gọi THẲNG api.openai.com, bỏ qua cổng đó. §6 của tài liệu thiết kế nói
+ * *"Nexa không kết nối trực tiếp provider"* — nên đây là một sai lệch có chủ ý so với thiết kế
+ * gốc, được chủ sở hữu sản phẩm chấp nhận ngày 2026-08-01. Xem OPEN-QUESTIONS F1.
+ *
+ * Hệ quả bảo mật được xử lý ở hai chỗ:
+ *   - `isExternalProvider()` bên dưới phân loại provider nằm ngoài kiểm soát tổ chức
+ *   - chính sách tài liệu FAIL-CLOSED với provider ngoài (`document-policy.ts`)
+ */
+export const LLM_PROVIDERS = ['litellm', 'openai'] as const
+export type LlmProvider = (typeof LLM_PROVIDERS)[number]
+
+/**
+ * Provider nào nằm ngoài tầm kiểm soát của tổ chức.
+ *
+ * Đây là hàm quyết định cho mọi biện pháp bảo vệ dữ liệu. Thêm provider mới thì phải trả lời
+ * câu hỏi này một cách tường minh — mặc định phải là "ngoài", không phải "trong".
+ */
+export function isExternalProvider(provider: LlmProvider): boolean {
+  return provider !== 'litellm'
+}
+
+/** Tên hiển thị cho người dùng. */
+export const PROVIDER_LABELS: Readonly<Record<LlmProvider, string>> = {
+  litellm: 'LiteLLM (nội bộ)',
+  openai: 'OpenAI / ChatGPT (bên ngoài)',
+}
+
 /** §8.1 bảng `connections`. Không chứa API key/PAT. */
-export const CONNECTION_TYPES = ['litellm', 'jira', 'confluence'] as const
+export const CONNECTION_TYPES = ['litellm', 'openai', 'jira', 'confluence'] as const
 export type ConnectionType = (typeof CONNECTION_TYPES)[number]
+
+export function isLlmConnection(type: ConnectionType): type is LlmProvider {
+  return (LLM_PROVIDERS as readonly string[]).includes(type)
+}
 
 export interface Connection {
   readonly id: string
@@ -175,7 +217,9 @@ export interface ConnectionTestResult {
 
 export interface ModelConfig {
   readonly id: string
-  /** Model id gửi cho LiteLLM. */
+  /** Provider sẽ nhận request cho model này. */
+  readonly provider: LlmProvider
+  /** Model id gửi cho provider. */
   readonly modelId: string
   /** Tên người dùng đặt để dễ nhận. */
   readonly displayName: string
@@ -186,7 +230,5 @@ export interface ModelConfig {
   readonly createdAt: string
 }
 
-export const messageRoleSchema = z.enum(MESSAGE_ROLES)
-export const riskLevelSchema = z.enum(RISK_LEVELS)
+/** Chỉ giữ schema thật sự được dùng ở biên IPC. */
 export const connectionTypeSchema = z.enum(CONNECTION_TYPES)
-export const operationStatusSchema = z.enum(OPERATION_STATUSES)

@@ -5,6 +5,7 @@ import type {
   Conversation,
   Message,
   MessageRole,
+  LlmProvider,
   MessageStatus,
   OperationStatus,
   RiskLevel,
@@ -76,16 +77,38 @@ export class ConversationRepository {
 
   // ── Conversations ───────────────────────────────────────────────────────
 
-  create(profileId: string, title: string, modelId: string | null): Conversation {
+  create(
+    profileId: string,
+    title: string,
+    model: { modelId: string; provider: LlmProvider } | null,
+  ): Conversation {
     const now = this.store.nowIso()
     const id = randomUUID()
     this.store.handle
       .prepare(
-        `INSERT INTO conversations (id, profile_id, title_ciphertext, model_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO conversations
+           (id, profile_id, title_ciphertext, model_id, model_provider, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, profileId, this.store.cipher.encrypt(CTX.title, title), n(modelId), now, now)
-    return { id, title, modelId, createdAt: now, updatedAt: now, archivedAt: null, messageCount: 0 }
+      .run(
+        id,
+        profileId,
+        this.store.cipher.encrypt(CTX.title, title),
+        n(model?.modelId),
+        n(model?.provider),
+        now,
+        now,
+      )
+    return {
+      id,
+      title,
+      modelId: model?.modelId ?? null,
+      modelProvider: model?.provider ?? null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      messageCount: 0,
+    }
   }
 
   get(id: string): Conversation | null {
@@ -121,10 +144,12 @@ export class ConversationRepository {
       .run(this.store.cipher.encrypt(CTX.title, title), this.store.nowIso(), id)
   }
 
-  setModel(id: string, modelId: string | null): void {
+  setModel(id: string, model: { modelId: string; provider: LlmProvider } | null): void {
     this.store.handle
-      .prepare('UPDATE conversations SET model_id = ?, updated_at = ? WHERE id = ?')
-      .run(n(modelId), this.store.nowIso(), id)
+      .prepare(
+        'UPDATE conversations SET model_id = ?, model_provider = ?, updated_at = ? WHERE id = ?',
+      )
+      .run(n(model?.modelId), n(model?.provider), this.store.nowIso(), id)
   }
 
   archive(id: string): void {
@@ -422,6 +447,10 @@ export class ConversationRepository {
       id: String(row['id']),
       title: this.store.cipher.decrypt(CTX.title, String(row['title_ciphertext'])),
       modelId: row['model_id'] === null ? null : String(row['model_id']),
+      modelProvider:
+        row['model_provider'] === null || row['model_provider'] === undefined
+          ? null
+          : (String(row['model_provider']) as LlmProvider),
       createdAt: String(row['created_at']),
       updatedAt: String(row['updated_at']),
       archivedAt: row['archived_at'] === null ? null : String(row['archived_at']),

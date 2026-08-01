@@ -26,11 +26,6 @@ export interface LogSink {
   close?(): void | Promise<void>
 }
 
-/** Bỏ hết — dùng khi logging bị tắt. */
-export class NullSink implements LogSink {
-  write(): void {}
-}
-
 /** Giữ trong RAM — dùng cho unit test và cho chế độ chẩn đoán khi ổ đĩa không ghi được. */
 export class MemorySink implements LogSink {
   readonly records: LogRecord[] = []

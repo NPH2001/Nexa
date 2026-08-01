@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import type { z } from 'zod'
 import type { RiskLevel, ToolPreview } from './domain.js'
 import type { FeatureFlags } from './settings.js'
 
@@ -79,14 +79,6 @@ export interface ApprovalRecord {
   readonly approvedAt: string
   readonly expiresAt: string
 }
-
-export const approvalRecordSchema = z.object({
-  operationId: z.string().uuid(),
-  payloadHash: z.string().length(64),
-  toolName: z.string(),
-  approvedAt: z.string(),
-  expiresAt: z.string(),
-})
 
 /** Yêu cầu xác nhận đẩy lên UI, kèm mọi thứ cần để hiển thị §10.2. */
 export interface ConfirmationRequest {

@@ -1,7 +1,7 @@
 # ADR 0003 — Tách lớp driver SQLite
 
-**Trạng thái:** Đề xuất
-**Ngày:** 2026-08-01 · **Cập nhật:** 2026-08-01 sau khi chạy thử app thật
+**Trạng thái:** ✅ **Đã chấp nhận** — chủ sở hữu sản phẩm chốt ngày 2026-08-01
+**Ngày:** 2026-08-01 · **Cập nhật:** 2026-08-01 sau khi chạy thử app và thử đóng gói
 
 ## Bối cảnh
 
@@ -21,8 +21,8 @@ kiểm chứng phần mã hoá và migration — đúng những chỗ rủi ro n
 
 | Driver | Dùng ở đâu | Lý do |
 |---|---|---|
-| `better-sqlite3` | Bản phát hành Electron | Nhanh, đã kiểm chứng trong hệ sinh thái Electron |
-| `node:sqlite` | Test và máy dev không có toolchain | Có sẵn từ Node 22.5+, không cần build |
+| `node:sqlite` | **Test và bản phát hành** | Có sẵn trong Node 24 của Electron 43, không cần build |
+| `better-sqlite3` | Không cài, không đóng gói — chỉ là lối thoát | Nhanh hơn, nhưng là native module |
 
 `openDatabase(path, preferred)` thử driver ưu tiên trước, rơi xuống driver còn lại nếu không nạp
 được. Cả hai đều nạp bằng `createRequire` chứ không `import()` — nếu dùng `import()` thì Vite
@@ -48,15 +48,29 @@ Electron 43.2.0 → Node 24.18.0 → node:sqlite CÓ SẴN (đã bỏ cờ exper
 ```
 
 Điều này đổi bản chất của quyết định. `node:sqlite` không còn là "driver chỉ dùng cho test" —
-nó chạy được cả trong bản phát hành. Vì vậy:
+nó chạy được cả trong bản phát hành.
 
-1. **Nâng lên Electron 43.**
-2. **`better-sqlite3` chuyển thành `optionalDependency`.** App chạy đầy đủ khi không có nó.
-3. **Bước rebuild native trong CI thành `continue-on-error`.** Nó là tối ưu hiệu năng, không
-   còn là điều kiện để phát hành.
+Rồi khi thử đóng gói, `better-sqlite3` chặn hẳn đường: **node-gyp không cross-compile được**
+native module. Nghĩa là nó vừa khiến không build được bộ cài Windows từ máy nào khác Windows,
+vừa buộc CI phải thêm một bước rebuild có thể gãy.
+
+### Quyết định cuối
+
+**Bỏ hẳn `better-sqlite3` khỏi cây phụ thuộc.** `node:sqlite` là driver duy nhất được cài và
+đóng gói. Hệ quả:
+
+- không còn native module nào ⇒ `npmRebuild: false`, không cần `asarUnpack`, không cần
+  `@electron/rebuild` trong CI
+- **test và bản phát hành chạy CÙNG một driver** — rủi ro "hành vi lệch giữa hai driver" biến
+  mất hoàn toàn, không chỉ giảm
+- `pnpm install` không còn phun lỗi node-gyp
+
+Đường dẫn tới `better-sqlite3` trong `driver.ts` được giữ lại làm lối thoát: nếu một bản Electron
+sau này bỏ `node:sqlite`, chỉ cần cài lại package và đổi một tham số. Dữ liệu là file SQLite
+chuẩn nên không cần chuyển đổi gì.
 
 App đã được chạy thật và xác nhận: `local-db-opened {"driver":"node:sqlite"}`, migration v1 áp
-dụng, `window-ready` sau 304 ms.
+dụng, `window-ready` sau 304 ms. 8 test E2E chạy Electron thật cũng đi qua đúng driver này.
 
 ## Hệ quả
 
@@ -68,8 +82,11 @@ dụng, `window-ready` sau 304 ms.
   giảm mạnh so với đánh giá ban đầu.
 
 **Tiêu cực**
-- `node:sqlite` vẫn được Node đánh dấu experimental. Nếu Electron tắt nó ở bản sau, đường lui là
-  better-sqlite3 — vẫn còn nguyên, chỉ là tuỳ chọn.
+- **`node:sqlite` vẫn được Node đánh dấu experimental.** Đây là rủi ro đã được nêu ra rõ ràng và
+  chủ sở hữu sản phẩm chấp nhận. Cơ sở đánh giá rủi ro thấp: dữ liệu là file SQLite chuẩn nên đổi
+  driver không mất dữ liệu, lối thoát chỉ là một tham số, và hiệu năng đã đo đủ dùng.
+  **Việc cần làm:** theo dõi ghi chú phát hành của Node/Electron khi nâng cấp — nếu API đổi hoặc
+  bị bỏ, đây là chỗ phải xem lại đầu tiên (gắn với E10, chính sách nâng cấp Electron).
 - Chậm hơn better-sqlite3. Số đo hiện tại (`tests/performance.test.ts`): ghi 2.400 message đã mã
   hoá mất 343 ms, liệt kê 100 hội thoại mất 4 ms. Ở quy mô một app desktop đơn người dùng, chênh
   lệch này không đáng kể.

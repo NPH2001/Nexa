@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "pnpm --filter @nexa/desktop dev",
     "build": "pnpm --filter @nexa/desktop build",
-    "package:win": "pnpm --filter @nexa/desktop package:win",
+    "package:win": "pnpm build && electron-builder --win --config electron-builder.yml",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -20,10 +20,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test"
+    "verify": "pnpm lint && pnpm typecheck && pnpm test",
+    "test:e2e": "playwright test",
+    "package:dir": "pnpm build && electron-builder --dir --config electron-builder.yml"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",

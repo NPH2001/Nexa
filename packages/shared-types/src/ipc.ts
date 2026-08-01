@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { IPC_CHANNEL_NAMES, type IpcChannelName } from './channels.js'
-import { connectionTypeSchema } from './domain.js'
+import { LLM_PROVIDERS, connectionTypeSchema } from './domain.js'
 import { appSettingsSchema } from './settings.js'
 
 /**
@@ -31,7 +31,10 @@ export const connectionRefSchema = z.object({ type: connectionTypeSchema })
 
 // ── Model registry (EPIC-03) ──────────────────────────────────────────────
 
+export const llmProviderSchema = z.enum(LLM_PROVIDERS)
+
 export const modelAddSchema = z.object({
+  provider: llmProviderSchema,
   modelId: z.string().min(1).max(200),
   displayName: z.string().min(1).max(120),
   contextWindowTokens: z.number().int().min(1024).max(2_000_000).default(128_000),
@@ -44,6 +47,7 @@ export const modelRefSchema = z.object({ id: z.string().uuid() })
 export const conversationCreateSchema = z.object({
   title: z.string().max(200).default('Hội thoại mới'),
   modelId: z.string().max(200).nullable().default(null),
+  modelProvider: llmProviderSchema.nullable().default(null),
 })
 
 export const conversationRefSchema = z.object({ id: z.string().uuid() })
@@ -75,8 +79,12 @@ export const chatSendSchema = z.object({
   content: z.string().min(1).max(200_000),
   /** Token do `files.pick` cấp. Không phải đường dẫn. */
   fileTokens: z.array(z.string().uuid()).max(20).default([]),
-  /** Bỏ trống = dùng model mặc định của hội thoại. */
+  /**
+   * Bỏ trống = dùng model mặc định của hội thoại.
+   * Có `modelId` thì BẮT BUỘC có `provider` — cùng model id tồn tại ở hai provider.
+   */
   modelId: z.string().max(200).optional(),
+  modelProvider: llmProviderSchema.optional(),
 })
 export type ChatSendInput = z.infer<typeof chatSendSchema>
 
@@ -130,7 +138,7 @@ export const IPC_SCHEMAS = {
   'model:add': modelAddSchema,
   'model:remove': modelRefSchema,
   'model:setDefault': modelRefSchema,
-  'model:verifyAll': emptySchema,
+  'model:verifyAll': z.object({ provider: llmProviderSchema }),
 
   'conversation:list': conversationListSchema,
   'conversation:create': conversationCreateSchema,
@@ -166,8 +174,6 @@ export const IPC_SCHEMAS = {
 
 export type IpcChannel = keyof typeof IPC_SCHEMAS
 export type IpcInput<C extends IpcChannel> = z.infer<(typeof IPC_SCHEMAS)[C]>
-
-export const IPC_CHANNELS = Object.keys(IPC_SCHEMAS) as readonly IpcChannel[]
 
 /**
  * Chốt chặn ở mức kiểu: `channels.ts` (không có zod, dùng cho preload) và `IPC_SCHEMAS`

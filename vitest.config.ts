@@ -22,6 +22,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['packages/**/*.test.ts', 'tests/**/*.test.ts', 'apps/**/*.test.ts'],
+    // E2E chạy bằng Playwright (`pnpm test:e2e`), không phải vitest.
+    exclude: ['**/node_modules/**', 'tests/e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

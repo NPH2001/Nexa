@@ -1,18 +1,18 @@
 # Hợp đồng tích hợp
 
-Nexa nói chuyện với bốn thứ bên ngoài. Đây là hợp đồng cho từng cái: Nexa **gửi gì**, **mong đợi gì**,
+Nexa nói chuyện với năm thứ bên ngoài. Đây là hợp đồng cho từng cái: Nexa **gửi gì**, **mong đợi gì**,
 và **hỏng thế nào**.
 
 Nguồn: §9 của tài liệu thiết kế. Nơi triển khai được ghi kèm để đối chiếu code.
 
-> Cả bốn hợp đồng đều **chưa được kiểm chứng với hệ thống thật** — xem
+> Cả năm hợp đồng đều **chưa được kiểm chứng với hệ thống thật** — xem
 > [`../OPEN-QUESTIONS.md`](../OPEN-QUESTIONS.md) mục C2.
 
 ---
 
 ## 1. LiteLLM
 
-**Triển khai:** `packages/llm-client/src/litellm-client.ts`
+**Triển khai:** `packages/llm-client/src/openai-compatible-client.ts`
 **Câu hỏi mở:** A1 🔴
 
 ### Gửi đi
@@ -52,6 +52,39 @@ nguyên request, tức là cả prompt.
 
 `GET /v1/models` trước. Nếu 404/405 (endpoint không bật) thì fallback sang một chat completion
 `max_tokens: 1` — vì mục tiêu là xác thực **key**, và 404 không nói được key đúng hay sai.
+
+---
+
+---
+
+## 1b. OpenAI (ChatGPT) — trực tiếp
+
+**Triển khai:** cùng `OpenAiCompatibleClient` với LiteLLM · **Câu hỏi mở:** F1 🔴
+
+Giao thức **giống hệt** LiteLLM — cùng `/v1/chat/completions`, `/v1/models`, `Authorization: Bearer`.
+Chỉ khác `baseUrl` (mặc định `https://api.openai.com`) và mã lỗi (`OPENAI_*` thay vì `LITELLM_*`).
+
+Đó chính là lý do client được đặt tên `OpenAiCompatibleClient`: nó chỉ nói giao thức, không biết
+ai đứng sau.
+
+### Khác biệt duy nhất đáng kể: đường dữ liệu
+
+| | LiteLLM | OpenAI trực tiếp |
+|---|---|---|
+| Đích | hạ tầng nội bộ | cloud công cộng |
+| Quota / usage log của tổ chức | có | **không** |
+| Tài liệu đính kèm | fail-open (§11.2, A5) | **fail-closed** — phải allowlist từng model |
+| Cảnh báo trong UI | không | có, ở ba chỗ |
+
+Danh sách cho phép gửi tài liệu tới model ngoài nằm ở `settings.externalDocumentAllowedModels`,
+ghi dạng `openai:gpt-4o`. **Tách khỏi** `documentAllowedModels` vì hai chính sách ngược chiều
+nhau — dùng chung một danh sách thì mở cho model ngoài sẽ vô tình chặn model nội bộ.
+
+### Điều tổ chức phải làm trước khi dùng
+
+1. Thêm `api.openai.com` vào `allowedDomains` trong `policy.json` (nếu allowlist đang được dùng)
+2. ATTT duyệt việc dữ liệu ra ngoài — xem OPEN-QUESTIONS F1
+3. Quyết định có allowlist model nào cho tài liệu hay không (mặc định: không cái nào)
 
 ---
 

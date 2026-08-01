@@ -1,4 +1,3 @@
-import { z } from 'zod'
 import { ERROR_CATALOG, NexaError, type ErrorCode } from './errors.js'
 
 /** Nguồn của kết quả (§9.2 `meta.source`). */
@@ -59,14 +58,3 @@ export function fail(requestId: string, error: unknown): ErrorEnvelope {
     },
   }
 }
-
-export const errorEnvelopeSchema = z.object({
-  request_id: z.string(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    retryable: z.boolean(),
-    hint: z.string().optional(),
-    operation_id: z.string().optional(),
-  }),
-})

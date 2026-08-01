@@ -8,15 +8,23 @@ tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chi�
 > **Đọc trước khi làm gì khác:** [`docs/OPEN-QUESTIONS.md`](docs/OPEN-QUESTIONS.md) — mọi giả
 > định đã dùng để viết code, và những gì còn phải chốt. Có 6 mục 🔴 BLOCKER cần trả lời trước
 > khi chạy với hạ tầng thật.
+>
+> **Sai lệch so với thiết kế:** Nexa có kết nối OpenAI trực tiếp, trái với §6 (*"Nexa không kết
+> nối trực tiếp provider"*). Đã được chấp nhận 2026-08-01 nhưng **cần ATTT duyệt trước khi phát
+> hành** — xem OPEN-QUESTIONS mục F1.
+>
+> Trạng thái so với Phụ lục C: [`docs/operations/pre-pilot-checklist.md`](docs/operations/pre-pilot-checklist.md) — **3/10 đạt**.
 
 ## Trạng thái
 
 | Hạng mục | Trạng thái |
 |---|---|
-| Test | 289 pass (gồm test hiệu năng §17.1) |
+| Test | **317 unit/integration** + **12 E2E** (Electron thật) |
 | Lint · typecheck | sạch |
 | Build (main/preload/renderer) | chạy được |
 | Chạy app thật | ✅ trên Linux — `window-ready` sau 304 ms |
+| E2E desktop | ✅ 8 test qua Playwright + Electron |
+| Đóng gói Windows | ⚠️ phải build trên Windows (job CI `build-windows`) — không cross-compile từ Linux |
 | Xác minh DPAPI trên Windows | **chưa** (OPEN-QUESTIONS C1) |
 | Kết nối LiteLLM / Jira / Confluence thật | **chưa** — mới chạy với mock server (C2) |
 | Ký số bộ cài | **chưa có certificate** (C3) |
@@ -39,9 +47,9 @@ pnpm dev        # chạy app ở chế độ phát triển
 pnpm package:win
 ```
 
-Yêu cầu **Node ≥ 22.5** (dùng `node:sqlite`). Electron 43 mang sẵn Node 24, nên bộ cài không
-phụ thuộc bắt buộc vào native module — `better-sqlite3` là `optionalDependency`, chỉ để tăng
-hiệu năng. Xem [ADR 0003](docs/architecture/adr/0003-sqlite-driver-abstraction.md).
+Yêu cầu **Node ≥ 22.5** (dùng `node:sqlite`). Electron 43 mang sẵn Node 24, và bộ cài **không
+chứa native module nào** — test và bản phát hành chạy cùng một driver SQLite.
+Xem [ADR 0003](docs/architecture/adr/0003-sqlite-driver-abstraction.md) (đã được chốt).
 
 ## Cấu trúc
 
@@ -56,7 +64,7 @@ nexa/
 │  ├─ observability/           Logger + Redactor + request id  (EPIC-10)
 │  ├─ security/                Mã hoá, secure storage, URL validator, payload hash (EPIC-02/11)
 │  ├─ local-store/             SQLite, migration, repository, search, retention (EPIC-05)
-│  ├─ llm-client/              LiteLLM client + SSE parser (EPIC-04)
+│  ├─ llm-client/              Client OpenAI-compatible (LiteLLM + OpenAI) + SSE parser (EPIC-04)
 │  ├─ mcp-client/              MCP JSON-RPC trên stdio (EPIC-07)
 │  ├─ atlassian-mcp-manager/   Lifecycle MCP + danh mục tool + preview (EPIC-07)
 │  ├─ connection-config/       Connection/model/settings service (EPIC-02/03)
@@ -65,9 +73,12 @@ nexa/
 ├─ docs/
 │  ├─ OPEN-QUESTIONS.md        ⚠️ Câu hỏi cần review
 │  ├─ RUNBOOK.md               Điều tra sự cố, đối chiếu request_id (§15.2)
+│  ├─ design-doc-v1.1.md       Bản trích xuất tài liệu thiết kế (grep/diff được)
 │  ├─ architecture/adr/        Quyết định kiến trúc
 │  ├─ integration/             Hợp đồng LiteLLM · MCP · IPC · update (§9)
+│  ├─ operations/              Phân phối IT · thu hồi bản lỗi · checklist trước pilot
 │  └─ security/threat-model.md Threat model §11.3 + trường cấm log
+├─ scripts/                    Trích xuất tài liệu .docx sang Markdown
 ├─ tests/
 │  ├─ fixtures/                Mock MCP server
 │  └─ support/                 Factory dùng chung cho test
@@ -80,6 +91,7 @@ nexa/
 
 | Bất biến | Nguồn | Test |
 |---|---|---|
+| Tài liệu KHÔNG gửi được tới model ngoài tổ chức khi chưa allowlist tường minh | F1 | `agent-runtime.test.ts` |
 | API key/PAT không nằm dạng rõ trong SQLite, file config hay log | §11.1 | `security.test.ts`, `connection-config.test.ts` |
 | Renderer không đọc được secret, không gọi mạng, không chạm file system | §5.3, §11.3 | `main.test.ts`, CSP `connect-src 'none'` |
 | Đường dẫn file không bao giờ rời main process | §5.3 | `main.test.ts` → FileBroker |
@@ -98,6 +110,7 @@ nexa/
 | `pnpm test` | test |
 | `pnpm test -- packages/agent-runtime` | test một package |
 | `pnpm test -- tests/performance.test.ts` | test hiệu năng, in số đo thật |
+| `pnpm test:e2e` | E2E desktop — chạy Electron thật (cần display) |
 | `pnpm typecheck` | `tsc --noEmit` toàn repo |
 | `pnpm dev` | chạy app |
 | `pnpm build` | build main/preload/renderer |

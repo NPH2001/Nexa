@@ -253,7 +253,10 @@ export class MemoryBackend implements SecureStorageBackend {
  * Quy ước khoá lưu trữ. Trùng với `credentialRef` trong Phụ lục A (`secure://litellm/default`)
  * để cấu hình xuất ra và secure storage nói cùng một ngôn ngữ.
  */
-export function credentialRef(kind: 'litellm' | 'jira' | 'confluence', name = 'default'): string {
+export function credentialRef(
+  kind: 'litellm' | 'openai' | 'jira' | 'confluence',
+  name = 'default',
+): string {
   return `secure://${kind}/${name}`
 }
 

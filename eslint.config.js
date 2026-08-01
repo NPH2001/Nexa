@@ -83,7 +83,14 @@ export default tseslint.config(
 
   // Tests and tooling get to be looser.
   {
-    files: ['**/*.test.ts', '**/*.test.tsx', 'tests/**/*.ts', '*.config.ts', 'eslint.config.js'],
+    files: [
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/*.e2e.ts',
+      'tests/**/*.ts',
+      '*.config.ts',
+      'eslint.config.js',
+    ],
     rules: {
       'no-console': 'off',
       'no-restricted-globals': 'off',
