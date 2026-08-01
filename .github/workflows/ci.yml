@@ -1,0 +1,134 @@
+name: CI
+
+# Pipeline theo §18.1. Thứ tự các bước bám đúng 9 bước trong tài liệu; bước nào chưa làm được
+# thì fail rõ ràng chứ không bỏ qua âm thầm (xem job `signing-gate`).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PNPM_VERSION: '9.15.0'
+  NODE_VERSION: '22.x'
+
+jobs:
+  # §18.1 bước 1: Lint, type-check và unit test.
+  quality:
+    name: Lint · Typecheck · Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+        # node:sqlite cần Node >= 22.5; test dùng driver này thay cho better-sqlite3 để
+        # không phụ thuộc toolchain C++ trên runner.
+
+  # §18.1 bước 2: Scan dependency, secret và license.
+  security-scan:
+    name: Dependency · Secret · License scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lỗ hổng phụ thuộc
+        run: pnpm audit --audit-level high
+
+      # §11.1 "kiểm thử secret scanning". Quét cả lịch sử, không chỉ diff.
+      - name: Quét secret bị commit
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Kiểm tra license
+        run: pnpm dlx license-checker-rseidelsohn --production --summary
+
+  # §18.1 bước 3–4: Build và chạy integration/E2E trên Windows runner.
+  build-windows:
+    name: Build · Integration test (Windows)
+    runs-on: windows-latest
+    needs: [quality]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Native module phải khớp ABI của Electron, không phải của Node.
+      - name: Rebuild native module cho Electron
+        run: pnpm dlx @electron/rebuild -f -w better-sqlite3
+
+      - run: pnpm build
+
+      - name: Integration test
+        run: pnpm test
+        env:
+          NEXA_TEST_PLATFORM: windows
+
+      # §18.1 bước 5: SBOM và checksum.
+      - name: Sinh SBOM
+        run: pnpm dlx @cyclonedx/cyclonedx-npm --output-file sbom.json --omit dev
+
+      - name: Đóng gói
+        run: pnpm package:win
+
+      - name: Sinh checksum
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path release -Recurse -Include *.exe,*.msi |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash, $_.Name } |
+            Out-File -Encoding utf8 release/checksums.txt
+          Get-Content release/checksums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexa-windows
+          path: |
+            release/**/*.exe
+            release/**/*.msi
+            release/checksums.txt
+            sbom.json
+          retention-days: 14
+
+  # §18.1 bước 6: ký số. Chưa có certificate (TASKLIST T-02-5) — job này CỐ Ý fail trên
+  # nhánh phát hành để không ai lỡ phát hành một bộ cài chưa ký.
+  signing-gate:
+    name: Cổng ký số
+    runs-on: ubuntu-latest
+    needs: [build-windows]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Kiểm tra đã có certificate chưa
+        run: |
+          if [ -z "${{ secrets.WINDOWS_CERT_BASE64 }}" ]; then
+            echo "::error::Chưa cấu hình certificate ký số."
+            echo "§11.1 và §18.2 bắt buộc ký số bộ cài trước khi phát hành."
+            echo "Xem TASKLIST.md mục T-02-5 và docs/OPEN-QUESTIONS.md mục C3."
+            exit 1
+          fi
+          echo "Certificate đã sẵn sàng."

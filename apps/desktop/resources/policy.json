@@ -1,0 +1,9 @@
+{
+  "_comment": "Chính sách do đội IT đặt lúc phân phối. Người dùng không sửa được file này. Xem docs/OPEN-QUESTIONS.md mục D2 — bộ phận ATTT nên bắt buộc điền allowedDomains.",
+  "allowedDomains": [],
+  "lockedFeatures": [],
+  "forcedFeatures": {
+    "confluenceWrite": false
+  },
+  "maxHistoryRetentionDays": 180
+}

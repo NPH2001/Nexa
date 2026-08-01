@@ -1,0 +1,22 @@
+node_modules/
+dist/
+out/
+release/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.vite/
+.eslintcache
+# Never commit local user data or secrets
+*.db
+*.db-journal
+*.sqlite
+nexa-local/
+sbom.json
+checksums.txt
+Nexa_Tai_lieu_thiet_ke_va_trien_khai_MVP_v1.1.docx
+TASKLIST.md

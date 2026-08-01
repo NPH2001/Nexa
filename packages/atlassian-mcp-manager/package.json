@@ -1,0 +1,18 @@
+{
+  "name": "@nexa/atlassian-mcp-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@nexa/mcp-client": "workspace:*",
+    "@nexa/observability": "workspace:*",
+    "@nexa/security": "workspace:*",
+    "@nexa/shared-types": "workspace:*",
+    "zod": "^3.24.1"
+  }
+}
