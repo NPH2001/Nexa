@@ -183,6 +183,42 @@ describe('ConnectionService — credential lifecycle (§8.2)', () => {
     ).toBeNull()
   })
 
+  it('does not require a username for mcpGateway — it authenticates with one bearer token (ADR-0005)', () => {
+    const { connections } = makeServices()
+    expect(
+      connections.save({
+        type: 'mcpGateway',
+        baseUrl: 'https://gateway.internal/mcp/',
+        username: null,
+        secret: 'gw-secret-0123456789',
+        enabled: true,
+      }).username,
+    ).toBeNull()
+  })
+
+  it('still enforces HTTPS + domain allowlist for the mcpGateway url', () => {
+    const { connections } = makeServices({ allowedDomains: ['*.corp.local'] })
+    expect(() =>
+      connections.save({
+        type: 'mcpGateway',
+        baseUrl: 'http://gateway.internal/mcp/',
+        username: null,
+        secret: 'gw-secret-0123456789',
+        enabled: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_URL' }))
+
+    expect(() =>
+      connections.save({
+        type: 'mcpGateway',
+        baseUrl: 'https://gateway.evil.example/mcp/',
+        username: null,
+        secret: 'gw-secret-0123456789',
+        enabled: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: ERROR_CODES.DOMAIN_NOT_ALLOWED }))
+  })
+
   it('deletes the credential together with the connection', () => {
     const { connections, security } = makeServices()
     connections.save({

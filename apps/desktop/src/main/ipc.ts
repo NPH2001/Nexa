@@ -156,6 +156,14 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     'conversation:search': (input) =>
       services.search.search(services.profileId, input.query, { limit: input.limit }),
     'message:list': (input) => services.conversations.listMessages(input.conversationId, input.limit),
+    'message:edit': (input) => {
+      services.conversations.editMessage(input.id, input.content)
+      return { ok: true }
+    },
+    'message:delete': (input) => {
+      services.conversations.deleteMessage(input.id)
+      return { ok: true }
+    },
 
     // ── Chat ──────────────────────────────────────────────────────────────
     'chat:send': (input) => chat.send(input),

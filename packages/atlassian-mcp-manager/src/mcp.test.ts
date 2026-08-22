@@ -88,7 +88,7 @@ describe('credential handling (§4.2, §11.1)', () => {
   it('keeps the PAT out of every log line', async () => {
     const { manager, sink } = makeManager()
     await manager.start()
-    await manager.callTool('jira.get_issue', { issue_key: 'PRJ-1' })
+    await manager.callTool('jira_get_issue', { issue_key: 'PRJ-1' })
 
     const logText = sink.asText()
     expect(logText).not.toContain(credentials.jira.token)
@@ -103,13 +103,13 @@ describe('lifecycle', () => {
 
     expect(manager.isReady).toBe(true)
     expect(manager.statusSnapshot.state).toBe('ready')
-    expect(manager.availableTools().map((t) => t.name)).toContain('jira.get_issue')
+    expect(manager.availableTools().map((t) => t.name)).toContain('jira_get_issue')
   })
 
   it('ignores non-JSON noise the server prints to stdout', async () => {
     const { manager } = makeManager('garbage-stdout')
     await manager.start()
-    const outcome = await manager.callTool('jira.get_issue', { issue_key: 'PRJ-7' })
+    const outcome = await manager.callTool('jira_get_issue', { issue_key: 'PRJ-7' })
     expect(outcome.summary.targetKey).toBe('PRJ-7')
   })
 
@@ -139,7 +139,7 @@ describe('lifecycle', () => {
   it('surfaces a crashed server as MCP_SERVER_UNAVAILABLE instead of hanging', async () => {
     const { manager } = makeManager('crash-on-call')
     await manager.start()
-    await expect(manager.callTool('jira.get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
+    await expect(manager.callTool('jira_get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
       code: ERROR_CODES.MCP_SERVER_UNAVAILABLE,
     })
   })
@@ -147,7 +147,7 @@ describe('lifecycle', () => {
   it('times out a slow tool call rather than blocking forever', async () => {
     const { manager } = makeManager('slow')
     await manager.start()
-    await expect(manager.callTool('jira.get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
+    await expect(manager.callTool('jira_get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
       code: ERROR_CODES.MCP_SERVER_UNAVAILABLE,
     })
   }, 15_000)
@@ -163,7 +163,7 @@ describe('lifecycle', () => {
     const { manager } = makeManager('no-tools')
     await manager.start()
     expect(manager.availableTools()).toHaveLength(0)
-    await expect(manager.callTool('jira.get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
+    await expect(manager.callTool('jira_get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
       code: ERROR_CODES.MCP_SERVER_UNAVAILABLE,
     })
   })
@@ -175,16 +175,16 @@ describe('tool allowlist (§10.1)', () => {
     await manager.start()
 
     const names = manager.availableTools().map((t) => t.name)
-    expect(names).not.toContain('jira.update_issue')
-    expect(names).not.toContain('confluence.get_page')
-    expect(names).toContain('jira.get_issue')
+    expect(names).not.toContain('jira_update_issue')
+    expect(names).not.toContain('confluence_get_page')
+    expect(names).toContain('jira_get_issue')
   })
 
   it('blocks a disabled tool even if called directly', async () => {
     const { manager } = makeManager('ok', { jiraCreate: false })
     await manager.start()
     await expect(
-      manager.callTool('jira.create_issue', {
+      manager.callTool('jira_create_issue', {
         project_key: 'PRJ',
         summary: 'x',
         issue_type: 'Task',
@@ -196,7 +196,7 @@ describe('tool allowlist (§10.1)', () => {
   it('rejects a tool name the model invented', async () => {
     const { manager } = makeManager()
     await manager.start()
-    await expect(manager.callTool('jira.delete_everything', {})).rejects.toMatchObject({
+    await expect(manager.callTool('jira_delete_everything', {})).rejects.toMatchObject({
       code: ERROR_CODES.TOOL_NOT_ALLOWED,
     })
   })
@@ -206,7 +206,7 @@ describe('input validation (§9.1, §11.3)', () => {
   it('rejects arguments that do not match the schema', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.get_issue')
+    const definition = manager.resolveCallable('jira_get_issue')
 
     expect(() => manager.validateInput(definition, { issue_key: 'không-đúng-định-dạng' })).toThrow(
       expect.objectContaining({ code: ERROR_CODES.VALIDATION_FAILED }),
@@ -216,7 +216,7 @@ describe('input validation (§9.1, §11.3)', () => {
   it('does not put the rejected value into the error detail', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.create_issue')
+    const definition = manager.resolveCallable('jira_create_issue')
 
     const error = (() => {
       try {
@@ -234,7 +234,7 @@ describe('input validation (§9.1, §11.3)', () => {
   it('fills defaults declared in the schema', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.search')
+    const definition = manager.resolveCallable('jira_search')
     expect(manager.validateInput(definition, { jql: 'project = PRJ' })).toEqual({
       jql: 'project = PRJ',
       limit: 20,
@@ -246,11 +246,43 @@ describe('result handling', () => {
   it('summarises a Jira issue and keeps the target link', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const outcome = await manager.callTool('jira.get_issue', { issue_key: 'PRJ-42' })
+    const outcome = await manager.callTool('jira_get_issue', { issue_key: 'PRJ-42' })
 
     expect(outcome.summary.targetKey).toBe('PRJ-42')
     expect(outcome.summary.targetUrl).toBe(`${JIRA_URL}/browse/PRJ-42`)
     expect(outcome.summary.forModel).toContain('Tiêu đề của PRJ-42')
+  })
+
+  it('summarises a flat Confluence page payload', async () => {
+    const { manager } = makeManager()
+    await manager.start()
+    const outcome = await manager.callTool('confluence_get_page', { page_id: '42' })
+
+    expect(outcome.summary.forModel).toContain('Nội dung trang Confluence.')
+    expect(outcome.summary.targetKey).toBe('42')
+    expect(outcome.summary.targetUrl).toBe(`${CONFLUENCE_URL}/pages/42`)
+  })
+
+  it('still gives the model the page content when the payload is nested', async () => {
+    // Hình dạng của `mcp-atlassian` (metadata + content.value). Trước đây Nexa trả `forModel`
+    // rỗng ở đây: server gửi đủ nội dung, model thì báo "không đọc được trang".
+    const { manager } = makeManager()
+    await manager.start()
+    const outcome = await manager.callTool('confluence_get_page', { page_id: 'NESTED' })
+
+    expect(outcome.summary.forModel).toContain('Nội dung trang Confluence.')
+    expect(outcome.summary.forModel).not.toBe('')
+    expect(outcome.summary.targetKey).toBe('NESTED')
+  })
+
+  it('never hands the model an empty summary when the payload is unrecognised', async () => {
+    // Bất kỳ hình dạng lạ nào cũng phải rơi về nguyên văn, không được im lặng nuốt kết quả.
+    const { manager } = makeManager()
+    await manager.start()
+    const outcome = await manager.callTool('confluence_search', { query: 'bất kỳ' })
+
+    expect(outcome.summary.forModel.length).toBeGreaterThan(0)
+    expect(outcome.summary.forModel).toBe(outcome.rawText)
   })
 
   it('drops a result link that points at a different host', () => {
@@ -262,7 +294,7 @@ describe('result handling', () => {
   it('maps a 401 from the target system to ATLASSIAN_AUTH_FAILED', async () => {
     const { manager } = makeManager('auth-failed')
     await manager.start()
-    await expect(manager.callTool('jira.get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
+    await expect(manager.callTool('jira_get_issue', { issue_key: 'PRJ-1' })).rejects.toMatchObject({
       code: ERROR_CODES.ATLASSIAN_AUTH_FAILED,
     })
   })
@@ -271,7 +303,7 @@ describe('result handling', () => {
     const { manager } = makeManager()
     await manager.start()
     await expect(
-      manager.callTool('jira.get_issue', { issue_key: 'MISSING-1' }),
+      manager.callTool('jira_get_issue', { issue_key: 'MISSING-1' }),
     ).rejects.toMatchObject({ code: ERROR_CODES.UPSTREAM_UNAVAILABLE })
   })
 })
@@ -281,10 +313,15 @@ describe('classifyToolError', () => {
     ['HTTP 401: Unauthorized', ERROR_CODES.ATLASSIAN_AUTH_FAILED],
     ['You do not have permission to view this issue', ERROR_CODES.ATLASSIAN_AUTH_FAILED],
     ['Missing Jira credentials in environment', ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED],
+    // Nguyên văn từ gateway thật, không phải mock — xem chú thích trong classifyToolError.
+    [
+      "Error calling tool 'search': Invalid header-based Jira token or configuration: Unable to get current user account ID:",
+      ERROR_CODES.ATLASSIAN_AUTH_FAILED,
+    ],
     ['request timed out after 30s', ERROR_CODES.MCP_SERVER_UNAVAILABLE],
     ['HTTP 404: issue does not exist', ERROR_CODES.UPSTREAM_UNAVAILABLE],
   ])('maps %s', (text, expected) => {
-    expect(classifyToolError(text, 'jira.get_issue').code).toBe(expected)
+    expect(classifyToolError(text, 'jira_get_issue').code).toBe(expected)
   })
 })
 
@@ -292,7 +329,7 @@ describe('preview builders (§10.2)', () => {
   it('builds a create-issue preview with all eight required elements', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.create_issue')
+    const definition = manager.resolveCallable('jira_create_issue')
 
     const preview = await definition.buildPreview!(
       {
@@ -308,7 +345,7 @@ describe('preview builders (§10.2)', () => {
       },
     )
 
-    expect(preview.toolName).toBe('jira.create_issue')
+    expect(preview.toolName).toBe('jira_create_issue')
     expect(preview.targetSystem).toBe('jira')
     expect(preview.targetSystemUrl).toBe(JIRA_URL)
     expect(preview.action).toContain('Bug')
@@ -322,7 +359,7 @@ describe('preview builders (§10.2)', () => {
   it('reads the current issue so an update preview can show before → after', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.update_issue')
+    const definition = manager.resolveCallable('jira_update_issue')
 
     const preview = await definition.buildPreview!(
       { issue_key: 'PRJ-9', fields: { status: 'Done' } } as never,
@@ -330,7 +367,7 @@ describe('preview builders (§10.2)', () => {
         actingAccount: 'nguyen.van.a',
         targetSystemUrl: JIRA_URL,
         readTool: async (name, input) => {
-          expect(name).toBe('jira.get_issue')
+          expect(name).toBe('jira_get_issue')
           const outcome = await manager.callTool(name, input as Record<string, unknown>)
           return JSON.parse(outcome.rawText)
         },
@@ -344,7 +381,7 @@ describe('preview builders (§10.2)', () => {
   it('still produces a preview when reading the current value fails', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.update_issue')
+    const definition = manager.resolveCallable('jira_update_issue')
 
     const preview = await definition.buildPreview!(
       { issue_key: 'PRJ-9', fields: { status: 'Done' } } as never,
@@ -365,14 +402,14 @@ describe('uncertain lookup (§16, OPEN-QUESTIONS B9)', () => {
     const { manager } = makeManager()
     await manager.start()
 
-    await manager.callTool('jira.create_issue', {
+    await manager.callTool('jira_create_issue', {
       project_key: 'PRJ',
       summary: 'Task bị nghi ngờ',
       description: '',
       issue_type: 'Task',
     })
 
-    const definition = manager.resolveCallable('jira.create_issue')
+    const definition = manager.resolveCallable('jira_create_issue')
     const lookup = await definition.lookupResult!(
       {
         project_key: 'PRJ',
@@ -398,7 +435,7 @@ describe('uncertain lookup (§16, OPEN-QUESTIONS B9)', () => {
   it('reports inconclusive — never "not created" — when the lookup itself fails', async () => {
     const { manager } = makeManager()
     await manager.start()
-    const definition = manager.resolveCallable('jira.create_issue')
+    const definition = manager.resolveCallable('jira_create_issue')
 
     const lookup = await definition.lookupResult!(
       { project_key: 'PRJ', summary: 'x', description: '', issue_type: 'Task' } as never,

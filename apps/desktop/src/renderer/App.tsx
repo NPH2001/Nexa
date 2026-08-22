@@ -18,6 +18,15 @@ import { UncertainBanner } from './components/UncertainBanner.js'
 
 export type View = 'chat' | 'settings'
 
+const TITLE_LIMIT = 60
+
+function deriveTitleFromMessage(content: string): string {
+  const singleLine = content.replace(/\s+/g, ' ').trim()
+  return singleLine.length > TITLE_LIMIT
+    ? `${singleLine.slice(0, TITLE_LIMIT).trimEnd()}…`
+    : singleLine
+}
+
 export function App(): React.JSX.Element {
   const [view, setView] = useState<View>('chat')
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -219,6 +228,7 @@ export function App(): React.JSX.Element {
   ): Promise<void> => {
     if (activeId === null) return
     try {
+      const active = conversations.find((c) => c.id === activeId)
       const { requestId } = await api.chat.send({
         conversationId: activeId,
         content,
@@ -228,9 +238,37 @@ export function App(): React.JSX.Element {
           : {}),
       })
       setStreamingRequestId(requestId)
+      if (active !== undefined && active.messageCount === 0 && active.title === 'Hội thoại mới') {
+        try {
+          await api.conversations.rename(activeId, deriveTitleFromMessage(content))
+          await refreshConversations()
+        } catch {
+          // Đổi tên tự động thất bại thì giữ nguyên "Hội thoại mới", không chặn luồng chat.
+        }
+      }
       await loadMessages(activeId)
     } catch (error) {
       reportError(error, 'Không gửi được tin nhắn.')
+    }
+  }
+
+  const editMessage = async (id: string, content: string): Promise<void> => {
+    try {
+      await api.messages.edit(id, content)
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content, editedAt: new Date().toISOString() } : m)))
+    } catch (error) {
+      reportError(error, 'Không sửa được tin nhắn.')
+    }
+  }
+
+  const deleteMessage = async (id: string): Promise<void> => {
+    try {
+      await api.messages.remove(id)
+      setMessages((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, content: '', deletedAt: new Date().toISOString() } : m)),
+      )
+    } catch (error) {
+      reportError(error, 'Không xoá được tin nhắn.')
     }
   }
 
@@ -335,6 +373,8 @@ export function App(): React.JSX.Element {
             onSend={(content, tokens, model) => void sendMessage(content, tokens, model)}
             onCancel={() => void cancelStreaming()}
             onCreateConversation={() => void createConversation()}
+            onEditMessage={(id, content) => void editMessage(id, content)}
+            onDeleteMessage={(id) => void deleteMessage(id)}
             onError={reportError}
             onToast={pushToast}
           />

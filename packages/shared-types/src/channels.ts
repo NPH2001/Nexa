@@ -24,6 +24,8 @@ export const IPC_CHANNEL_NAMES = [
   'conversation:archive',
   'conversation:search',
   'message:list',
+  'message:edit',
+  'message:delete',
 
   'chat:send',
   'chat:cancel',

@@ -4,6 +4,9 @@ import { joinUrl } from '@nexa/security'
 import { SseAccumulator, SseStreamError, parseNonStreamResponse } from './sse-parser.js'
 import type { ChatRequest, ChatResult, ChatStreamEvent } from './types.js'
 
+/** Đủ chứa nguyên câu lỗi của gateway (`{"error":{"message":...}}`), không đủ để đổ trọn payload. */
+const MAX_LOGGED_ERROR_BODY_CHARS = 300
+
 export interface OpenAiCompatibleClientOptions {
   readonly baseUrl: string
   /**
@@ -220,13 +223,17 @@ export class OpenAiCompatibleClient {
     }
 
     if (!response.ok) {
-      throw await this.mapHttpError(response, ctx)
+      throw await this.mapHttpError(response, ctx, method)
     }
     return response
   }
 
   /** §9.3 "Error code ổn định". Ánh xạ HTTP → mã lỗi Phụ lục B. */
-  private async mapHttpError(response: Response, ctx: RequestContext): Promise<NexaError> {
+  private async mapHttpError(
+    response: Response,
+    ctx: RequestContext,
+    method: 'GET' | 'POST',
+  ): Promise<NexaError> {
     // Đọc body để ghi độ dài vào log nhưng KHÔNG đưa nội dung vào safeDetail — body lỗi của
     // gateway thường echo lại nguyên request, tức là cả prompt (§11.1).
     const raw = await response.text().catch(() => '')
@@ -234,6 +241,13 @@ export class OpenAiCompatibleClient {
       requestId: ctx.requestId,
       status: response.status,
       bodyLength: raw.length,
+      // Chỉ với GET: request không mang prompt nào nên body lỗi KHÔNG THỂ echo prompt về — mối lo
+      // của §11.1 ở trên không áp dụng. Cần thiết vì lỗi thật đã gặp là `GET /v1/models` trả 400
+      // và log chỉ có `bodyLength:149`: không biết là model id sai, key mất quyền, hay cấu hình
+      // proxy hỏng, mà cả ba đều dồn vào MODEL_NOT_CONFIGURED. Vẫn qua Redactor như mọi field.
+      ...(method === 'GET' && raw !== ''
+        ? { errorBody: raw.replace(/\s+/g, ' ').trim().slice(0, MAX_LOGGED_ERROR_BODY_CHARS) }
+        : {}),
     })
 
     const detail = `HTTP ${String(response.status)}`

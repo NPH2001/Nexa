@@ -1,6 +1,10 @@
 # ADR 0004 — Chỉ dùng MCP stdio, không dùng localhost HTTP
 
-**Trạng thái:** Đề xuất (xem OPEN-QUESTIONS D1)
+**Trạng thái:** Đề xuất (xem OPEN-QUESTIONS D1) — bổ sung bởi
+[ADR-0008](0008-controlled-http-mcp-transport.md) 2026-08-03: một tổ chức xác nhận hạ tầng của
+họ chỉ có gateway MCP **remote** (không phải localhost), nên ADR-0008 thêm một transport HTTP
+thứ hai bên cạnh stdio — xem ADR đó để biết vì sao rủi ro "process khác gọi được cổng" không áp
+dụng cho một client gọi ra ngoài, và các biện pháp bù được dùng thay.
 **Ngày:** 2026-08-01
 
 ## Bối cảnh

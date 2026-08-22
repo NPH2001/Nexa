@@ -36,7 +36,7 @@ describe('SseAccumulator', () => {
   it('joins tool call arguments streamed in fragments', () => {
     const acc = new SseAccumulator()
     collect(acc, [
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"jira.create_issue","arguments":"{\\"sum"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"jira_create_issue","arguments":"{\\"sum"}}]}}]}\n\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"mary\\":\\"Lỗi A\\"}"}}]}}]}\n\n',
       'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
       'data: [DONE]\n\n',
@@ -44,26 +44,26 @@ describe('SseAccumulator', () => {
 
     const calls = acc.result.toolCalls
     expect(calls).toHaveLength(1)
-    expect(calls[0]?.function.name).toBe('jira.create_issue')
+    expect(calls[0]?.function.name).toBe('jira_create_issue')
     expect(JSON.parse(calls[0]!.function.arguments)).toEqual({ summary: 'Lỗi A' })
   })
 
   it('keeps two parallel tool calls apart by index', () => {
     const acc = new SseAccumulator()
     collect(acc, [
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"jira.get_issue","arguments":"{}"}},{"index":1,"id":"b","function":{"name":"confluence.get_page","arguments":"{}"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"jira_get_issue","arguments":"{}"}},{"index":1,"id":"b","function":{"name":"confluence_get_page","arguments":"{}"}}]}}]}\n\n',
       'data: [DONE]\n\n',
     ])
     expect(acc.result.toolCalls.map((c) => c.function.name)).toEqual([
-      'jira.get_issue',
-      'confluence.get_page',
+      'jira_get_issue',
+      'confluence_get_page',
     ])
   })
 
   it('infers finish_reason=tool_calls when the gateway omits it', () => {
     const acc = new SseAccumulator()
     collect(acc, [
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"name":"jira.get_issue","arguments":"{}"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"name":"jira_get_issue","arguments":"{}"}}]}}]}\n\n',
       'data: [DONE]\n\n',
     ])
     expect(acc.result.finishReason).toBe('tool_calls')
@@ -105,14 +105,14 @@ describe('parseNonStreamResponse', () => {
           message: {
             content: '',
             tool_calls: [
-              { id: 'c1', function: { name: 'jira.get_issue', arguments: '{"key":"ABC-1"}' } },
+              { id: 'c1', function: { name: 'jira_get_issue', arguments: '{"key":"ABC-1"}' } },
             ],
           },
         },
       ],
       usage: { prompt_tokens: 5, completion_tokens: 7 },
     })
-    expect(parsed.toolCalls[0]?.function.name).toBe('jira.get_issue')
+    expect(parsed.toolCalls[0]?.function.name).toBe('jira_get_issue')
     expect(parsed.usage).toEqual({ promptTokens: 5, completionTokens: 7 })
   })
 
@@ -172,6 +172,44 @@ describe('OpenAiCompatibleClient', () => {
     expect(NexaError.is(error)).toBe(true)
     expect(JSON.stringify(error)).not.toContain('sk-test-key')
     expect((error as NexaError).safeDetail).toBe('HTTP 401')
+  })
+
+  it('logs the gateway error body for GET — a bodyLength alone is not diagnosable', async () => {
+    // Lỗi thật: `GET /v1/models` trả 400 và log chỉ có `bodyLength:149`, trong khi 400 gộp cả
+    // "model id sai", "key mất quyền" và "cấu hình proxy hỏng" vào một mã MODEL_NOT_CONFIGURED.
+    const { logger, sink } = testLogger()
+    const client = new OpenAiCompatibleClient({
+      baseUrl: 'https://litellm.internal',
+      provider: 'litellm',
+      getApiKey: () => 'sk-test-key-abcdefghijklmnop',
+      logger,
+      fetchImpl: async () =>
+        new Response('{"error":{"message":"Invalid model list for key","code":"400"}}', { status: 400 }),
+    })
+
+    await expect(client.listModels({ requestId: 'req_body' })).rejects.toMatchObject({
+      code: ERROR_CODES.MODEL_NOT_CONFIGURED,
+    })
+    expect(sink.asText()).toContain('Invalid model list for key')
+    expect(sink.asText()).not.toContain('sk-test-key')
+  })
+
+  it('never logs the error body of a POST — it can echo the prompt back (§11.1)', async () => {
+    const { logger, sink } = testLogger()
+    const client = new OpenAiCompatibleClient({
+      baseUrl: 'https://litellm.internal',
+      provider: 'litellm',
+      getApiKey: () => 'sk-test-key-abcdefghijklmnop',
+      logger,
+      fetchImpl: async () =>
+        new Response('{"error":{"message":"echo: bí mật của người dùng trong prompt"}}', { status: 400 }),
+    })
+
+    await expect(
+      client.complete({ model: 'm', messages: [{ role: 'user', content: 'bí mật' }] }, { requestId: 'req_post' }),
+    ).rejects.toMatchObject({ code: ERROR_CODES.MODEL_NOT_CONFIGURED })
+    expect(sink.asText()).not.toContain('echo:')
+    expect(sink.asText()).toContain('bodyLength')
   })
 
   it('falls back to a minimal completion when /v1/models is not enabled', async () => {
@@ -284,7 +322,7 @@ describe('OpenAiCompatibleClient', () => {
         tools: [
           {
             type: 'function',
-            function: { name: 'jira.get_issue', description: 'd', parameters: { type: 'object' } },
+            function: { name: 'jira_get_issue', description: 'd', parameters: { type: 'object' } },
           },
         ],
       },

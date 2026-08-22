@@ -75,8 +75,8 @@ const TOOLS = [
   },
   {
     name: 'confluence_search',
-    description: 'Tìm trang Confluence bằng CQL',
-    inputSchema: { type: 'object', properties: { cql: { type: 'string' } }, required: ['cql'] },
+    description: 'Tìm trang Confluence bằng từ khoá hoặc CQL',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
   },
 ]
 
@@ -153,6 +153,19 @@ async function handleToolCall(id, params) {
       )
     case 'confluence_get_page': {
       const pageId = String(args.page_id ?? '')
+      const confluenceUrl = process.env.CONFLUENCE_URL ?? ''
+      // Hai hình dạng payload cùng tồn tại ngoài thực tế: object phẳng, và kiểu lồng của
+      // `mcp-atlassian` (metadata + content.value). Id 'NESTED' cho phép test cả nhánh thứ hai —
+      // nhánh mà Nexa từng trả về chuỗi rỗng cho model dù server đã gửi đủ nội dung.
+      if (pageId === 'NESTED') {
+        return textResult(
+          id,
+          JSON.stringify({
+            metadata: { id: pageId, title: `Trang ${pageId}`, url: `${confluenceUrl}/pages/${pageId}` },
+            content: { value: 'Nội dung trang Confluence.', format: 'markdown' },
+          }),
+        )
+      }
       return textResult(
         id,
         JSON.stringify({
@@ -160,7 +173,7 @@ async function handleToolCall(id, params) {
           title: `Trang ${pageId}`,
           space: 'DOC',
           body: 'Nội dung trang Confluence.',
-          url: `${process.env.CONFLUENCE_URL ?? ''}/pages/${pageId}`,
+          url: `${confluenceUrl}/pages/${pageId}`,
         }),
       )
     }

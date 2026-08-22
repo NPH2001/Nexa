@@ -122,16 +122,42 @@ stdout; dòng nào không parse được JSON thì bỏ qua.
 
 | Tên Nexa | Tên MCP | Risk | Feature flag |
 |---|---|---|---|
-| `jira.get_issue` | `jira_get_issue` | READ | `jiraRead` |
-| `jira.search` | `jira_search` | READ | `jiraSearch` |
-| `jira.create_issue` | `jira_create_issue` | WRITE_LOW | `jiraCreate` |
-| `jira.add_comment` | `jira_add_comment` | WRITE_LOW | `jiraComment` |
-| `jira.update_issue` | `jira_update_issue` | WRITE_HIGH | `jiraUpdate` |
-| `confluence.get_page` | `confluence_get_page` | READ | `confluenceRead` |
-| `confluence.search` | `confluence_search` | READ | `confluenceSearch` |
+| `jira_get_issue` | `jira_get_issue` | READ | `jiraRead` |
+| `jira_search` | `jira_search` | READ | `jiraSearch` |
+| `jira_create_issue` | `jira_create_issue` | WRITE_LOW | `jiraCreate` |
+| `jira_add_comment` | `jira_add_comment` | WRITE_LOW | `jiraComment` |
+| `jira_update_issue` | `jira_update_issue` | WRITE_HIGH | `jiraUpdate` |
+| `confluence_get_page` | `confluence_get_page` | READ | `confluenceRead` |
+| `confluence_search` | `confluence_search` | READ | `confluenceSearch` |
+
+Hai cột trùng giá trị vì registry hiện tại không có tiền tố namespace từ gateway; "Tên Nexa"
+(gửi cho LLM) phải khớp `[a-zA-Z0-9_-]` — Bedrock Converse API từ chối dấu chấm trong
+`toolUse.name` — nên không thể dùng `jira.get_issue` như trước.
 
 Đổi package MCP ⇒ sửa cột "Tên MCP" trong `tool-registry.ts` và
 `DEFAULT_ATLASSIAN_MCP_SPEC` trong `server-spec.ts`. Không phải sửa chỗ nào khác.
+
+**Tên tham số cũng là quy ước của package, không phải chuẩn MCP** — đổi package thì phải soi lại
+bảng này. `tools/list` của server công bố `inputSchema` đầy đủ; đó là nguồn sự thật.
+
+| Tên MCP | Tham số bắt buộc | Tuỳ chọn |
+|---|---|---|
+| `jira_get_issue` | `issue_key` | |
+| `jira_search` | `jql` | `limit` |
+| `jira_create_issue` | `project_key`, `summary`, `issue_type` | `description` |
+| `jira_add_comment` | `issue_key`, `comment` | |
+| `jira_update_issue` | `issue_key`, `fields` | |
+| `confluence_get_page` | `page_id` | |
+| `confluence_search` | `query` — text thường **hoặc** CQL, không phải `cql` | `limit` |
+
+Chỉ hai dòng `confluence_*` đã được đối chiếu với gateway thật (03/08/2026); phần còn lại vẫn là
+quy ước chưa kiểm chứng — xem A4 trong [OPEN-QUESTIONS](../OPEN-QUESTIONS.md).
+
+Sai tên tham số không hiện ra như lỗi cấu hình: server trả `isError` kèm
+`Input validation error: '<tên>' is a required property`, rơi vào nhánh cuối của
+`classifyToolError` và hiện thành `UPSTREAM_UNAVAILABLE` — trông y hệt hạ tầng đích chết. Dấu hiệu
+phân biệt trong log: lỗi validate trả về sau vài chục ms (chưa rời gateway), còn lỗi hạ tầng thật
+mất hàng trăm ms trở lên.
 
 ### Ánh xạ lỗi
 

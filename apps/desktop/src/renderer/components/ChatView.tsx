@@ -30,6 +30,8 @@ export function ChatView(props: {
   ) => void
   onCancel: () => void
   onCreateConversation: () => void
+  onEditMessage: (id: string, content: string) => void
+  onDeleteMessage: (id: string) => void
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
@@ -183,7 +185,12 @@ export function ChatView(props: {
           <p className="muted center">Hãy đặt câu hỏi để bắt đầu.</p>
         )}
         {props.messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            onEdit={(content) => props.onEditMessage(message.id, content)}
+            onDelete={() => props.onDeleteMessage(message.id)}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -295,7 +302,11 @@ function ModelSelector(props: {
   )
 }
 
-function MessageBubble(props: { message: Message }): React.JSX.Element {
+function MessageBubble(props: {
+  message: Message
+  onEdit: (content: string) => void
+  onDelete: () => void
+}): React.JSX.Element {
   const { message } = props
   const roleLabel: Record<string, string> = {
     user: 'Bạn',
@@ -303,14 +314,67 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
     tool: 'Công cụ',
     system: 'Hệ thống',
   }
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(message.content)
+
+  // Chỉ cho sửa/xoá tin nhắn của người dùng hoặc trả lời của model, đã lưu xong và chưa bị xoá.
+  // Không cho với 'tool'/'system' — nội dung đó do vòng lặp tool quản lý, không phải người gõ.
+  const editable =
+    (message.role === 'user' || message.role === 'assistant') &&
+    message.status !== 'streaming' &&
+    message.deletedAt === undefined
+
+  if (message.deletedAt !== undefined) {
+    return (
+      <article className={`message message-${message.role} status-${message.status}`}>
+        <header className="message-header">
+          <div className="message-header-left">
+            <strong>{roleLabel[message.role] ?? message.role}</strong>
+            <span className="muted small">
+              {new Date(message.createdAt).toLocaleTimeString('vi-VN')}
+            </span>
+          </div>
+        </header>
+        <div className="message-body muted">Tin nhắn đã bị xoá.</div>
+      </article>
+    )
+  }
 
   return (
     <article className={`message message-${message.role} status-${message.status}`}>
       <header className="message-header">
-        <strong>{roleLabel[message.role] ?? message.role}</strong>
-        <span className="muted small">
-          {new Date(message.createdAt).toLocaleTimeString('vi-VN')}
-        </span>
+        <div className="message-header-left">
+          <strong>{roleLabel[message.role] ?? message.role}</strong>
+          <span className="muted small">
+            {new Date(message.createdAt).toLocaleTimeString('vi-VN')}
+            {message.editedAt !== undefined && ' · đã sửa'}
+          </span>
+        </div>
+        {editable && !editing && (
+          <span className="message-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Sửa tin nhắn"
+              title="Sửa tin nhắn"
+              onClick={() => {
+                setDraft(message.content)
+                setEditing(true)
+              }}
+            >
+              ✎
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Xoá tin nhắn"
+              title="Xoá tin nhắn"
+              onClick={props.onDelete}
+            >
+              🗑
+            </button>
+          </span>
+        )}
       </header>
 
       {message.attachments !== undefined && message.attachments.length > 0 && (
@@ -329,13 +393,41 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
         </div>
       )}
 
-      <div className="message-body">
-        {message.content === '' && message.status === 'streaming' ? (
-          <span className="typing">Đang trả lời…</span>
-        ) : (
-          message.content
-        )}
-      </div>
+      {editing ? (
+        <div className="message-body message-edit">
+          <textarea
+            className="composer-input"
+            value={draft}
+            rows={3}
+            onChange={(e) => setDraft(e.target.value)}
+            autoFocus
+          />
+          <div className="message-edit-actions">
+            <button
+              type="button"
+              className="btn btn-small btn-primary"
+              disabled={draft.trim() === ''}
+              onClick={() => {
+                if (draft.trim() !== '' && draft !== message.content) props.onEdit(draft.trim())
+                setEditing(false)
+              }}
+            >
+              Lưu
+            </button>
+            <button type="button" className="btn btn-small" onClick={() => setEditing(false)}>
+              Huỷ
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="message-body">
+          {message.content === '' && message.status === 'streaming' ? (
+            <span className="typing">Đang trả lời…</span>
+          ) : (
+            message.content
+          )}
+        </div>
+      )}
 
       {message.toolCalls !== undefined && message.toolCalls.length > 0 && (
         <ul className="tool-calls">

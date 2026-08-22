@@ -2,6 +2,7 @@ import {
   ERROR_CODES,
   NexaError,
   isLlmConnection,
+  requiresUsername,
   type Connection,
   type ConnectionSaveInput,
   type ConnectionTestResult,
@@ -23,8 +24,11 @@ export interface ConnectionServiceOptions {
   readonly logger: Logger
   /** Chỉ bật trong integration test với mock server HTTP. Bản phát hành để false. */
   readonly allowInsecureLoopback?: boolean
-  /** Kiểm tra kết nối Atlassian — cần MCP nên host tiêm vào để tránh phụ thuộc vòng. */
-  readonly testAtlassian?: (type: 'jira' | 'confluence') => Promise<ConnectionTestResult>
+  /**
+   * Kiểm tra kết nối MCP — cần `AtlassianMcpManager` nên host tiêm vào để tránh phụ thuộc vòng.
+   * `'mcpGateway'`: chỉ bắt tay MCP (initialize), không gọi tool cụ thể nào.
+   */
+  readonly testAtlassian?: (type: 'jira' | 'confluence' | 'mcpGateway') => Promise<ConnectionTestResult>
 }
 
 /**
@@ -44,6 +48,7 @@ const MISSING_CONNECTION_CODE: Readonly<Record<ConnectionType, string>> = {
   openai: ERROR_CODES.OPENAI_CONFIG_REQUIRED,
   jira: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
   confluence: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
+  mcpGateway: ERROR_CODES.MCP_GATEWAY_CONFIG_REQUIRED,
 }
 
 export class ConnectionService {
@@ -73,8 +78,9 @@ export class ConnectionService {
   save(input: ConnectionSaveInput): Connection {
     const baseUrl = this.validateUrl(input.baseUrl, input.type)
 
-    // Chỉ Atlassian cần username; provider LLM xác thực bằng API key.
-    if (!isLlmConnection(input.type) && (input.username === null || input.username.trim() === '')) {
+    // Chỉ Atlassian (jira/confluence) cần username; LLM và mcpGateway xác thực bằng một
+    // token/API key duy nhất, không có khái niệm "tài khoản".
+    if (requiresUsername(input.type) && (input.username === null || input.username.trim() === '')) {
       throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
         safeDetail: 'Atlassian connections require a username',
       })
@@ -91,7 +97,7 @@ export class ConnectionService {
     const connection = this.opts.repo.upsertConnection(this.opts.profileId, {
       type: input.type,
       baseUrl,
-      username: isLlmConnection(input.type) ? null : (input.username?.trim() ?? null),
+      username: requiresUsername(input.type) ? (input.username?.trim() ?? null) : null,
       enabled: input.enabled,
       credentialRef: credentialRef(input.type),
     })
@@ -152,7 +158,7 @@ export class ConnectionService {
     try {
       const result = isLlmConnection(type)
         ? await this.testLlmProvider(type)
-        : await this.testAtlassian(type)
+        : await this.testMcp(type)
       return this.record(type, result)
     } catch (error) {
       const nexa = NexaError.wrap(error)
@@ -180,11 +186,12 @@ export class ConnectionService {
     return { ok: true, checkedAt: new Date().toISOString(), detail: outcome.detail }
   }
 
-  private async testAtlassian(type: 'jira' | 'confluence'): Promise<ConnectionTestResult> {
+  /** Đích test là 'jira'/'confluence' (gọi thử một tool) hoặc 'mcpGateway' (chỉ bắt tay MCP). */
+  private async testMcp(type: 'jira' | 'confluence' | 'mcpGateway'): Promise<ConnectionTestResult> {
     const tester = this.opts.testAtlassian
     if (tester === undefined) {
       throw new NexaError(ERROR_CODES.MCP_SERVER_UNAVAILABLE, {
-        safeDetail: 'no Atlassian tester wired',
+        safeDetail: 'no MCP tester wired',
       })
     }
     return tester(type)

@@ -205,11 +205,16 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
           }
         }
         await manager.restart()
-        const probe =
-          type === 'jira'
-            ? { tool: 'jira.search', args: { jql: 'order by created DESC', limit: 1 } }
-            : { tool: 'confluence.search', args: { cql: 'type = page', limit: 1 } }
-        await manager.callTool(probe.tool, probe.args)
+        // 'mcpGateway' tự nó không map tới một tool Jira/Confluence cụ thể — chỉ xác nhận bắt
+        // tay MCP (initialize) và bearer token được chấp nhận là đủ; test riêng 'jira'/
+        // 'confluence' mới gọi thử tool để xác nhận PAT đúng.
+        if (type !== 'mcpGateway') {
+          const probe =
+            type === 'jira'
+              ? { tool: 'jira_search', args: { jql: 'order by created DESC', limit: 1 } }
+              : { tool: 'confluence_search', args: { query: 'type = page', limit: 1 } }
+          await manager.callTool(probe.tool, probe.args)
+        }
         return { ok: true, checkedAt: new Date().toISOString(), detail: 'Kết nối thành công' }
       },
     }),
@@ -255,8 +260,27 @@ export function buildMcpManager(
 
   const settings = services.settings.get()
 
+  // Có kết nối 'mcpGateway' đã bật ⇒ dùng transport HTTP remote (ADR-0005) thay vì tự spawn
+  // `uvx mcp-atlassian` bằng stdio — đúng trường hợp hạ tầng tổ chức chỉ cung cấp một endpoint
+  // HTTP có sẵn (ví dụ MCP gateway của LiteLLM) chứ không có package Python cài cục bộ.
+  const gatewayConnection = services.connections.get('mcpGateway')
+  const transport =
+    gatewayConnection !== null && gatewayConnection.enabled
+      ? {
+          gateway: {
+            url: gatewayConnection.baseUrl,
+            token: () => services.security.readCredential('mcpGateway'),
+            requestTimeoutMs: settings.toolTimeoutMs,
+            // Đọc lại mỗi lần dùng, không chụp giá trị lúc dựng manager: người dùng tích/bỏ
+            // tích trong Settings là có hiệu lực ngay, không phải khởi động lại app.
+            skipAtlassianTlsVerify: () =>
+              services.settings.get().mcpGatewaySkipAtlassianTlsVerify,
+          },
+        }
+      : { spec: readMcpSpec(services.settings.get()) }
+
   return new AtlassianMcpManager({
-    spec: readMcpSpec(services.settings.get()),
+    ...transport,
     logger: services.logger,
     credentials: (): AtlassianCredentials => {
       const out: { jira?: AtlassianCredentials['jira']; confluence?: AtlassianCredentials['confluence'] } = {}

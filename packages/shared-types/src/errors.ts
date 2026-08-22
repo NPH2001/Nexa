@@ -21,6 +21,10 @@ export const ERROR_CODES = {
   MCP_SERVER_UNAVAILABLE: 'MCP_SERVER_UNAVAILABLE',
 
   // ── Nhóm B: bổ sung ─────────────────────────────────────────────────────
+  /** Chưa cấu hình endpoint/token của MCP gateway remote (ADR-0005). */
+  MCP_GATEWAY_CONFIG_REQUIRED: 'MCP_GATEWAY_CONFIG_REQUIRED',
+  /** Gateway từ chối bearer token, hoặc token đã bị thu hồi. */
+  MCP_GATEWAY_AUTH_FAILED: 'MCP_GATEWAY_AUTH_FAILED',
   /** Key hợp lệ nhưng vượt hạn mức LiteLLM (§11.2). */
   LITELLM_RATE_LIMITED: 'LITELLM_RATE_LIMITED',
   /**
@@ -132,6 +136,17 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     message: 'Không khởi động hoặc kết nối được MCP Atlassian.',
     retryable: true,
     hint: 'Kiểm tra cấu hình MCP trong Cài đặt, sau đó bấm Kiểm tra kết nối.',
+  },
+
+  MCP_GATEWAY_CONFIG_REQUIRED: {
+    message: 'Chưa cấu hình MCP Gateway cho Jira/Confluence.',
+    retryable: false,
+    hint: 'Mở Cài đặt → MCP Gateway để nhập URL và bearer token do tổ chức cấp.',
+  },
+  MCP_GATEWAY_AUTH_FAILED: {
+    message: 'Bearer token của MCP Gateway không hợp lệ hoặc đã bị thu hồi.',
+    retryable: false,
+    hint: 'Liên hệ quản trị gateway để cấp token mới, rồi cập nhật trong Cài đặt.',
   },
 
   LITELLM_RATE_LIMITED: {

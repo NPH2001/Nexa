@@ -238,6 +238,27 @@ export class ConversationRepository {
       )
   }
 
+  /**
+   * Sửa nội dung một message đã lưu (OPEN-QUESTIONS D4). Không dùng cho streaming — đó là việc
+   * của `finalizeMessage`.
+   */
+  editMessage(messageId: string, content: string): void {
+    this.store.handle
+      .prepare('UPDATE messages SET content_ciphertext = ?, edited_at = ? WHERE id = ?')
+      .run(this.store.cipher.encrypt(CTX.content, content), this.store.nowIso(), messageId)
+  }
+
+  /**
+   * Xoá nội dung một message (OPEN-QUESTIONS D4) — ghi đè `content_ciphertext` bằng chuỗi rỗng
+   * đã mã hoá, không chỉ đánh dấu ẩn. Giữ lại row để không phá thứ tự `seq` của hội thoại.
+   */
+  deleteMessage(messageId: string): void {
+    const now = this.store.nowIso()
+    this.store.handle
+      .prepare('UPDATE messages SET content_ciphertext = ?, deleted_at = ? WHERE id = ?')
+      .run(this.store.cipher.encrypt(CTX.content, ''), now, messageId)
+  }
+
   listMessages(conversationId: string, limit: number): Message[] {
     const rows = this.store.handle
       .prepare(
@@ -269,7 +290,7 @@ export class ConversationRepository {
     return this.store.handle
       .prepare(
         `SELECT role, content_ciphertext FROM messages
-         WHERE conversation_id = ? AND status IN ('complete','streaming')
+         WHERE conversation_id = ? AND status IN ('complete','streaming') AND deleted_at IS NULL
          ORDER BY seq ASC`,
       )
       .all(conversationId)
@@ -471,6 +492,12 @@ export class ConversationRepository {
       ...(Number(row['truncated_context_count']) > 0
         ? { truncatedContextCount: Number(row['truncated_context_count']) }
         : {}),
+      ...(row['edited_at'] === null || row['edited_at'] === undefined
+        ? {}
+        : { editedAt: String(row['edited_at']) }),
+      ...(row['deleted_at'] === null || row['deleted_at'] === undefined
+        ? {}
+        : { deletedAt: String(row['deleted_at']) }),
     }
   }
 

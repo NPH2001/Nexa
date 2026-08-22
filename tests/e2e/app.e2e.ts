@@ -129,6 +129,37 @@ test.describe('E2E — cấu hình và chat', () => {
     }
   })
 
+  test('sửa và xoá một tin nhắn lẻ (OPEN-QUESTIONS D4)', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Nội dung ban đầu')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+      await expect(h.page.getByText('Nội dung ban đầu')).toBeVisible()
+
+      const userMessage = h.page.locator('.message-user').first()
+
+      await userMessage.hover()
+      await userMessage.getByLabel('Sửa tin nhắn').click()
+      await userMessage.locator('textarea').fill('Nội dung đã sửa')
+      await userMessage.getByRole('button', { name: 'Lưu' }).click()
+
+      await expect(userMessage.getByText('Nội dung đã sửa')).toBeVisible()
+      await expect(userMessage.getByText(/đã sửa/)).toBeVisible()
+
+      await userMessage.hover()
+      await userMessage.getByLabel('Xoá tin nhắn').click()
+
+      await expect(userMessage.getByText('Tin nhắn đã bị xoá.')).toBeVisible()
+      await expect(h.page.getByText('Nội dung đã sửa')).toHaveCount(0)
+    } finally {
+      await h.close()
+    }
+  })
+
   test('API key gửi trong header Authorization, không nằm trong URL', async () => {
     const h = await launch()
     try {
@@ -245,7 +276,7 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
       const dialog = h.page.getByRole('dialog')
       await expect(dialog).toBeVisible({ timeout: 25_000 })
       await expect(dialog.getByText('Xác nhận thao tác thay đổi dữ liệu')).toBeVisible()
-      await expect(dialog.getByText('jira.create_issue')).toBeVisible()
+      await expect(dialog.getByText('jira_create_issue')).toBeVisible()
       // Tiêu đề xuất hiện hai chỗ trong preview: ô "Dữ liệu sẽ được gửi đi" và bảng
       // "Sẽ bị thay đổi". Cả hai đều đúng — chỉ định rõ chỗ nào để locator không mơ hồ.
       await expect(dialog.locator('dl').getByText('Task từ E2E')).toBeVisible()

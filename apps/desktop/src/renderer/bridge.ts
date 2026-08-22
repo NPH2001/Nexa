@@ -128,6 +128,11 @@ export const api = {
       call<Message[]>('message:list', { conversationId, limit: 200 }),
   },
 
+  messages: {
+    edit: (id: string, content: string) => call<{ ok: boolean }>('message:edit', { id, content }),
+    remove: (id: string) => call<{ ok: boolean }>('message:delete', { id }),
+  },
+
   chat: {
     send: (input: {
       conversationId: string

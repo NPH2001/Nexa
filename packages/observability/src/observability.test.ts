@@ -119,6 +119,21 @@ describe('Redactor — theo pattern (secret chưa kịp đăng ký)', () => {
     const prose = 'dayLaMotCauTiengVietKhongDauRatDaiNhungVanLaVanXuoiBinhThuong'
     expect(r.redactString(prose)).toBe(prose)
   })
+
+  it('KHÔNG che TÊN header dài dạng kebab — chẩn đoán gateway cần đọc được chúng', () => {
+    // Lỗi thật: `mcp-http-down` ghi 13 tên header để trả lời "request có mang authorization
+    // không", và 8 cái dài hơn 40 ký tự đều thành [REDACTED] vì có dấu gạch nối.
+    const name = 'x-mcp-atlassian-x-atlassian-jira-personal-token'
+    expect(name.length).toBeGreaterThan(40)
+    expect(r.redactString(name)).toBe(name)
+    expect(r.redactString('x-mcp-atlassian-x-atlassian-confluence-ssl-verify')).toContain('ssl-verify')
+  })
+
+  it('vẫn che secret có gạch nối nhưng không phải định danh nhiều từ', () => {
+    // Đoạn dài + có chữ số ⇒ không thoả điều kiện kebab, vẫn bị che.
+    expect(r.redactString('gw-9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c')).toBe(REDACTED)
+    expect(r.redactString('correcthorsebatterystaple-0123456789abcdefghijklmn')).toBe(REDACTED)
+  })
 })
 
 describe('Redactor — biên', () => {
@@ -162,7 +177,7 @@ describe('Logger', () => {
 
     logger.info('test', { note: 'dùng PAT-khong-duoc-lot-0123456789' })
     logger.error('loi', { apiKey: 'sk-0123456789abcdefgh' })
-    logger.tool('tool', { toolName: 'jira.create_issue', phase: 'done', payload: { a: 1 } })
+    logger.tool('tool', { toolName: 'jira_create_issue', phase: 'done', payload: { a: 1 } })
 
     const text = sink.asText()
     expect(text).not.toContain('PAT-khong-duoc-lot')

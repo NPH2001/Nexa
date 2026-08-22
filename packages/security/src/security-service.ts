@@ -37,6 +37,7 @@ const MISSING_CREDENTIAL_CODE: Readonly<Record<ConnectionType, ErrorCode>> = {
   openai: ERROR_CODES.OPENAI_CONFIG_REQUIRED,
   jira: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
   confluence: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
+  mcpGateway: ERROR_CODES.MCP_GATEWAY_CONFIG_REQUIRED,
 }
 
 /**
@@ -193,7 +194,7 @@ export class SecurityService {
    * thì một secret vô tình bị log trước đó sẽ lọt.
    */
   primeRedactor(): void {
-    for (const type of ['litellm', 'openai', 'jira', 'confluence'] as const) {
+    for (const type of ['litellm', 'openai', 'jira', 'confluence', 'mcpGateway'] as const) {
       try {
         const v = this.backend.get(credentialRef(type))
         if (v !== null) this.redactor.registerSecret(v)

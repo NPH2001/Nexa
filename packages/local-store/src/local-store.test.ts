@@ -195,7 +195,7 @@ describe('conversation CRUD', () => {
     })
     repo.recordToolCall({
       messageId: msg.id,
-      toolName: 'jira.get_issue',
+      toolName: 'jira_get_issue',
       riskLevel: 'READ',
       approvalStatus: 'not_required',
       operationStatus: 'success',
@@ -231,7 +231,7 @@ describe('conversation CRUD', () => {
 
     repo.recordToolCall({
       messageId: msg.id,
-      toolName: 'jira.create_issue',
+      toolName: 'jira_create_issue',
       riskLevel: 'WRITE_LOW',
       approvalStatus: 'approved',
       operationStatus: 'running',
@@ -241,13 +241,58 @@ describe('conversation CRUD', () => {
     expect(() =>
       repo.recordToolCall({
         messageId: msg.id,
-        toolName: 'jira.create_issue',
+        toolName: 'jira_create_issue',
         riskLevel: 'WRITE_LOW',
         approvalStatus: 'approved',
         operationStatus: 'running',
         operationId,
       }),
     ).toThrow()
+  })
+})
+
+describe('edit/delete a single message (OPEN-QUESTIONS D4)', () => {
+  it('re-encrypts content and stamps edited_at', async () => {
+    ctx = makeTempStore()
+    const repo = new ConversationRepository(ctx.store)
+    const conv = repo.create(ctx.profileId, 'Sửa tin nhắn', null)
+    const msg = repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'bản gốc' })
+
+    repo.editMessage(msg.id, 'bản đã sửa')
+
+    const [updated] = repo.listMessages(conv.id, 10)
+    expect(updated?.content).toBe('bản đã sửa')
+    expect(updated?.editedAt).toBeDefined()
+  })
+
+  it('overwrites the ciphertext on delete, not just a UI flag', async () => {
+    ctx = makeTempStore()
+    const repo = new ConversationRepository(ctx.store)
+    const conv = repo.create(ctx.profileId, 'Xoá tin nhắn', null)
+    const secret = 'Số liệu lương nhạy cảm lỡ dán vào'
+    const msg = repo.appendMessage({ conversationId: conv.id, role: 'user', content: secret })
+
+    repo.deleteMessage(msg.id)
+
+    const [deleted] = repo.listMessages(conv.id, 10)
+    expect(deleted?.content).toBe('')
+    expect(deleted?.deletedAt).toBeDefined()
+
+    ctx.store.close()
+    const raw = readFileSync(ctx.dbPath).toString('latin1')
+    expect(raw).not.toContain(secret)
+  })
+
+  it('excludes deleted messages from the context sent to the model', async () => {
+    ctx = makeTempStore()
+    const repo = new ConversationRepository(ctx.store)
+    const conv = repo.create(ctx.profileId, 'Ngữ cảnh', null)
+    repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'giữ lại' })
+    const removed = repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'sẽ bị xoá' })
+    repo.deleteMessage(removed.id)
+
+    const context = repo.loadForContext(conv.id)
+    expect(context.map((m) => m.content)).toEqual(['giữ lại'])
   })
 })
 
@@ -515,7 +560,9 @@ describe('migration v2 — nâng cấp từ một DB v1 có dữ liệu', () => 
         driver: 'node:sqlite',
       })
       try {
-        expect(store.schemaVersion).toBe(2)
+        // Mở một DB v1 sẽ chạy tuần tự mọi migration đang chờ, không chỉ v2 — nên đích đến là
+        // LATEST_SCHEMA_VERSION hiện tại (v3: thêm loại kết nối mcpGateway), không phải hằng số 2.
+        expect(store.schemaVersion).toBe(LATEST_SCHEMA_VERSION)
 
         // Dữ liệu cũ được suy ra là của LiteLLM — provider duy nhất tồn tại trước v2.
         expect(store.handle.prepare('SELECT provider FROM models').get()?.['provider']).toBe(
@@ -554,6 +601,19 @@ describe('migration v2 — nâng cấp từ một DB v1 có dữ liệu', () => 
     }
     expect(() => insert('openai')).not.toThrow()
     expect(() => insert('provider-khong-ton-tai')).toThrow()
+  })
+
+  it('migration v3 mở CHECK constraint cho mcpGateway (ADR-0005)', () => {
+    ctx = makeTempStore()
+    const insert = (type: string): void => {
+      ctx!.store.handle
+        .prepare(
+          `INSERT INTO connections (id, profile_id, type, base_url, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, 'https://gateway.internal', 1, 'x', 'x')`,
+        )
+        .run(randomUUID(), ctx!.profileId, type)
+    }
+    expect(() => insert('mcpGateway')).not.toThrow()
   })
 
   it('cùng model id ở hai provider là hai bản ghi khác nhau', () => {

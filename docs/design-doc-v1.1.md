@@ -428,11 +428,12 @@ Kiến trúc ưu tiên desktop tự cấu hình. Laptop chịu trách nhiệm gi
 
 | Mức | Ví dụ | Cách xử lý |
 |---|---|---|
-| READ | jira.get_issue, confluence.get_page | Chạy khi kết nối đã được kiểm tra; UI hiển thị tool đang hoạt động. Quyền cuối cùng do Jira/Confluence quyết định. |
-| WRITE_LOW | jira.add_comment | Bắt buộc preview và xác nhận; thực thi bằng PAT của người dùng. |
-| WRITE_HIGH | jira.update_issue, confluence.update_page | Preview chi tiết và xác nhận rõ; có thể tắt khỏi MVP theo cấu hình. |
+| READ | jira_get_issue, confluence_get_page | Chạy khi kết nối đã được kiểm tra; UI hiển thị tool đang hoạt động. Quyền cuối cùng do Jira/Confluence quyết định. |
+| WRITE_LOW | jira_add_comment | Bắt buộc preview và xác nhận; thực thi bằng PAT của người dùng. |
+| WRITE_HIGH | jira_update_issue, confluence_update_page | Preview chi tiết và xác nhận rõ; có thể tắt khỏi MVP theo cấu hình. |
 | DESTRUCTIVE | delete/archive/permission change | Không bật trong MVP hoặc yêu cầu quy trình phê duyệt riêng. |
 
+Tên tool dùng gạch dưới (`jira_get_issue`), không dùng dấu chấm: Bedrock Converse API — provider chạy dưới LiteLLM — chỉ chấp nhận `[a-zA-Z0-9_-]` trong `toolUse.name` và từ chối request kế tiếp ngay khi tên có dấu chấm bị echo lại vào lịch sử hội thoại.
 
 ### 10.2 Nội dung màn hình xác nhận
 

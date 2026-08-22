@@ -254,7 +254,7 @@ export class MemoryBackend implements SecureStorageBackend {
  * để cấu hình xuất ra và secure storage nói cùng một ngôn ngữ.
  */
 export function credentialRef(
-  kind: 'litellm' | 'openai' | 'jira' | 'confluence',
+  kind: 'litellm' | 'openai' | 'jira' | 'confluence' | 'mcpGateway',
   name = 'default',
 ): string {
   return `secure://${kind}/${name}`

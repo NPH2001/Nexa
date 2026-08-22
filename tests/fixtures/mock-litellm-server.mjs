@@ -121,7 +121,7 @@ const server = createServer((req, res) => {
                       index: 0,
                       id: 'call_e2e_1',
                       function: {
-                        name: 'jira.create_issue',
+                        name: 'jira_create_issue',
                         arguments: '{"project_key":"PRJ","summary":"Task từ E2E","issue_type":"Task"}',
                       },
                     },

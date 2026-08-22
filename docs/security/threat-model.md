@@ -20,8 +20,10 @@ Cập nhật: 2026-08-01 · Trạng thái: **chưa có pentest độc lập** (T
           │ HTTPS + Bearer            │ stdio + env
      ┌────▼─────┐                ┌────▼──────────────┐
      │ LiteLLM  │                │ MCP Atlassian     │ ── KHÔNG tin output
-     │ (nội bộ) │                │ (process con)     │
-     └──────────┘                └───────────────────┘
+     │ (nội bộ) │                │ (process con      │
+     └──────────┘                │  HOẶC gateway HTTP│
+                                  │  remote, ADR-0008)│
+                                  └───────────────────┘
           │
      ┌────▼──────────────┐
      │ api.openai.com    │ ── NGOÀI tầm kiểm soát tổ chức
@@ -43,7 +45,7 @@ từ MCP server.
 | T1 | Người dùng khác đọc lịch sử trên cùng máy | AES-256-GCM từng trường; master key bọc DPAPI CurrentUser; AAD gắn cột | `local-store.test.ts` → đọc thẳng file `.db`, khẳng định không có plaintext |
 | T2 | Renderer bị XSS và đọc token | `contextIsolation` + `sandbox` + `nodeIntegration:false`; CSP `connect-src 'none'`; preload chỉ expose 2 hàm với allowlist channel; secret không bao giờ đi ra renderer | `main.test.ts`; eslint chặn import; alias bundler chặn build |
 | T3 | Tool call bị thay đổi sau xác nhận | Approval gắn `payload_hash`, kiểm tra lại tại `consume()` trên payload thật sắp gửi | `agent-runtime.test.ts` §17.2-3, 3b |
-| T4 | Gọi tool vượt quyền | Allowlist ba tầng (registry Nexa ∧ feature flag ∧ server công bố); DESTRUCTIVE chặn bằng code; quyền cuối do PAT quyết định | `mcp.test.ts` → "tool allowlist" |
+| T4 | Gọi tool vượt quyền | Allowlist ba tầng (registry Nexa ∧ feature flag ∧ server công bố); quyền cuối do PAT quyết định. **2026-08-22 (OPEN-QUESTIONS.md mục G1): chốt chặn cứng riêng cho DESTRUCTIVE đã bị gỡ theo yêu cầu "full quyền 98 tool"** — `jira_delete_issue`/`confluence_delete_page`/`confluence_delete_attachment` giờ chỉ còn cùng mức kiểm soát với WRITE_HIGH (feature flag + Confirmation Guard), không có lớp chặn nào cao hơn | `mcp.test.ts` → "tool allowlist" |
 | T5 | Gửi file ngoài ý muốn | Chỉ qua file picker; đường dẫn không rời main; preview lượng nội dung; allowlist model | `main.test.ts` → FileBroker; `agent-runtime.test.ts` → document policy |
 | T6 | Lộ dữ liệu qua log | Redactor ba lớp (tên trường, giá trị đã đăng ký, pattern); không có đường ghi sink bỏ qua redaction | `observability.test.ts` (44 test); `agent-runtime.test.ts` §17.2-7 |
 | T7 | Bản cập nhật giả mạo | HTTPS + allowlist domain; xác minh SHA-256; **từ chối** khi manifest đòi chữ ký mà build chưa ký | `main.test.ts` → UpdateService |
@@ -56,6 +58,7 @@ từ MCP server.
 | T9 | URL độc hại làm PAT bay sang host của kẻ tấn công (SSRF) | `validateBaseUrl`: chỉ HTTPS, chặn credential nhúng, chặn query/fragment; `joinUrl` từ chối URL tuyệt đối | `security.test.ts` → validateBaseUrl, joinUrl |
 | T10 | MCP server trả link lừa đảo, người dùng bấm vào | `sanitizeExternalUrl` chỉ nhận link cùng host với hệ thống đã cấu hình | `security.test.ts` → sanitizeExternalUrl |
 | T11 | Tiến trình khác trên máy đọc PAT qua `ps` | Credential đi qua environment của process con, **không** qua argv | `mcp.test.ts` → credential handling |
+| T11b | Transport HTTP remote (ADR-0008) bị redirect/MITM, lộ bearer token + PAT | `McpHttpClient` không mở cổng nào (chỉ gọi ra ngoài); HTTPS bắt buộc + không follow redirect + header dựng lại mỗi request, không cache; `ssl-verify` luôn `true` ở chặng gateway→Jira thật | `http-client.test.ts`, `http-transport.test.ts` |
 | T12 | Prompt injection giấu trong tài liệu | `normalizeText` loại ký tự điều khiển và ký tự vô hình (zero-width, bidi override) trước khi đưa vào prompt | `document-processor.test.ts` → normalizeText |
 | T13 | Electron rơi xuống backend mã hoá giả trên Linux | `SafeStorageBackend.productionGrade` trả false khi backend là `basic_text` | `security.test.ts` → basic_text guard |
 | T14 | Cài đè bản Nexa cũ lên dữ liệu mới làm hỏng schema | Migration từ chối khi `schemaVersion` trên đĩa mới hơn app | `local-store.test.ts` → migration |

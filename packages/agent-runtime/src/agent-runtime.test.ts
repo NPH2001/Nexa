@@ -193,7 +193,7 @@ async function makeHarness(opts: {
 
 describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
   const createCall = {
-    name: 'jira.create_issue',
+    name: 'jira_create_issue',
     args: { project_key: 'PRJ', summary: 'Sửa lỗi đăng nhập', issue_type: 'Bug' },
   }
 
@@ -205,7 +205,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
 
     const result = await h.run()
 
-    const record = h.sink.byTool('jira.create_issue')[0]
+    const record = h.sink.byTool('jira_create_issue')[0]
     expect(record?.operationStatus).toBe('failed')
     expect(record?.errorCode).toBe(ERROR_CODES.ATLASSIAN_AUTH_FAILED)
     expect(result.uncertainOperationIds).toHaveLength(0)
@@ -223,7 +223,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
 
       expect(h.confirmations).toHaveLength(1)
       expect(callTool).not.toHaveBeenCalled()
-      expect(h.sink.byTool('jira.create_issue')[0]?.approvalStatus).toBe('cancelled')
+      expect(h.sink.byTool('jira_create_issue')[0]?.approvalStatus).toBe('cancelled')
     } finally {
       callTool.mockRestore()
     }
@@ -235,7 +235,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
 
     const request = guard.open({
       conversationId: 'c1',
-      toolName: 'jira.create_issue',
+      toolName: 'jira_create_issue',
       validatedPayload: { project_key: 'PRJ', summary: 'Bản gốc', issue_type: 'Task' },
       preview: fakePreview(),
     })
@@ -243,7 +243,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
 
     // Payload sắp gửi đã khác thứ người dùng nhìn thấy.
     expect(() =>
-      guard.consume(request.operationId, 'jira.create_issue', {
+      guard.consume(request.operationId, 'jira_create_issue', {
         project_key: 'PRJ',
         summary: 'ĐÃ BỊ SỬA',
         issue_type: 'Task',
@@ -256,7 +256,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
     const guard = new ConfirmationGuard({ logger })
     const request = guard.open({
       conversationId: 'c1',
-      toolName: 'jira.create_issue',
+      toolName: 'jira_create_issue',
       validatedPayload: { a: 1 },
       preview: fakePreview(),
     })
@@ -276,7 +276,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
     const operationId = h.confirmations[0]!.operationId
     // Lần "bấm" thứ hai: approval đã bị tiêu, operation đã hoàn tất.
     expect(() =>
-      h.guard.consume(operationId, 'jira.create_issue', {
+      h.guard.consume(operationId, 'jira_create_issue', {
         project_key: 'PRJ',
         summary: 'Sửa lỗi đăng nhập',
         issue_type: 'Bug',
@@ -284,8 +284,8 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
       }),
     ).toThrow(expect.objectContaining({ code: ERROR_CODES.OPERATION_ALREADY_RUNNING }))
 
-    expect(h.sink.byTool('jira.create_issue')).toHaveLength(1)
-    expect(h.sink.byTool('jira.create_issue')[0]?.operationStatus).toBe('success')
+    expect(h.sink.byTool('jira_create_issue')).toHaveLength(1)
+    expect(h.sink.byTool('jira_create_issue')[0]?.operationStatus).toBe('success')
   })
 
   it('5. Timeout sau khi gửi → giữ trạng thái uncertain và KHÔNG tự retry', async () => {
@@ -296,7 +296,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
 
     const result = await h.run()
 
-    const record = h.sink.byTool('jira.create_issue')[0]
+    const record = h.sink.byTool('jira_create_issue')[0]
     expect(record?.operationStatus).toBe('uncertain')
     expect(record?.errorCode).toBe(ERROR_CODES.TOOL_EXECUTION_UNCERTAIN)
     expect(result.uncertainOperationIds).toHaveLength(1)
@@ -312,7 +312,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
     })
     await h.run()
 
-    const record = h.sink.byTool('jira.create_issue')[0]
+    const record = h.sink.byTool('jira_create_issue')[0]
     expect(record?.operationId).toBeDefined()
     expect(h.confirmations[0]?.operationId).toBe(record?.operationId)
   })
@@ -323,7 +323,7 @@ describe('§17.2 — kịch bản bắt buộc cho tool write', () => {
         {
           toolCalls: [
             {
-              name: 'jira.create_issue',
+              name: 'jira_create_issue',
               args: {
                 project_key: 'PRJ',
                 summary: 'Mật khẩu VPN mới là hunter2',
@@ -354,12 +354,12 @@ describe('ConfirmationGuard', () => {
     const guard = new ConfirmationGuard({ logger })
     const request = guard.open({
       conversationId: 'c1',
-      toolName: 'jira.create_issue',
+      toolName: 'jira_create_issue',
       validatedPayload: { a: 1 },
       preview: fakePreview(),
     })
 
-    expect(() => guard.consume(request.operationId, 'jira.create_issue', { a: 1 })).toThrow(
+    expect(() => guard.consume(request.operationId, 'jira_create_issue', { a: 1 })).toThrow(
       expect.objectContaining({ code: ERROR_CODES.TOOL_APPROVAL_REQUIRED }),
     )
   })
@@ -371,7 +371,7 @@ describe('ConfirmationGuard', () => {
 
     const request = guard.open({
       conversationId: 'c1',
-      toolName: 'jira.create_issue',
+      toolName: 'jira_create_issue',
       validatedPayload: { a: 1 },
       preview: fakePreview(),
     })
@@ -379,7 +379,7 @@ describe('ConfirmationGuard', () => {
 
     clock.advance(61_000)
 
-    expect(() => guard.consume(request.operationId, 'jira.create_issue', { a: 1 })).toThrow(
+    expect(() => guard.consume(request.operationId, 'jira_create_issue', { a: 1 })).toThrow(
       expect.objectContaining({ code: ERROR_CODES.TOOL_APPROVAL_EXPIRED }),
     )
   })
@@ -389,13 +389,13 @@ describe('ConfirmationGuard', () => {
     const guard = new ConfirmationGuard({ logger })
     const request = guard.open({
       conversationId: 'c1',
-      toolName: 'jira.add_comment',
+      toolName: 'jira_add_comment',
       validatedPayload: { a: 1 },
       preview: fakePreview(),
     })
     guard.approve(request.operationId, request.payloadHash)
 
-    expect(() => guard.consume(request.operationId, 'jira.create_issue', { a: 1 })).toThrow(
+    expect(() => guard.consume(request.operationId, 'jira_create_issue', { a: 1 })).toThrow(
       expect.objectContaining({ code: ERROR_CODES.TOOL_PAYLOAD_MISMATCH }),
     )
   })
@@ -436,7 +436,7 @@ describe('AgentRuntime — vòng lặp tool', () => {
   it('tool READ chạy thẳng, không hỏi xác nhận (§10.1)', async () => {
     const h = await makeHarness({
       script: [
-        { toolCalls: [{ name: 'jira.get_issue', args: { issue_key: 'PRJ-1' } }] },
+        { toolCalls: [{ name: 'jira_get_issue', args: { issue_key: 'PRJ-1' } }] },
         { text: 'Issue PRJ-1 đang ở trạng thái In Progress.' },
       ],
     })
@@ -445,7 +445,7 @@ describe('AgentRuntime — vòng lặp tool', () => {
 
     expect(h.confirmations).toHaveLength(0)
     expect(result.text).toContain('In Progress')
-    expect(h.sink.byTool('jira.get_issue')[0]?.approvalStatus).toBe('not_required')
+    expect(h.sink.byTool('jira_get_issue')[0]?.approvalStatus).toBe('not_required')
   })
 
   it('chặn tool write thứ hai trong cùng một lượt', async () => {
@@ -453,8 +453,8 @@ describe('AgentRuntime — vòng lặp tool', () => {
       script: [
         {
           toolCalls: [
-            { name: 'jira.create_issue', args: { project_key: 'PRJ', summary: 'A', issue_type: 'Task' } },
-            { name: 'jira.create_issue', args: { project_key: 'PRJ', summary: 'B', issue_type: 'Task' } },
+            { name: 'jira_create_issue', args: { project_key: 'PRJ', summary: 'A', issue_type: 'Task' } },
+            { name: 'jira_create_issue', args: { project_key: 'PRJ', summary: 'B', issue_type: 'Task' } },
           ],
         },
         { text: 'Đã tạo một task.' },
@@ -465,13 +465,13 @@ describe('AgentRuntime — vòng lặp tool', () => {
 
     // Chỉ cái đầu được đưa ra xác nhận; cái thứ hai bị chặn trước cả bước preview.
     expect(h.confirmations).toHaveLength(1)
-    expect(h.sink.byTool('jira.create_issue')).toHaveLength(1)
+    expect(h.sink.byTool('jira_create_issue')).toHaveLength(1)
   })
 
   it('trả lỗi lại cho model khi model gọi tool không tồn tại', async () => {
     const h = await makeHarness({
       script: [
-        { toolCalls: [{ name: 'jira.xoa_het', args: {} }] },
+        { toolCalls: [{ name: 'jira_xoa_het', args: {} }] },
         { text: 'Xin lỗi, tôi không có công cụ đó.' },
       ],
     })
@@ -484,7 +484,7 @@ describe('AgentRuntime — vòng lặp tool', () => {
   it('trả lỗi validate lại cho model thay vì gọi tool với tham số sai', async () => {
     const h = await makeHarness({
       script: [
-        { toolCalls: [{ name: 'jira.get_issue', args: { issue_key: 'sai-định-dạng' } }] },
+        { toolCalls: [{ name: 'jira_get_issue', args: { issue_key: 'sai-định-dạng' } }] },
         { text: 'Bạn cho tôi xin key đúng định dạng nhé.' },
       ],
     })
@@ -495,7 +495,7 @@ describe('AgentRuntime — vòng lặp tool', () => {
 
   it('dừng bằng MAX_TOOL_ITERATIONS thay vì lặp vô hạn', async () => {
     const loop: ScriptedTurn = {
-      toolCalls: [{ name: 'jira.get_issue', args: { issue_key: 'PRJ-1' } }],
+      toolCalls: [{ name: 'jira_get_issue', args: { issue_key: 'PRJ-1' } }],
     }
     const h = await makeHarness({
       script: [loop, loop, loop, loop, loop, loop, loop],
@@ -509,7 +509,7 @@ describe('AgentRuntime — vòng lặp tool', () => {
   it('dừng hẳn khi Atlassian trả lỗi xác thực ở tool READ (fail closed §3)', async () => {
     const h = await makeHarness({
       script: [
-        { toolCalls: [{ name: 'jira.get_issue', args: { issue_key: 'PRJ-1' } }] },
+        { toolCalls: [{ name: 'jira_get_issue', args: { issue_key: 'PRJ-1' } }] },
         { text: 'không nên tới đây' },
       ],
       scenario: 'auth-failed',
@@ -528,9 +528,9 @@ describe('AgentRuntime — vòng lặp tool', () => {
     await h.run()
 
     const names = (h.llm.requests[0]?.tools ?? []).map((t) => t.function.name)
-    expect(names).toContain('jira.get_issue')
-    expect(names).not.toContain('jira.create_issue')
-    expect(names).not.toContain('jira.update_issue')
+    expect(names).toContain('jira_get_issue')
+    expect(names).not.toContain('jira_create_issue')
+    expect(names).not.toContain('jira_update_issue')
   })
 
   it('chặn tài liệu khi model không nằm trong allowlist (§11.2)', async () => {
@@ -581,7 +581,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
         {
           toolCalls: [
             {
-              name: 'jira.create_issue',
+              name: 'jira_create_issue',
               args: { project_key: 'PRJ', summary: 'Task nghi ngờ', issue_type: 'Task' },
             },
           ],
@@ -594,7 +594,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
     const operationId = h.confirmations[0]!.operationId
     h.tracker.markUncertain(operationId, ERROR_CODES.MCP_SERVER_UNAVAILABLE)
 
-    const definition = h.mcp.resolveCallable('jira.create_issue')
+    const definition = h.mcp.resolveCallable('jira_create_issue')
     const outcome = await h.tracker.resolveUncertain(
       operationId,
       definition,
@@ -618,7 +618,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
         {
           toolCalls: [
             {
-              name: 'jira.create_issue',
+              name: 'jira_create_issue',
               args: { project_key: 'PRJ', summary: 'X', issue_type: 'Task' },
             },
           ],
@@ -630,7 +630,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
     const operationId = h.confirmations[0]!.operationId
     h.tracker.markUncertain(operationId, ERROR_CODES.MCP_SERVER_UNAVAILABLE)
 
-    const definition = h.mcp.resolveCallable('jira.create_issue')
+    const definition = h.mcp.resolveCallable('jira_create_issue')
     const outcome = await h.tracker.resolveUncertain(
       operationId,
       definition,
@@ -648,7 +648,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
         {
           toolCalls: [
             {
-              name: 'jira.create_issue',
+              name: 'jira_create_issue',
               args: { project_key: 'PRJ', summary: 'Không bao giờ tạo', issue_type: 'Task' },
             },
           ],
@@ -659,7 +659,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
     await h.run()
 
     const operationId = h.confirmations[0]!.operationId
-    const definition = h.mcp.resolveCallable('jira.create_issue')
+    const definition = h.mcp.resolveCallable('jira_create_issue')
 
     // Mock server 'slow' chưa từng tạo issue nào ⇒ jira_search trả rỗng.
     const fresh = await makeHarness({ script: [{ text: 'x' }] })
@@ -682,7 +682,7 @@ describe('OperationTracker — tra cứu uncertain', () => {
 
 function fakePreview(): ToolPreview {
   return {
-    toolName: 'jira.create_issue',
+    toolName: 'jira_create_issue',
     targetSystem: 'jira',
     targetSystemUrl: JIRA_URL,
     action: 'Tạo issue',

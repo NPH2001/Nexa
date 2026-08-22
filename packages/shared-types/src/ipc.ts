@@ -74,6 +74,13 @@ export const messageListSchema = z.object({
   before: z.string().datetime().optional(),
 })
 
+export const messageRefSchema = z.object({ id: z.string().uuid() })
+
+export const messageEditSchema = z.object({
+  id: z.string().uuid(),
+  content: z.string().min(1).max(200_000),
+})
+
 export const chatSendSchema = z.object({
   conversationId: z.string().uuid(),
   content: z.string().min(1).max(200_000),
@@ -147,6 +154,8 @@ export const IPC_SCHEMAS = {
   'conversation:archive': conversationRefSchema,
   'conversation:search': conversationSearchSchema,
   'message:list': messageListSchema,
+  'message:edit': messageEditSchema,
+  'message:delete': messageRefSchema,
 
   'chat:send': chatSendSchema,
   'chat:cancel': chatCancelSchema,

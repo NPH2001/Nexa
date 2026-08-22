@@ -85,6 +85,57 @@ Nhưng không nêu tên package cụ thể, cũng không nói MCP server đó **
 - Tôi đã viết `packages/atlassian-mcp-manager` với một `McpServerSpec` có thể thay hoàn toàn bằng
   config, để đổi package không phải sửa code.
 
+**Cập nhật 2026-08-03:** một tổ chức đã xác nhận hạ tầng THẬT của họ đi ngược hoàn toàn giả định
+trên — không cài `mcp-atlassian` cục bộ, mà có sẵn một **gateway MCP remote** (HTTP, đứng sau
+LiteLLM) nhận bearer token + header `x-mcp-atlassian-x-atlassian-*`. Với kiến trúc stdio-only,
+mọi lần "Kiểm tra kết nối" đều báo `MCP_SERVER_UNAVAILABLE` vì Nexa cố spawn `uvx` — thứ không hề
+tồn tại trên máy — trước khi credential kịp được dùng.
+
+Đã thêm [ADR-0008](architecture/adr/0008-controlled-http-mcp-transport.md): một transport HTTP
+remote bổ sung (`McpHttpClient`), chọn bằng cách cấu hình kết nối `mcpGateway` (URL + bearer
+token). Không thay thế stdio — cả hai cùng tồn tại, chọn theo cấu hình đang có. Câu hỏi A4 vẫn
+còn 🔴 cho nhánh stdio (package Python cụ thể vẫn chưa cài/test thật); nhánh HTTP thì quy ước
+header (`GATEWAY_HEADER_KEYS`) cũng chưa chốt chung — chỉ xác nhận đúng với MỘT gateway cụ thể.
+
+**Cập nhật 2026-08-03 (lần chạy thật đầu tiên qua gateway) — ba điều đã được XÁC NHẬN, không còn
+là phỏng đoán:**
+
+1. **Quy ước `GATEWAY_HEADER_KEYS` là đúng.** Gateway trả lỗi `"Invalid header-based Jira token or
+   configuration"` — chính chữ "header-based" chứng minh `mcp-atlassian` đã NHẬN được bộ header
+   credential Nexa gửi. Trước đây đây chỉ là quy ước sao chép từ một cấu hình Kilo Code.
+2. **Gateway đặt lại tên tool bằng tiền tố `atlassian-`.** Log ghi
+   `serverToolName: "atlassian-jira_search"`. Cơ chế khớp hậu tố trong `resolveServerToolName`
+   (ADR-0005) hoạt động đúng với server thật.
+3. **`initialize` / `tools/list` / `tools/call` đều 200.** Gateway công bố 98 tool. Chặng Nexa →
+   gateway không còn là ẩn số; phần chưa xong là chặng gateway → Jira.
+
+**Nguyên nhân đã tìm ra: TLS, không phải credential.** Nguyên văn lỗi là
+`Invalid header-based Jira token or configuration: Unable to get current user account ID:`
+(dấu hai chấm cuối không có gì theo sau — exception bên trong có message rỗng). Câu này nói về
+*token*, nhưng thủ phạm là chứng chỉ: `itpm.abbank.vn` dùng chứng chỉ ký bởi CA nội bộ mà container
+`mcp-atlassian` phía gateway không tin ⇒ TLS handshake ở chặng gateway → Jira thất bại ⇒ không gọi
+được `/rest/api/2/myself` ⇒ `mcp-atlassian` gói lại thành một câu về token.
+
+Chốt được nhờ so với cấu hình Kilo Code đang chạy thật trên cùng gateway: **khác đúng một giá trị**
+là `ssl-verify` (`false` bên Kilo, Nexa ép `true`). Hai suy đoán ban đầu đều SAI và đã bị loại —
+username không phải nguyên nhân (Kilo cũng gửi header username), và "account ID" không có nghĩa là
+nó đang gọi Cloud API (`mcp-atlassian` dùng `/rest/api/2/myself` cho cả Cloud lẫn Server/DC).
+
+**Ba thứ đã sửa:**
+1. `classifyToolError` xếp text này vào `ATLASSIAN_AUTH_FAILED` thay vì `UPSTREAM_UNAVAILABLE`.
+   Text không chứa mã HTTP nào cũng không chứa từ "authentication", nên cả 5 mẫu heuristic ban đầu
+   đều bỏ sót và UI hiện "Kiểm tra kết nối mạng nội bộ" — sai hướng, vì mạng vẫn tốt.
+2. Log `mcp-tool-error-detail` (text đã qua Redactor, cắt 300 ký tự). Thiếu nó là lý do sự cố này
+   mất nhiều lượt mới chẩn đoán được: đúng trường hợp §22.1 lường trước, và chỉ lộ ra với server
+   thật.
+3. `mcpGatewaySkipAtlassianTlsVerify` — opt-in, mặc định TẮT, chỉ bật được trong Settings → MCP
+   Gateway, kèm security event `atlassian-tls-verify-skipped`. Xem phần "Sửa đổi 2026-08-03" trong
+   [ADR-0008](architecture/adr/0008-controlled-http-mcp-transport.md).
+
+**Cách sửa đúng (vẫn cần làm):** đội hạ tầng cài CA nội bộ ABBANK vào container `mcp-atlassian`
+(`REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE`) rồi tắt cờ ở mục 3. Cờ đó là cách dùng được trong lúc chờ,
+không phải đích đến.
+
 **Việc cần bạn làm:** chốt package → tôi (hoặc dev) chỉnh `DEFAULT_ATLASSIAN_MCP_SPEC` và chạy
 contract test thật. Hiện contract test đang chạy với **mock MCP server tự viết**
 (`tests/fixtures/mock-mcp-server.mjs`), đúng protocol JSON-RPC nhưng không phải server thật.
@@ -220,8 +271,8 @@ hiện payload. Nhưng với `update_issue` thì để hiện "giá trị cũ �
 đối tượng đích.
 
 **Giả định đã dùng:** với tool WRITE_HIGH có `previewFetcher`, Confirmation Guard gọi tool READ
-tương ứng trước để lấy giá trị hiện tại và hiện diff. Với `jira.update_issue` tôi gọi
-`jira.get_issue` trước.
+tương ứng trước để lấy giá trị hiện tại và hiện diff. Với `jira_update_issue` tôi gọi
+`jira_get_issue` trước.
 
 **Hệ quả bạn cần biết:** preview tốn thêm 1 API call, và giá trị có thể đổi giữa lúc preview và lúc
 execute (TOCTOU). Tôi **không** khoá đối tượng — chỉ hiện cảnh báo. Nếu nghiệp vụ cần chặt hơn thì
@@ -369,11 +420,30 @@ không giới hạn. Đề nghị ATTT bắt buộc điền.
 NSIS per-user install làm được. Nhưng MSI cho IT phân phối tập trung thì **cần** admin. Hai mục tiêu
 này mâu thuẫn nhẹ — cần nói rõ: NSIS = self-service không admin, MSI = IT deploy có admin.
 
-### D4. Tài liệu không nói gì về **xoá một tin nhắn lẻ** hay **sửa tin nhắn**
+### D4. ✅ ĐÃ LÀM 2026-08-22: sửa/xoá một tin nhắn lẻ
 
-Chỉ có CRUD ở mức conversation. Tôi không làm sửa/xoá message lẻ. Nếu người dùng lỡ dán nội dung
-nhạy cảm vào chat thì cách duy nhất là xoá cả hội thoại. Có thể là thiếu sót đáng kể về mặt
-quyền riêng tư — đề nghị cân nhắc thêm.
+Trước đây chỉ có CRUD ở mức conversation — nếu người dùng lỡ dán nội dung nhạy cảm vào chat thì
+cách duy nhất là xoá cả hội thoại. Đã bổ sung `editMessage`/`deleteMessage` ở cả 4 lớp:
+
+- Schema: migration `version: 4` (`packages/local-store/src/migrations.ts`) thêm `edited_at`,
+  `deleted_at` vào `messages`. Không cần dựng lại bảng vì `messages` không có CHECK constraint.
+- Repository: `ConversationRepository.editMessage`/`deleteMessage`
+  (`packages/local-store/src/repositories/conversation-repository.ts`). **Xoá là xoá nội dung
+  thật** — ghi đè `content_ciphertext` bằng ciphertext của chuỗi rỗng, không phải soft-delete giữ
+  nguyên ciphertext cũ, đúng mục đích ban đầu của mục này. Row vẫn giữ lại (id/seq/role) để không
+  phá thứ tự hội thoại; `loadForContext` (dùng để dựng ngữ cảnh gửi model) đã lọc bỏ
+  `deleted_at IS NOT NULL`.
+- IPC: `message:edit`, `message:delete` (`packages/shared-types/src/{channels,ipc}.ts`,
+  `apps/desktop/src/main/ipc.ts`).
+- UI: nút sửa/xoá xuất hiện khi hover trên tin nhắn của `user`/`assistant` đã lưu xong
+  (`apps/desktop/src/renderer/components/ChatView.tsx`, `MessageBubble`); sửa dùng textarea tại
+  chỗ, xoá thực thi ngay không có dialog xác nhận riêng — giống hành vi xoá hội thoại đã có ở
+  `Sidebar.tsx`, không thêm bất nhất về UX.
+
+**Không làm:** không cho "sửa rồi gửi lại cho model" (regenerate) — sửa chỉ cập nhật nội dung đã
+lưu, giữ phạm vi tối thiểu đúng nhu cầu quyền riêng tư nêu ra ở đây. Nếu sau này cần regenerate,
+đó là tính năng khác, cần thiết kế riêng (đặc biệt là ảnh hưởng tới các message/tool-call phía sau
+trong cùng hội thoại).
 
 ### D5. Không có yêu cầu nào về **i18n**
 
@@ -423,9 +493,9 @@ Node/Electron về `node:sqlite` **trước** khi nâng. Nếu API đổi hoặc
 cần chuyển đổi. [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md) đã ở trạng thái
 *Đã chấp nhận*.
 
-### E2. 🟡 `jira.create_issue` được xếp mức WRITE_LOW
+### E2. 🟡 `jira_create_issue` được xếp mức WRITE_LOW
 
-§10.1 chỉ nêu ví dụ `jira.add_comment` = WRITE_LOW và `jira.update_issue` = WRITE_HIGH.
+§10.1 chỉ nêu ví dụ `jira_add_comment` = WRITE_LOW và `jira_update_issue` = WRITE_HIGH.
 `create_issue` không được xếp hạng.
 
 Tôi xếp WRITE_LOW vì tạo mới không phá dữ liệu đang có. Mọi tool write đều phải preview và xác
@@ -557,3 +627,66 @@ proxy công ty riêng (biến môi trường `HTTPS_PROXY` chưa được đọc
 
 Nếu mạng nội bộ chặn ra ngoài trừ qua proxy thì kết nối này sẽ không chạy, và lỗi hiện ra sẽ là
 `UPSTREAM_UNAVAILABLE` chung chung.
+
+---
+
+## G. Mở toàn bộ 98 tool MCP Atlassian — sai lệch có chủ ý so với thiết kế (2026-08-22)
+
+### G1. 🔴 Bật mặc định mọi feature flag Jira/Confluence write + mở khoá tool DESTRUCTIVE
+
+**Yêu cầu:** chủ sở hữu sản phẩm yêu cầu "full quyền sử dụng 98 tool" của gateway MCP Atlassian,
+ngày 2026-08-22. Đã hỏi rõ phạm vi trước khi làm — người yêu cầu chọn phương án rộng nhất: đổi
+mặc định trong code (không chỉ hướng dẫn bật tay trong Settings) VÀ mở luôn tool mức DESTRUCTIVE.
+
+**Điều này trái với tài liệu thiết kế và với chính comment trong code trước đây.** §22.3 khuyến
+nghị "MVP bật Jira read/create + Confluence read only, mọi write cần xác nhận"; §10.1 nói
+DESTRUCTIVE "không bật trong MVP". Toàn bộ 98 tool của gateway đã được đăng ký sẵn trong
+`tool-registry.ts` từ trước (chia 4 nhóm) — việc "mở khoá" ở đây thuần tuý là gỡ các lớp chặn cấu
+hình/code, không phải viết thêm tool nào.
+
+**Đã đổi:**
+1. `packages/shared-types/src/settings.ts` — `featureFlagsSchema`: `jiraServiceDesk`,
+   `jiraComment`, `jiraLink`, `jiraUpdate`, `jiraWorkflow`, `confluenceWrite`,
+   `confluenceWriteHigh` đổi mặc định từ `false` sang `true`. Áp dụng cho **mọi cài đặt mới**,
+   không chỉ máy đã yêu cầu — vì đây là default trong code, không phải policy riêng cho một máy.
+2. `packages/atlassian-mcp-manager/src/manager.ts` — gỡ hai chốt chặn cứng cho `riskLevel ===
+   'DESTRUCTIVE'` (trong `availableTools()` và `resolveCallable()`). Ba tool DESTRUCTIVE duy nhất
+   hiện có (`jira_delete_issue`, `confluence_delete_page`, `confluence_delete_attachment`, đều xoá
+   vĩnh viễn, không thể hoàn tác) giờ chỉ còn bị kiểm soát bằng `requiredFeature`
+   (`jiraWorkflow`/`confluenceWriteHigh`) — **giống hệt mọi tool WRITE_HIGH khác, không có lớp
+   bảo vệ nào cao hơn.**
+3. Cập nhật mô tả tool và nhãn UI (`SettingsView.tsx`) để không còn nói "hiện KHÔNG khả dụng".
+
+**Điều KHÔNG đổi (vẫn còn nguyên vẹn):**
+- Confirmation Guard: mọi tool WRITE/DESTRUCTIVE vẫn bắt buộc preview + xác nhận người dùng
+  trước khi gọi thật (§10.2). Không có tool nào tự chạy.
+- `payload_hash` + `operation_id` chống double-submit (§10.3) vẫn áp dụng cho DESTRUCTIVE như
+  WRITE_HIGH.
+- `forcedFeatures`/`lockedFeatures` trong `policy.json` (§ORG_POLICY) vẫn có thể được IT dùng để
+  ghi đè cứng, tắt lại các flag này cho một tổ chức cụ thể nếu cần — xem `settings.ts`.
+
+**Cập nhật 2026-08-22 (lần 2) — `apps/desktop/resources/policy.json` thật ra ĐÃ khoá
+`confluenceWrite`:** đổi default ở mục 1 không đủ, vì `resources/policy.json` sẵn có
+`forcedFeatures: { "confluenceWrite": false }` — theo đúng thứ tự ưu tiên ở
+`settings-service.ts` ("`forcedFeatures` của tổ chức — thắng tất cả"), giá trị này ghi đè cả
+default mới lẫn lựa chọn của người dùng, và UI hiện tag "bị khoá bởi chính sách tổ chức" cạnh
+"Ghi Confluence". Đã gỡ entry đó khỏi `forcedFeatures` (nay là `{}`) để `confluenceWrite` theo
+đúng default `true` ở mục 1 và người dùng tự tắt được nếu muốn — không còn bị khoá cứng.
+**Bài học:** khi một feature vừa có default trong `settings.ts` vừa có thể bị `policy.json` ghi
+đè, phải kiểm tra CẢ HAI chỗ mới biết hành vi thật — chỉ đổi default không đảm bảo mở được tính
+năng nếu tổ chức có policy riêng.
+
+**Rủi ro thật cần bạn/ATTT biết:**
+- `jira_delete_issue`/`confluence_delete_page`/`confluence_delete_attachment` xoá **vĩnh viễn**
+  (comment, worklog, attachment, trang con đều mất theo) và **không có gì ngăn model đề xuất gọi
+  chúng** ngoài việc người dùng phải bấm xác nhận trên preview — không có bước xác nhận thứ hai
+  hay cảnh báo nào mạnh hơn WRITE_HIGH thông thường dù đây là thao tác không thể hoàn tác.
+- Vì đây là **default trong code**, mọi bản cài mới của Nexa (kể cả không phải máy đã yêu cầu)
+  sẽ có toàn bộ 98 tool sẵn sàng ngay khi kết nối Jira/Confluence, không cần người dùng tự bật —
+  khác hẳn nguyên tắc "least privilege" ghi ở §3 tài liệu gốc.
+- `jiraServiceDesk` (JSM) mặc định bật nghĩa là request/queue có thể chứa dữ liệu khách hàng nhạy
+  cảm hơn issue nội bộ thường giờ được đọc mặc định — trước đây tắt chính vì lý do này.
+
+**Việc cần bạn/ATTT quyết định tiếp:** có cần đặt `forcedFeatures` trong `policy.json` để giữ các
+tổ chức chưa sẵn sàng ở mức mặc định cũ (an toàn hơn) không, và §10.1/§22.3 của tài liệu thiết kế
+gốc có cần cập nhật để phản ánh thực tế mới này không.

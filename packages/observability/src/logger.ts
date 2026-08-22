@@ -188,6 +188,12 @@ export const SECURITY_EVENTS = {
   masterKeyUnavailable: 'master-key-unavailable',
   dbUnlockFailed: 'db-unlock-failed',
   connectionTestFailed: 'connection-test-failed',
+  /**
+   * Người dùng đã tự bật `mcpGatewaySkipAtlassianTlsVerify` (ADR-0008). Ghi mỗi lần MCP khởi
+   * chạy với cờ đó bật — ATTT phải grep ra được máy nào đang chạy mà không xác thực chứng chỉ ở
+   * chặng gateway → Jira/Confluence.
+   */
+  atlassianTlsVerifySkipped: 'atlassian-tls-verify-skipped',
   urlRejected: 'url-rejected',
   domainNotAllowed: 'domain-not-allowed',
   updateSignatureFailed: 'update-signature-failed',

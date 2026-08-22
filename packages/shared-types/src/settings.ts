@@ -5,22 +5,68 @@ import { z } from 'zod'
  * Mặc định theo Phụ lục A và khuyến nghị §22.3: Confluence write TẮT trong MVP.
  */
 export const featureFlagsSchema = z.object({
+  /** Đọc issue/user/field — bao gồm mọi tool Jira READ đơn giản (một issue, một user, một field…). */
   jiraRead: z.boolean().default(true),
+  /** Tìm kiếm/liệt kê nhiều đối tượng Jira: issue theo JQL, board, sprint, project, version… */
   jiraSearch: z.boolean().default(true),
+  /**
+   * Jira Service Management (queue, request type, customer request) — READ.
+   *
+   * Tách khỏi `jiraRead` có chủ ý: đây là một tính năng riêng (JSM) không phải tổ chức nào cũng
+   * dùng, và request/queue có thể chứa dữ liệu khách hàng nhạy cảm hơn issue nội bộ thường.
+   *
+   * Mặc định BẬT theo yêu cầu 2026-08-22 "full quyền dùng cả 98 tool" — sai lệch có chủ ý so
+   * với khuyến nghị §22.3 (mặc định tắt). Xem OPEN-QUESTIONS.md mục G1.
+   */
+  jiraServiceDesk: z.boolean().default(true),
   jiraCreate: z.boolean().default(true),
-  jiraComment: z.boolean().default(false),
-  /** WRITE_HIGH — §10.1 cho phép tắt khỏi MVP. */
-  jiraUpdate: z.boolean().default(false),
+  /** Mặc định BẬT — xem ghi chú ở `jiraServiceDesk` và OPEN-QUESTIONS.md mục G1. */
+  jiraComment: z.boolean().default(true),
+  /**
+   * WRITE_LOW mang tính "tổ chức lại" chứ không sửa nội dung issue: watcher, link (issue↔issue,
+   * issue↔epic, remote link), thêm/bỏ issue khỏi sprint. Tách khỏi `jiraComment`/`jiraCreate` vì
+   * đây là nhóm hành vi khác — không tạo/không viết nội dung, chỉ thay đổi quan hệ.
+   *
+   * Mặc định BẬT — xem OPEN-QUESTIONS.md mục G1.
+   */
+  jiraLink: z.boolean().default(true),
+  /**
+   * WRITE_HIGH — sửa field/sprint/version đã tồn tại. §10.1 gốc khuyến nghị tắt khỏi MVP.
+   * Mặc định BẬT — xem OPEN-QUESTIONS.md mục G1.
+   */
+  jiraUpdate: z.boolean().default(true),
+  /**
+   * WRITE_HIGH: đổi trạng thái workflow (`transition_issue`), chuyển project (`move_issue`),
+   * hoặc xoá quan hệ giữa hai issue (`remove_issue_link`). Tách khỏi `jiraUpdate` vì đây không
+   * phải "sửa field" mà là thay đổi có thể kéo theo tác dụng phụ (thông báo, quy tắc workflow,
+   * đổi issue key) khó dự đoán hơn một field update thường.
+   *
+   * Cờ này cũng mở khoá cho `jira_delete_issue` (DESTRUCTIVE) — xem `manager.ts` và
+   * OPEN-QUESTIONS.md mục G1. Mặc định BẬT.
+   */
+  jiraWorkflow: z.boolean().default(true),
   confluenceRead: z.boolean().default(true),
   confluenceSearch: z.boolean().default(true),
   /**
-   * §22.3: ngoài MVP.
+   * WRITE_LOW Confluence: tạo trang, comment, label, upload attachment, copy trang.
    *
-   * ⚠️ HIỆN CHƯA CÓ TOOL NÀO dùng cờ này — không tool Confluence write nào được đăng ký trong
-   * `tool-registry.ts`. Bật nó lên KHÔNG có tác dụng gì. Cờ tồn tại để Phụ lục A khớp và để
-   * chỗ cắm sẵn khi Confluence write vào phạm vi. Xem OPEN-QUESTIONS A6.
+   * Trước đây cờ này không điều khiển tool nào (§22.3 ngoài MVP, xem OPEN-QUESTIONS A6). Nay đã
+   * nối với các tool WRITE_LOW ở `tool-registry/confluence-write.ts`.
+   *
+   * Mặc định BẬT theo yêu cầu 2026-08-22 "full quyền dùng cả 98 tool" — sai lệch có chủ ý so
+   * với khuyến nghị §22.3 (mặc định tắt). Xem OPEN-QUESTIONS.md mục G1.
    */
-  confluenceWrite: z.boolean().default(false),
+  confluenceWrite: z.boolean().default(true),
+  /**
+   * WRITE_HIGH Confluence: ghi đè nội dung trang (`update_page`, `update_page_section`), di
+   * chuyển trang (`move_page`), đổi quyền xem/sửa (`set_page_restrictions`). Tách khỏi
+   * `confluenceWrite` vì các hành động này ghi đè hoặc thay đổi quyền truy cập của nội dung đã
+   * có, rủi ro cao hơn hẳn việc tạo mới hay thêm comment.
+   *
+   * Cờ này cũng mở khoá cho `confluence_delete_page`/`confluence_delete_attachment`
+   * (DESTRUCTIVE) — xem `manager.ts` và OPEN-QUESTIONS.md mục G1. Mặc định BẬT.
+   */
+  confluenceWriteHigh: z.boolean().default(true),
   /** §22.2 A8: mặc định tắt, để IT phân phối tập trung. */
   autoUpdate: z.boolean().default(false),
   /** §8.3: có lưu text đã trích xuất từ file vào DB (đã mã hoá) hay không. */
@@ -66,6 +112,25 @@ export const appSettingsSchema = z.object({
   externalDocumentAllowedModels: z.array(z.string()).default([]),
   /** Hiện cảnh báo dữ liệu trước mỗi lần gửi file (§11.2). */
   warnBeforeSendingDocuments: z.boolean().default(true),
+  /**
+   * Bỏ qua xác thực chứng chỉ TLS ở chặng **gateway MCP → Jira/Confluence** (ADR-0008).
+   *
+   * MẶC ĐỊNH TẮT, và cố ý không có cách nào bật ngoài việc người dùng tự tích vào Settings —
+   * không đọc từ biến môi trường, không đọc từ policy file. Bật nó là một quyết định phải có
+   * người chịu trách nhiệm, nên nó phải là một hành động tường minh trong UI.
+   *
+   * Vì sao tồn tại: hạ tầng thật đã gặp (ABBANK, 2026-08-03) có Jira/Confluence dùng chứng chỉ
+   * do CA nội bộ ký, mà container `mcp-atlassian` phía gateway KHÔNG tin cậy. TLS handshake ở
+   * chặng đó thất bại, `/rest/api/2/myself` không gọi được, và `mcp-atlassian` báo lại thành
+   * "Invalid header-based Jira token or configuration: Unable to get current user account ID:"
+   * — một câu nói về token, không hề nói về chứng chỉ. Mọi tool Jira/Confluence đều lỗi.
+   *
+   * Cờ này KHÔNG ảnh hưởng chặng Nexa → gateway: chặng đó luôn là HTTPS có xác thực chứng chỉ
+   * và không có cờ nào tắt được (`McpHttpClient`). Phạm vi rủi ro vì thế giới hạn ở một chặng
+   * trong mạng nội bộ, và cách sửa ĐÚNG vẫn là cài CA nội bộ vào container gateway
+   * (`REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE`) rồi tắt cờ này đi.
+   */
+  mcpGatewaySkipAtlassianTlsVerify: z.boolean().default(false),
   features: featureFlagsSchema.default({}),
 })
 export type AppSettings = z.infer<typeof appSettingsSchema>

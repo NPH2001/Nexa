@@ -18,10 +18,9 @@ const read = (relative: string): string => readFileSync(`${root}${relative}`, 'u
 
 describe('sự kiện main → renderer', () => {
   const bridge = read('apps/desktop/src/renderer/bridge.ts')
-  const mainFiles = [
-    'apps/desktop/src/main/index.ts',
-    'apps/desktop/src/main/chat-controller.ts',
-  ].map(read).join('\n')
+  const mainFiles = ['apps/desktop/src/main/index.ts', 'apps/desktop/src/main/chat-controller.ts']
+    .map(read)
+    .join('\n')
 
   it('mọi sự kiện main GỬI đều có chỗ nhận ở bridge', () => {
     const unlistened = Object.entries(NEXA_EVENTS)
@@ -78,9 +77,6 @@ describe('feature flag', () => {
         'autoUpdate',
         'storeExtractedText',
         'storeHistory',
-        // §22.3 ngoài phạm vi MVP: cờ tồn tại theo Phụ lục A nhưng chưa có tool nào dùng.
-        // Bật lên không có tác dụng — xem OPEN-QUESTIONS A6.
-        'confluenceWrite',
       ].sort(),
     )
   })

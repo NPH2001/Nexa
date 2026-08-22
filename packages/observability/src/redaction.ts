@@ -143,7 +143,9 @@ export class Redactor {
     out = out.replace(BEARER_RE, `$1${REDACTED}`)
     out = out.replace(JWT_RE, REDACTED)
     out = out.replace(SK_KEY_RE, REDACTED)
-    out = out.replace(LONG_OPAQUE_RE, (m) => (looksLikeProse(m) ? m : REDACTED))
+    out = out.replace(LONG_OPAQUE_RE, (m) =>
+      looksLikeProse(m) || looksLikeKebabIdentifier(m) ? m : REDACTED,
+    )
     return out
   }
 
@@ -205,6 +207,32 @@ function looksLikeProse(s: string): boolean {
   if (/[+/=_-]/.test(s)) return false
   const vowels = (s.match(/[aeiouAEIOU]/g) ?? []).length
   return vowels / s.length > 0.25
+}
+
+/** Đoạn dài nhất mà một "từ" trong định danh kebab/snake được phép có. */
+const MAX_IDENTIFIER_SEGMENT_LEN = 16
+
+/**
+ * Định danh dạng kebab/snake gồm nhiều từ — ví dụ
+ * `x-mcp-atlassian-x-atlassian-jira-personal-token` (46 ký tự).
+ *
+ * `looksLikeProse` loại thẳng mọi chuỗi có `-`/`_`, nên trước bản vá này MỌI tên header của gateway
+ * đều thành `[REDACTED]`: log chẩn đoán `mcp-http-down` ghi 13 tên header thì 8 cái bị che, đúng
+ * lúc câu hỏi cần trả lời là "request có mang header nào". Đây là false positive thuần: cái bị che
+ * là TÊN trường, không phải giá trị.
+ *
+ * Điều kiện chặt để không nới lỏng lớp phòng thủ: mọi đoạn phải là chữ cái (không chữ số), mỗi
+ * đoạn ngắn (≤16 ký tự) và tổng thể có nguyên âm như từ thật. Secret thực tế không có hình dạng
+ * này — `sk-<40 ký tự random>` có đoạn dài và có chữ số, PAT base64 có chữ số, JWT/GUID có chữ số.
+ * Trường hợp duy nhất lọt là secret dạng passphrase toàn chữ cái ngăn bằng gạch nối; nó vẫn được
+ * lớp 2 (giá trị đã đăng ký qua `SecurityService`) che.
+ */
+function looksLikeKebabIdentifier(s: string): boolean {
+  if (!/^[A-Za-z]+(?:[-_][A-Za-z]+)+$/.test(s)) return false
+  const segments = s.split(/[-_]/)
+  if (segments.some((seg) => seg.length > MAX_IDENTIFIER_SEGMENT_LEN)) return false
+  const vowels = (s.match(/[aeiouAEIOU]/g) ?? []).length
+  return vowels / s.length > 0.15
 }
 
 /** Redactor dùng chung cho cả tiến trình. */

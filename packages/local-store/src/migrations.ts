@@ -266,6 +266,124 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE conversations DROP COLUMN model_provider;
     `,
   },
+
+  {
+    version: 3,
+    name: 'mcp-gateway-connection',
+    /**
+     * Thêm loại kết nối `mcpGateway` (ADR-0005): endpoint HTTP remote cho MCP Atlassian, đứng
+     * sau một gateway nội bộ (ví dụ LiteLLM MCP gateway), thay thế cho việc Nexa tự spawn
+     * `uvx mcp-atlassian` bằng stdio khi hạ tầng chỉ có sẵn một endpoint HTTP.
+     *
+     * Cùng lý do dựng lại bảng như v2: SQLite không cho sửa CHECK constraint bằng ALTER TABLE,
+     * và `credential_refs` tham chiếu `connections(id)` với ON DELETE CASCADE nên phải backup
+     * và drop bảng con trước.
+     */
+    up: `
+      CREATE TABLE _mig3_connections AS SELECT * FROM connections;
+      CREATE TABLE _mig3_credential_refs AS SELECT * FROM credential_refs;
+
+      DROP TABLE credential_refs;
+      DROP TABLE connections;
+
+      CREATE TABLE connections (
+        id             TEXT PRIMARY KEY,
+        profile_id     TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        type           TEXT NOT NULL CHECK (type IN ('litellm','openai','jira','confluence','mcpGateway')),
+        base_url       TEXT NOT NULL,
+        username       TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        last_test_json TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_connections_profile_type ON connections(profile_id, type);
+
+      CREATE TABLE credential_refs (
+        connection_id      TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+        secret_kind        TEXT NOT NULL,
+        secure_storage_key TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        PRIMARY KEY (connection_id, secret_kind)
+      );
+
+      INSERT INTO connections
+        (id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at)
+        SELECT id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at
+        FROM _mig3_connections;
+
+      INSERT INTO credential_refs (connection_id, secret_kind, secure_storage_key, created_at)
+        SELECT connection_id, secret_kind, secure_storage_key, created_at
+        FROM _mig3_credential_refs;
+
+      DROP TABLE _mig3_connections;
+      DROP TABLE _mig3_credential_refs;
+    `,
+    down: `
+      DELETE FROM connections WHERE type = 'mcpGateway';
+
+      CREATE TABLE _mig3d_connections AS SELECT * FROM connections;
+      CREATE TABLE _mig3d_credential_refs AS SELECT * FROM credential_refs;
+
+      DROP TABLE credential_refs;
+      DROP TABLE connections;
+
+      CREATE TABLE connections (
+        id             TEXT PRIMARY KEY,
+        profile_id     TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        type           TEXT NOT NULL CHECK (type IN ('litellm','openai','jira','confluence')),
+        base_url       TEXT NOT NULL,
+        username       TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        last_test_json TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_connections_profile_type ON connections(profile_id, type);
+
+      CREATE TABLE credential_refs (
+        connection_id      TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+        secret_kind        TEXT NOT NULL,
+        secure_storage_key TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        PRIMARY KEY (connection_id, secret_kind)
+      );
+
+      INSERT INTO connections
+        (id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at)
+        SELECT id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at
+        FROM _mig3d_connections;
+
+      INSERT INTO credential_refs (connection_id, secret_kind, secure_storage_key, created_at)
+        SELECT connection_id, secret_kind, secure_storage_key, created_at
+        FROM _mig3d_credential_refs;
+
+      DROP TABLE _mig3d_connections;
+      DROP TABLE _mig3d_credential_refs;
+    `,
+  },
+
+  {
+    version: 4,
+    name: 'message-edit-delete',
+    /**
+     * OPEN-QUESTIONS D4: cho phép sửa/xoá một tin nhắn lẻ, thay vì bắt người dùng xoá cả hội
+     * thoại khi lỡ dán nội dung nhạy cảm. Không có CHECK constraint nào trên `messages` nên
+     * chỉ cần thêm cột — không phải dựng lại bảng như migration v2/v3.
+     *
+     * `deleted_at` đánh dấu một tombstone: `content_ciphertext` bị ghi đè bằng chuỗi rỗng đã mã
+     * hoá (xem `ConversationRepository.deleteMessage`), row vẫn giữ nguyên để không phá
+     * `idx_messages_conv_seq` và để lịch sử hội thoại còn liền mạch.
+     */
+    up: `
+      ALTER TABLE messages ADD COLUMN edited_at TEXT;
+      ALTER TABLE messages ADD COLUMN deleted_at TEXT;
+    `,
+    down: `
+      ALTER TABLE messages DROP COLUMN edited_at;
+      ALTER TABLE messages DROP COLUMN deleted_at;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

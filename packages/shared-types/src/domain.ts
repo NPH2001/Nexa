@@ -52,6 +52,13 @@ export interface Message {
   readonly requestId?: string
   /** Số message cũ bị lược khỏi context khi gửi (OPEN-QUESTIONS B2). */
   readonly truncatedContextCount?: number
+  /** Có mặt nếu người dùng đã sửa nội dung message này (OPEN-QUESTIONS D4). */
+  readonly editedAt?: string
+  /**
+   * Có mặt nếu người dùng đã xoá message này. `content` khi đó là chuỗi rỗng — nội dung thật
+   * đã bị ghi đè trong DB, không chỉ ẩn ở UI (OPEN-QUESTIONS D4).
+   */
+  readonly deletedAt?: string
 }
 
 /**
@@ -184,12 +191,30 @@ export const PROVIDER_LABELS: Readonly<Record<LlmProvider, string>> = {
   openai: 'OpenAI / ChatGPT (bên ngoài)',
 }
 
-/** §8.1 bảng `connections`. Không chứa API key/PAT. */
-export const CONNECTION_TYPES = ['litellm', 'openai', 'jira', 'confluence'] as const
+/**
+ * §8.1 bảng `connections`. Không chứa API key/PAT.
+ *
+ * `mcpGateway` (2026-08-03): endpoint MCP Atlassian dạng remote HTTP đứng sau một gateway nội
+ * bộ (ví dụ LiteLLM MCP gateway) — thay thế cho việc Nexa tự spawn `uvx mcp-atlassian` bằng
+ * stdio khi hạ tầng tổ chức chỉ cung cấp một endpoint HTTP có sẵn. Xem ADR-0005.
+ */
+export const CONNECTION_TYPES = ['litellm', 'openai', 'jira', 'confluence', 'mcpGateway'] as const
 export type ConnectionType = (typeof CONNECTION_TYPES)[number]
 
 export function isLlmConnection(type: ConnectionType): type is LlmProvider {
   return (LLM_PROVIDERS as readonly string[]).includes(type)
+}
+
+/**
+ * Loại kết nối nào bắt buộc "tên đăng nhập".
+ *
+ * Tách khỏi `isLlmConnection` có chủ ý: `mcpGateway` không phải LLM nhưng cũng không cần
+ * username — nó xác thực bằng một bearer token duy nhất (§ADR-0005), giống cách LLM provider
+ * xác thực bằng API key. Gộp chung với `!isLlmConnection` sẽ vô tình bắt nhập username cho nó.
+ */
+const CONNECTIONS_REQUIRING_USERNAME: readonly ConnectionType[] = ['jira', 'confluence']
+export function requiresUsername(type: ConnectionType): boolean {
+  return CONNECTIONS_REQUIRING_USERNAME.includes(type)
 }
 
 export interface Connection {

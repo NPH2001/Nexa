@@ -210,8 +210,8 @@ describe('canonicalize / computePayloadHash', () => {
   })
 
   it('hash phụ thuộc cả tên tool', () => {
-    expect(computePayloadHash('jira.create_issue', { a: 1 })).not.toBe(
-      computePayloadHash('jira.add_comment', { a: 1 }),
+    expect(computePayloadHash('jira_create_issue', { a: 1 })).not.toBe(
+      computePayloadHash('jira_add_comment', { a: 1 }),
     )
   })
 
