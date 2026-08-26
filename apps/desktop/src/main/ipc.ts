@@ -51,7 +51,7 @@ export function registerIpc(ctx: IpcContext): void {
         // Ghi TÊN trường sai, không ghi giá trị — giá trị có thể là nội dung hoặc secret.
         ctx.services.logger.security(SECURITY_EVENTS.ipcValidationFailed, {
           channel,
-          fields: parsed.error.issues.map((i) => i.path.join('.')),
+          invalidFields: parsed.error.issues.map((i) => i.path.join('.')),
         })
         return fail(
           requestId,
@@ -80,17 +80,38 @@ export function registerIpc(ctx: IpcContext): void {
 
 function buildHandlers(ctx: IpcContext): HandlerMap {
   const { services, chat } = ctx
+  let mcpRebuildInFlight = false
+
+  const changesMcpConnection = (type: string): boolean =>
+    type === 'jira' || type === 'confluence' || type === 'mcpGateway'
+
+  const assertMcpIdle = (): void => {
+    if (mcpRebuildInFlight || services.mcp?.isLifecycleBusy === true) {
+      throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+        safeDetail: 'cannot change MCP connection while its lifecycle is busy',
+      })
+    }
+  }
 
   /** MCP phải dựng lại khi cấu hình kết nối đổi — credential và base URL đều nằm trong spec. */
   const rebuildMcp = async (): Promise<void> => {
-    await services.mcp?.stop()
-    services.mcp = buildMcpManager(services, ctx.onMcpStatus)
-    if (services.mcp !== null) {
-      try {
-        await services.mcp.start()
-      } catch {
-        // Trạng thái lỗi đã được manager phát ra; không chặn việc lưu cấu hình.
+    mcpRebuildInFlight = true
+    const previous = services.mcp
+    // Rút manager cũ khỏi service trước `await` đầu tiên: chat mới không thể giữ tham chiếu tới
+    // transport đang dừng, còn mutex chặn một save/delete/restart thứ hai chạy chen vào.
+    services.mcp = null
+    try {
+      await previous?.stop()
+      services.mcp = buildMcpManager(services, ctx.onMcpStatus)
+      if (services.mcp !== null) {
+        try {
+          await services.mcp.start()
+        } catch {
+          // Trạng thái lỗi đã được manager phát ra; không chặn việc lưu cấu hình.
+        }
       }
+    } finally {
+      mcpRebuildInFlight = false
     }
   }
 
@@ -98,14 +119,16 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     // ── Connections ───────────────────────────────────────────────────────
     'connection:list': () => services.connections.list(),
     'connection:save': async (input) => {
+      if (changesMcpConnection(input.type)) assertMcpIdle()
       const connection = services.connections.save(input)
-      if (input.type !== 'litellm') await rebuildMcp()
+      if (changesMcpConnection(input.type)) await rebuildMcp()
       return connection
     },
     'connection:test': (input) => services.connections.test(input.type),
     'connection:delete': async (input) => {
+      if (changesMcpConnection(input.type)) assertMcpIdle()
       services.connections.delete(input.type)
-      if (input.type !== 'litellm') await rebuildMcp()
+      if (changesMcpConnection(input.type)) await rebuildMcp()
       return { deleted: true }
     },
 
@@ -133,19 +156,27 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         limit: input.limit,
         offset: input.offset,
       }),
-    'conversation:create': (input) =>
-      services.conversations.create(
-        services.profileId,
-        input.title,
+    'conversation:create': (input) => {
+      const model =
         input.modelId === null || input.modelProvider === null
           ? null
-          : { modelId: input.modelId, provider: input.modelProvider },
-      ),
+          : services.models.resolveForConversation(input.modelId, input.modelProvider)
+      return services.conversations.create(
+        services.profileId,
+        input.title,
+        model === null ? null : { modelId: model.modelId, provider: model.provider },
+      )
+    },
     'conversation:rename': (input) => {
       services.conversations.rename(input.id, input.title)
       return { ok: true }
     },
     'conversation:delete': (input) => {
+      if (chat.isConversationActive(input.id)) {
+        throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+          safeDetail: 'conversation has an active chat turn',
+        })
+      }
       services.conversations.delete(input.id)
       return { ok: true }
     },
@@ -155,7 +186,8 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     },
     'conversation:search': (input) =>
       services.search.search(services.profileId, input.query, { limit: input.limit }),
-    'message:list': (input) => services.conversations.listMessages(input.conversationId, input.limit),
+    'message:list': (input) =>
+      services.conversations.listMessages(input.conversationId, input.limit),
     'message:edit': (input) => {
       services.conversations.editMessage(input.id, input.content)
       return { ok: true }
@@ -253,8 +285,13 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
 
     // ── MCP ───────────────────────────────────────────────────────────────
     'mcp:status': () =>
-      services.mcp?.statusSnapshot ?? { system: 'jira' as const, state: 'stopped' as const, toolCount: 0 },
+      services.mcp?.statusSnapshot ?? {
+        system: 'jira' as const,
+        state: 'stopped' as const,
+        toolCount: 0,
+      },
     'mcp:restart': async () => {
+      assertMcpIdle()
       await rebuildMcp()
       return services.mcp?.statusSnapshot ?? { system: 'jira' as const, state: 'stopped' as const }
     },

@@ -5,9 +5,15 @@
   "description": "Nexa - Trợ lý AI chạy trên máy tính cá nhân, tích hợp LiteLLM và MCP Atlassian",
   "type": "module",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.12.0"
   },
   "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "overrides": {
+      "@electron/fuses": "2.1.0",
+      "nanoid@^3.3.0": "3.3.18"
+    }
+  },
   "scripts": {
     "dev": "pnpm --filter @nexa/desktop dev",
     "build": "pnpm --filter @nexa/desktop build",
@@ -25,17 +31,18 @@
     "package:dir": "pnpm build && electron-builder --dir --config electron-builder.yml"
   },
   "devDependencies": {
+    "@electron/fuses": "2.1.0",
     "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
-    "@vitest/coverage-v8": "^2.1.8",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.1",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.11"
   }
 }

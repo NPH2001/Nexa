@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { ConfirmationRequest } from '@nexa/shared-types'
+import type { ConfirmationRequest } from '@nexa/shared-types/renderer'
+import { useModalDialog } from './useModalDialog.js'
 
 /**
  * Màn hình xác nhận thao tác thay đổi dữ liệu (§10.2).
@@ -15,11 +16,15 @@ export function ConfirmationDialog(props: {
   onApprove: (operationId: string, payloadHash: string) => void
   onCancel: (operationId: string) => void
 }): React.JSX.Element {
-  const { request } = props
+  const { request, onApprove, onCancel } = props
   const { preview } = request
   const [submitting, setSubmitting] = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(() => remainingSeconds(request.expiresAt))
   const [expandedField, setExpandedField] = useState<string | null>(null)
+  const { dialogRef, initialFocusRef } = useModalDialog(
+    () => onCancel(request.operationId),
+    submitting,
+  )
 
   // §10.2: approval có thời hạn ngắn. Đếm ngược để người dùng thấy rõ, và tự huỷ khi hết giờ
   // thay vì để họ bấm vào một nút đã vô hiệu ở phía main.
@@ -27,20 +32,28 @@ export function ConfirmationDialog(props: {
     const timer = setInterval(() => {
       const left = remainingSeconds(request.expiresAt)
       setSecondsLeft(left)
-      if (left <= 0) props.onCancel(request.operationId)
+      if (left <= 0) onCancel(request.operationId)
     }, 1000)
     return () => clearInterval(timer)
-  }, [request.expiresAt, request.operationId, props])
+  }, [onCancel, request.expiresAt, request.operationId])
 
   const approve = (): void => {
     if (submitting) return
     setSubmitting(true)
-    props.onApprove(request.operationId, request.payloadHash)
+    onApprove(request.operationId, request.payloadHash)
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-      <div className={`modal risk-${preview.riskLevel.toLowerCase()}`}>
+    <div className="modal-backdrop">
+      <div
+        ref={dialogRef}
+        className={`modal risk-${preview.riskLevel.toLowerCase()}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-impact confirm-countdown"
+        tabIndex={-1}
+      >
         <header className="modal-header">
           {/* Mục 1: tên công cụ và hệ thống đích */}
           <div>
@@ -81,15 +94,31 @@ export function ConfirmationDialog(props: {
                   <div key={field.label}>
                     <dt>{field.label}</dt>
                     <dd>
-                      <pre>{field.value}</pre>
-                      {field.truncated === true && expandedField !== field.label && (
+                      <pre>
+                        {expandedField === field.label && field.fullValue !== undefined
+                          ? field.fullValue
+                          : field.value}
+                      </pre>
+                      {field.truncated === true && field.fullValue !== undefined && (
                         <button
                           type="button"
                           className="link"
-                          onClick={() => setExpandedField(field.label)}
+                          aria-expanded={expandedField === field.label}
+                          onClick={() =>
+                            setExpandedField((current) =>
+                              current === field.label ? null : field.label,
+                            )
+                          }
                         >
-                          Nội dung đã bị rút gọn trong bản xem trước
+                          {expandedField === field.label
+                            ? 'Thu gọn nội dung'
+                            : 'Xem đầy đủ nội dung'}
                         </button>
+                      )}
+                      {field.truncated === true && field.fullValue === undefined && (
+                        <p className="warning-inline">
+                          Nội dung đã bị rút gọn và không có bản đầy đủ để kiểm tra.
+                        </p>
                       )}
                     </dd>
                   </div>
@@ -129,7 +158,7 @@ export function ConfirmationDialog(props: {
           )}
 
           {/* Mục 6: cảnh báo tác động và khả năng hoàn tác */}
-          <section className="impact">
+          <section id="confirm-impact" className="impact">
             <h3>Tác động</h3>
             <p>{preview.impactWarning}</p>
             <p className={preview.reversible ? 'ok' : 'danger'}>
@@ -141,20 +170,26 @@ export function ConfirmationDialog(props: {
         </div>
 
         <footer className="modal-footer">
-          <span className="countdown">
+          <span id="confirm-countdown" className="countdown" role="timer" aria-live="off">
             Xác nhận còn hiệu lực {Math.max(0, secondsLeft)} giây
           </span>
           <div className="modal-actions">
             {/* Mục 7: nhãn nút rõ ràng — không dùng "Tiếp tục" */}
             <button
+              ref={initialFocusRef}
               type="button"
               className="btn"
-              onClick={() => props.onCancel(request.operationId)}
+              onClick={() => onCancel(request.operationId)}
               disabled={submitting}
             >
               Huỷ
             </button>
-            <button type="button" className="btn btn-danger" onClick={approve} disabled={submitting}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={approve}
+              disabled={submitting}
+            >
               {submitting ? 'Đang thực hiện…' : 'Xác nhận'}
             </button>
           </div>

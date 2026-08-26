@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LLM_PROVIDERS, type LlmProvider } from './provider.js'
 
 /** Vai trò message. `tool` dùng cho kết quả tool trả về model (§7.3). */
 export const MESSAGE_ROLES = ['system', 'user', 'assistant', 'tool'] as const
@@ -95,13 +96,7 @@ export const APPROVAL_STATUSES = [
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
 
 /** Vòng đời một thao tác write (§10.3, §16). */
-export const OPERATION_STATUSES = [
-  'pending',
-  'running',
-  'success',
-  'failed',
-  'uncertain',
-] as const
+export const OPERATION_STATUSES = ['pending', 'running', 'success', 'failed', 'uncertain'] as const
 export type OperationStatus = (typeof OPERATION_STATUSES)[number]
 
 export interface ToolCallRecord {
@@ -148,8 +143,10 @@ export interface ToolPreview {
 export interface PreviewField {
   readonly label: string
   readonly value: string
-  /** Giá trị dài bị cắt trong preview; UI hiện nút "xem đầy đủ". */
+  /** Giá trị dài bị cắt trong preview. */
   readonly truncated?: boolean
+  /** Giá trị gốc để người dùng thực sự mở rộng và kiểm tra trước khi xác nhận. */
+  readonly fullValue?: string
 }
 
 export interface PreviewChange {
@@ -172,24 +169,13 @@ export interface PreviewChange {
  *   - `isExternalProvider()` bên dưới phân loại provider nằm ngoài kiểm soát tổ chức
  *   - chính sách tài liệu FAIL-CLOSED với provider ngoài (`document-policy.ts`)
  */
-export const LLM_PROVIDERS = ['litellm', 'openai'] as const
-export type LlmProvider = (typeof LLM_PROVIDERS)[number]
-
-/**
- * Provider nào nằm ngoài tầm kiểm soát của tổ chức.
- *
- * Đây là hàm quyết định cho mọi biện pháp bảo vệ dữ liệu. Thêm provider mới thì phải trả lời
- * câu hỏi này một cách tường minh — mặc định phải là "ngoài", không phải "trong".
- */
-export function isExternalProvider(provider: LlmProvider): boolean {
-  return provider !== 'litellm'
-}
-
-/** Tên hiển thị cho người dùng. */
-export const PROVIDER_LABELS: Readonly<Record<LlmProvider, string>> = {
-  litellm: 'LiteLLM (nội bộ)',
-  openai: 'OpenAI / ChatGPT (bên ngoài)',
-}
+export {
+  LLM_PROVIDERS,
+  PROVIDER_LABELS,
+  isExternalProvider,
+  isProviderAllowedByPolicy,
+} from './provider.js'
+export type { LlmProvider } from './provider.js'
 
 /**
  * §8.1 bảng `connections`. Không chứa API key/PAT.

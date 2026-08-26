@@ -37,6 +37,11 @@ export default tseslint.config(
         {
           patterns: [
             {
+              regex: '^@nexa/shared-types$',
+              message:
+                'Renderer must use the explicit @nexa/shared-types/renderer boundary entrypoint.',
+            },
+            {
               group: ['**/main/**', '@nexa/security', '@nexa/local-store', '@nexa/llm-client'],
               message:
                 'Renderer must not import main-process code (§13.1). Go through the preload IPC bridge.',

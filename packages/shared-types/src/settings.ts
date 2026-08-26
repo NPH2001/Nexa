@@ -1,4 +1,5 @@
 import { z } from 'zod'
+export { RETENTION_CHOICES } from './ui-constants.js'
 
 /**
  * Feature flag cục bộ cho tool/write action (§13.1).
@@ -76,8 +77,6 @@ export const featureFlagsSchema = z.object({
 })
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>
 
-export const RETENTION_CHOICES = [30, 90, 180, 0] as const // 0 = không tự xoá
-
 export const appSettingsSchema = z.object({
   /** §14: giới hạn MVP 20–30 MB/file. Phụ lục A chốt 30. */
   maxFileSizeMb: z.number().int().min(1).max(100).default(30),
@@ -142,6 +141,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = appSettingsSchema.parse({})
  * Xem OPEN-QUESTIONS D2: đề nghị ATTT bắt buộc điền `allowedDomains`.
  */
 export const orgPolicySchema = z.object({
+  /** IT có thể tắt hoàn toàn provider OpenAI gọi trực tiếp, kể cả với cấu hình đã lưu từ trước. */
+  allowDirectOpenAi: z.boolean().default(true),
   /**
    * Allowlist domain cho mọi kết nối ra ngoài (§5.3, §11.2).
    * Rỗng = không giới hạn (fail-open có chủ ý — xem D2).

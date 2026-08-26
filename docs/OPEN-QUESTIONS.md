@@ -4,15 +4,15 @@
 > từ bên ngoài (admin LiteLLM, admin Atlassian, ATTT).
 > Mỗi mục có: câu hỏi → **giả định tôi đã dùng để code** → chỗ cần sửa nếu bạn quyết khác.
 >
-> Cập nhật lần cuối: 2026-08-01 (lần 3 — sau khi thêm kết nối OpenAI trực tiếp)
+> Cập nhật lần cuối: 2026-08-23 (vòng remediation 2 — policy OpenAI và MCP lifecycle)
 
 ## Cách đọc
 
-| Nhãn | Ý nghĩa |
-|---|---|
-| 🔴 BLOCKER | Phải có câu trả lời trước khi chạy thật với hệ thống nội bộ |
-| 🟠 QUAN TRỌNG | Code chạy được, nhưng quyết định khác sẽ phải sửa đáng kể |
-| 🟡 NHỎ | Dễ đổi, chỉ cần chỉnh config |
+| Nhãn          | Ý nghĩa                                                     |
+| ------------- | ----------------------------------------------------------- |
+| 🔴 BLOCKER    | Phải có câu trả lời trước khi chạy thật với hệ thống nội bộ |
+| 🟠 QUAN TRỌNG | Code chạy được, nhưng quyết định khác sẽ phải sửa đáng kể   |
+| 🟡 NHỎ        | Dễ đổi, chỉ cần chỉnh config                                |
 
 ---
 
@@ -24,6 +24,7 @@
 được bật không? Quy trình rotate/revoke ra sao?
 
 **Giả định đã dùng:**
+
 - Giao thức OpenAI-compatible: `POST /v1/chat/completions`, `GET /v1/models`.
 - Auth: header `Authorization: Bearer <key>`.
 - Không validate format key ở client (chỉ kiểm tra không rỗng) — vì chưa biết quy ước.
@@ -41,8 +42,9 @@
 **Giả định đã dùng: AES-256-GCM mã hóa từng trường.**
 
 Lý do tôi chọn phương án này:
+
 - SQLCipher cần build native riêng cho ABI của Electron → tăng rủi ro CI/CD và packaging đáng kể.
-- §8.2 yêu cầu *"mỗi bản ghi hoặc nhóm bản ghi cần nonce/IV riêng; lưu authentication tag"* —
+- §8.2 yêu cầu _"mỗi bản ghi hoặc nhóm bản ghi cần nonce/IV riêng; lưu authentication tag"_ —
   đây chính xác là mô tả của per-field AEAD, không phải của SQLCipher (SQLCipher mã hóa cả page).
 - Per-field cho phép để `created_at`, `role`, `status` ở dạng rõ → vẫn index/sort/query được.
 
@@ -58,7 +60,8 @@ Hiện tại tôi **mã hóa cả `conversations.title`** và tên file đính k
 **Câu hỏi:** Jira và Confluence có dùng chung tài khoản/PAT không? PAT cần scope gì tối thiểu?
 
 **Giả định đã dùng: 2 connection tách biệt, 2 PAT riêng.**
-- Theo khuyến nghị §22.3 *"Cấu hình Jira và Confluence tách biệt"*.
+
+- Theo khuyến nghị §22.3 _"Cấu hình Jira và Confluence tách biệt"_.
 - Nếu tổ chức dùng chung 1 PAT thì người dùng chỉ cần nhập cùng giá trị 2 lần — không sai, chỉ hơi
   bất tiện. Nếu muốn gộp, cần thêm UI "dùng chung credential với Jira".
 
@@ -76,6 +79,7 @@ Nhưng không nêu tên package cụ thể, cũng không nói MCP server đó **
 (env var? CLI arg? file config? initialize params?).
 
 **Giả định đã dùng:**
+
 - Transport: **stdio** (an toàn hơn localhost HTTP — không mở port nào).
 - Credential truyền qua **environment variable** của child process
   (`JIRA_URL`, `JIRA_USERNAME`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_*`) — đây là quy ước của
@@ -87,7 +91,7 @@ Nhưng không nêu tên package cụ thể, cũng không nói MCP server đó **
 
 **Cập nhật 2026-08-03:** một tổ chức đã xác nhận hạ tầng THẬT của họ đi ngược hoàn toàn giả định
 trên — không cài `mcp-atlassian` cục bộ, mà có sẵn một **gateway MCP remote** (HTTP, đứng sau
-LiteLLM) nhận bearer token + header `x-mcp-atlassian-x-atlassian-*`. Với kiến trúc stdio-only,
+LiteLLM) nhận bearer token + header `x-mcp-atlassian-x-atlassian-*`. Với kiến trúc lúc đó chỉ có stdio,
 mọi lần "Kiểm tra kết nối" đều báo `MCP_SERVER_UNAVAILABLE` vì Nexa cố spawn `uvx` — thứ không hề
 tồn tại trên máy — trước khi credential kịp được dùng.
 
@@ -101,7 +105,7 @@ header (`GATEWAY_HEADER_KEYS`) cũng chưa chốt chung — chỉ xác nhận đ
 là phỏng đoán:**
 
 1. **Quy ước `GATEWAY_HEADER_KEYS` là đúng.** Gateway trả lỗi `"Invalid header-based Jira token or
-   configuration"` — chính chữ "header-based" chứng minh `mcp-atlassian` đã NHẬN được bộ header
+configuration"` — chính chữ "header-based" chứng minh `mcp-atlassian` đã NHẬN được bộ header
    credential Nexa gửi. Trước đây đây chỉ là quy ước sao chép từ một cấu hình Kilo Code.
 2. **Gateway đặt lại tên tool bằng tiền tố `atlassian-`.** Log ghi
    `serverToolName: "atlassian-jira_search"`. Cơ chế khớp hậu tố trong `resolveServerToolName`
@@ -112,7 +116,7 @@ là phỏng đoán:**
 **Nguyên nhân đã tìm ra: TLS, không phải credential.** Nguyên văn lỗi là
 `Invalid header-based Jira token or configuration: Unable to get current user account ID:`
 (dấu hai chấm cuối không có gì theo sau — exception bên trong có message rỗng). Câu này nói về
-*token*, nhưng thủ phạm là chứng chỉ: `itpm.abbank.vn` dùng chứng chỉ ký bởi CA nội bộ mà container
+_token_, nhưng thủ phạm là chứng chỉ: `itpm.abbank.vn` dùng chứng chỉ ký bởi CA nội bộ mà container
 `mcp-atlassian` phía gateway không tin ⇒ TLS handshake ở chặng gateway → Jira thất bại ⇒ không gọi
 được `/rest/api/2/myself` ⇒ `mcp-atlassian` gói lại thành một câu về token.
 
@@ -122,6 +126,7 @@ username không phải nguyên nhân (Kilo cũng gửi header username), và "ac
 nó đang gọi Cloud API (`mcp-atlassian` dùng `/rest/api/2/myself` cho cả Cloud lẫn Server/DC).
 
 **Ba thứ đã sửa:**
+
 1. `classifyToolError` xếp text này vào `ATLASSIAN_AUTH_FAILED` thay vì `UPSTREAM_UNAVAILABLE`.
    Text không chứa mã HTTP nào cũng không chứa từ "authentication", nên cả 5 mẫu heuristic ban đầu
    đều bỏ sót và UI hiện "Kiểm tra kết nối mạng nội bộ" — sai hướng, vì mạng vẫn tốt.
@@ -189,6 +194,7 @@ Tài liệu yêu cầu search (§2.1, EPIC-05) nhưng §8.1 lưu `content_cipher
 ciphertext.
 
 **Giả định đã dùng: giải mã + quét trong bộ nhớ (decrypt-and-scan), có giới hạn.**
+
 - Search chạy trong main process, đọc theo từng lô (batch 200 message), giải mã, so khớp, huỷ buffer.
 - Có giới hạn cứng: dừng sau 2000 message hoặc 3 giây, trả về cờ `truncated: true` để UI báo
   "kết quả chưa đầy đủ".
@@ -197,8 +203,9 @@ ciphertext.
 Chấp nhận được ở quy mô MVP, **sẽ không scale** nếu người dùng tích luỹ 50.000+ message.
 
 **Ba phương án thay thế nếu bạn muốn scale (cần bạn quyết):**
+
 1. Bảng `messages_fts` FTS5 lưu **plaintext** → nhanh nhưng phá vỡ tiêu chí §21
-   *"nội dung không đọc được bằng công cụ SQLite thông thường"*. **Tôi không chọn.**
+   _"nội dung không đọc được bằng công cụ SQLite thông thường"_. **Tôi không chọn.**
 2. Blind index: lưu `HMAC(master_key, token)` cho từng từ → search exact-word được, không
    search substring/tiếng Việt có dấu tốt. Lộ pattern tần suất từ.
 3. Giữ decrypt-and-scan nhưng cache chỉ mục giải mã trong RAM khi app đang mở.
@@ -211,8 +218,8 @@ Chấp nhận được ở quy mô MVP, **sẽ không scale** nếu người dù
 
 Không làm. Dùng Electron theo §22.3.
 
-**Lưu ý:** tôi CHƯA đo được RAM thật vì chưa mở được cửa sổ Electron trong môi trường này
-(xem C1). Con số để so với mục tiêu §12.1 phải lấy trên máy Windows thật.
+**Lưu ý:** app và E2E Electron đã chạy thật trên Linux, nhưng RAM theo mục tiêu §12.1 vẫn phải đo
+trên máy Windows pilot vì backend secure storage và đặc tính đóng gói khác môi trường dev.
 
 ---
 
@@ -220,8 +227,8 @@ Không làm. Dùng Electron theo §22.3.
 
 ### B1. 🟠 Cơ chế unlock DB — có app-level password không?
 
-§8.2 nói master key bọc bằng DPAPI (gắn tài khoản Windows). Nhưng §11.3 nhắc *"khóa ứng dụng"* và
-§16 nhắc *"DB unlock failure"* — hai chỗ này ngụ ý có mật khẩu riêng.
+§8.2 nói master key bọc bằng DPAPI (gắn tài khoản Windows). Nhưng §11.3 nhắc _"khóa ứng dụng"_ và
+§16 nhắc _"DB unlock failure"_ — hai chỗ này ngụ ý có mật khẩu riêng.
 
 **Giả định đã dùng: KHÔNG có app password.** Master key được `safeStorage` bảo vệ, mở tự động theo
 tài khoản Windows đang đăng nhập. `DB unlock failure` = trường hợp safeStorage không giải mã được
@@ -234,7 +241,7 @@ KDF (Argon2id) bọc ngoài. Không nhỏ.
 
 ### B2. 🟠 Context window management — cắt hay tóm tắt?
 
-§7.2 chỉ nói *"cắt đoạn hoặc rút gọn nội dung theo context limit"*, không định nghĩa chiến lược khi
+§7.2 chỉ nói _"cắt đoạn hoặc rút gọn nội dung theo context limit"_, không định nghĩa chiến lược khi
 **hội thoại** dài (khác với file dài).
 
 **Giả định đã dùng:** sliding window — luôn giữ system prompt + N message gần nhất vừa trong budget
@@ -251,10 +258,11 @@ context-length-exceeded. Tôi để `contextSafetyMargin: 0.8` để bù.
 
 ### B3. 🟠 Agent Runtime tool-calling loop — chưa được đặc tả
 
-§5.2 nói Agent Runtime *"quyết định gọi model/tool"* nhưng không nói: bao nhiêu vòng tối đa? tool
+§5.2 nói Agent Runtime _"quyết định gọi model/tool"_ nhưng không nói: bao nhiêu vòng tối đa? tool
 call song song? xử lý lỗi tool ra sao?
 
 **Giả định đã dùng:**
+
 - Tối đa **5 vòng** tool-calling mỗi lượt (`maxToolIterations`). Vượt → dừng, báo lỗi rõ.
 - Tool call **tuần tự**, không song song — để confirmation dialog không chồng nhau.
 - Tool lỗi → trả nội dung lỗi lại cho model như một tool result (model có thể tự xử lý), **trừ**
@@ -266,7 +274,7 @@ call song song? xử lý lỗi tool ra sao?
 
 ### B4. 🟠 "Preview" của tool write hiển thị gì khi chưa gọi API?
 
-§10.2 yêu cầu preview hiện *"trường hoặc đối tượng sẽ bị thay đổi"*. Với `create_issue` thì dễ —
+§10.2 yêu cầu preview hiện _"trường hoặc đối tượng sẽ bị thay đổi"_. Với `create_issue` thì dễ —
 hiện payload. Nhưng với `update_issue` thì để hiện "giá trị cũ → giá trị mới" cần **đọc trước**
 đối tượng đích.
 
@@ -319,7 +327,7 @@ không bị lợi dụng. Cấu hình được qua `settings.approvalTtlSeconds`
 
 ### B9. 🟠 `TOOL_EXECUTION_UNCERTAIN` — Nexa tra cứu hộ hay để người dùng tự tra?
 
-§16 nói *"tra cứu object/result trước khi cho phép retry"* nhưng không nói ai tra.
+§16 nói _"tra cứu object/result trước khi cho phép retry"_ nhưng không nói ai tra.
 
 **Giả định đã dùng:** Nexa tra hộ. Khi write timeout, `OperationTracker` giữ trạng thái `uncertain`
 và cung cấp nút "Kiểm tra kết quả" → gọi tool READ với tiêu chí khớp (ví dụ JQL tìm issue có
@@ -351,16 +359,16 @@ master-key-created        (safeStorage thật: gnome_libsecret)
 local-db-opened           driver=node:sqlite
 migration-applied         version=1
 profile-created
-ipc-registered            channelCount=33
+ipc-registered            channelCount=35
 window-ready              durationMs=304
 ```
 
 Nghĩa là đường đi qua `safeStorage` **đã được kiểm chứng** — nhưng trên keyring của Linux, không
 phải DPAPI của Windows.
 
-**Cập nhật lần 2:** đã bổ sung 8 test E2E chạy Electron thật bằng Playwright (`pnpm test:e2e`) —
-cấu hình LiteLLM, chat streaming, xác nhận tool write, lịch sử sống qua khởi động lại, và ba test
-khẳng định renderer không lấy được credential / không gọi được mạng.
+**Cập nhật lần 2:** đã bổ sung 17 test E2E bằng Playwright: 15 ca chạy Electron thật trên Linux
+và 2 ca Windows-only — bao phủ cấu hình LiteLLM, chat streaming, trạng thái request chậm theo đúng
+hội thoại, xác nhận tool write, lịch sử qua khởi động lại, điều hướng bàn phím, credential và CSP.
 
 Và `tests/e2e/windows-secure-storage.e2e.ts` xác minh DPAPI, chạy trong job CI `verify-windows`
 trên `windows-latest` — **không cần máy Windows vật lý** cho phần lớn việc này.
@@ -370,9 +378,10 @@ Việc còn lại **bắt buộc phải làm bằng tay trên Windows**:
 1. Xác nhận credential **KHÔNG** mở được từ tài khoản Windows khác. CI chỉ có một tài khoản nên
    không kiểm chứng được — mà đây chính là điểm mấu chốt của §8.2.
 2. Đo RAM thật so với §12.1 (idle < 500 MB, chat < 800 MB).
-3. Duyệt giao diện bằng mắt — E2E khẳng định hành vi, không khẳng định nó *trông* đúng.
+3. Duyệt giao diện bằng mắt — E2E khẳng định hành vi, không khẳng định nó _trông_ đúng.
 
 **Ba lỗi thật được tìm ra nhờ lần chạy này** (đều đã sửa):
+
 - `showFatalError` hiện dialog mà không ghi log → app không mở được thì không có dấu vết nào.
 - Redactor nuốt cả đường dẫn file → log chẩn đoán thành dãy `[REDACTED]` vô dụng.
 - Master key được tạo lười → secure storage hỏng chỉ lộ ra khi người dùng gửi tin nhắn đầu tiên.
@@ -393,24 +402,23 @@ TASKLIST T-02-5.
 Đã code phát hiện heuristic (trang có < 20 ký tự text ⇒ nghi là scan) và cảnh báo. Chưa có mẫu PDF
 scan nội bộ để hiệu chỉnh ngưỡng.
 
-### C5. 🟡 Chưa có `nexa-icon.ico`
+### C5. ✅ ĐÃ LÀM: icon đóng gói
 
-`electron-builder.yml` trỏ tới `apps/desktop/resources/icon.ico` nhưng tôi không tạo được file icon
-nhị phân. Cần design cấp file. Build sẽ dùng icon mặc định của Electron cho tới lúc đó.
+`apps/desktop/resources/icon.ico` đã tồn tại và được dùng trong `electron-builder.yml`.
 
 ---
 
 ## D. Điểm tôi thấy nên xem lại trong chính tài liệu
 
-### D1. §4.2 nói "MCP stdio **hoặc** localhost chỉ bind loopback"
+### D1. ✅ ĐÃ LÀM: stdio cục bộ + HTTPS gateway remote, không mở localhost server
 
-Nên chốt **chỉ stdio**. Localhost HTTP mở thêm bề mặt tấn công (process khác trên cùng máy gọi được
-MCP server đang giữ PAT của người dùng, không có auth). stdio không có vấn đề này. Tôi đã code
-stdio-only và **cố tình không** implement transport HTTP.
+Nexa hỗ trợ stdio khi tự quản lý MCP và HTTPS client khi tổ chức cung cấp gateway remote
+(ADR-0008). App không bind localhost và renderer không gọi mạng; cả hai transport đều nằm trong
+main process. Cấu hình HTTP loopback chỉ tồn tại trong mock test, bản đóng gói luôn yêu cầu HTTPS.
 
 ### D2. §11.2 "allowlist domain tổ chức nếu có" — nên là bắt buộc
 
-Rủi ro §22.1 *"Người dùng nhập URL giả/malicious → gửi PAT sai đích"* rất thật. Nếu allowlist là
+Rủi ro §22.1 _"Người dùng nhập URL giả/malicious → gửi PAT sai đích"_ rất thật. Nếu allowlist là
 tuỳ chọn thì biện pháp giảm thiểu gần như không có tác dụng. Tôi đã code allowlist và để nó
 **bật được từ file policy** (`resources/policy.json`, IT ghi đè lúc phân phối), mặc định rỗng =
 không giới hạn. Đề nghị ATTT bắt buộc điền.
@@ -437,8 +445,7 @@ cách duy nhất là xoá cả hội thoại. Đã bổ sung `editMessage`/`dele
   `apps/desktop/src/main/ipc.ts`).
 - UI: nút sửa/xoá xuất hiện khi hover trên tin nhắn của `user`/`assistant` đã lưu xong
   (`apps/desktop/src/renderer/components/ChatView.tsx`, `MessageBubble`); sửa dùng textarea tại
-  chỗ, xoá thực thi ngay không có dialog xác nhận riêng — giống hành vi xoá hội thoại đã có ở
-  `Sidebar.tsx`, không thêm bất nhất về UX.
+  chỗ, còn xoá đi qua destructive dialog thống nhất với xoá hội thoại/kết nối/model.
 
 **Không làm:** không cho "sửa rồi gửi lại cho model" (regenerate) — sửa chỉ cập nhật nội dung đã
 lưu, giữ phạm vi tối thiểu đúng nhu cầu quyền riêng tư nêu ra ở đây. Nếu sau này cần regenerate,
@@ -485,13 +492,13 @@ Lớp trừu tượng driver vẫn còn (~60 dòng) làm đường lui: cài l�
 tham số là quay về được. Chi tiết ở [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md).
 
 **✅ ĐÃ CHỐT 2026-08-01:** dùng `node:sqlite`. Chủ sở hữu sản phẩm đã xác nhận sau khi biết rõ
-API này được Node đánh dấu *experimental*.
+API này được Node đánh dấu _experimental_.
 
 Rủi ro còn lại và cách theo dõi: khi nâng Electron (xem E10), phải đọc ghi chú phát hành của
 Node/Electron về `node:sqlite` **trước** khi nâng. Nếu API đổi hoặc bị bỏ, lối thoát là cài lại
 `better-sqlite3` và đổi một tham số trong `services.ts` — dữ liệu là file SQLite chuẩn nên không
 cần chuyển đổi. [ADR 0003](architecture/adr/0003-sqlite-driver-abstraction.md) đã ở trạng thái
-*Đã chấp nhận*.
+_Đã chấp nhận_.
 
 ### E2. 🟡 `jira_create_issue` được xếp mức WRITE_LOW
 
@@ -516,14 +523,15 @@ tài nguyên và làm phức tạp lifecycle.
 Nếu ATTT muốn tách, chỗ sửa là `AtlassianMcpManager` (tách thành hai client), không phải danh
 mục tool.
 
-### E4. 🟡 "Kiểm tra kết nối" Jira/Confluence khởi động lại MCP
+### E4. ✅ ĐÃ LÀM 2026-08-23: không restart MCP khi tool đang chạy
 
 Không có cách nào kiểm tra credential Atlassian mà không đưa nó cho MCP server, và server nhận
 credential lúc spawn. Vì vậy `connection.test` cho Jira/Confluence sẽ **restart tiến trình MCP**
 rồi gọi một tool read nhẹ.
 
-Hệ quả: bấm "Kiểm tra kết nối" giữa lúc đang có tool chạy sẽ làm hỏng tool đó. Hiện chưa chặn.
-Nên thêm khoá nếu thấy phiền ở pilot.
+`AtlassianMcpManager` theo dõi tool call đang hoạt động và từ chối restart bằng
+`OPERATION_ALREADY_RUNNING`. IPC cũng kiểm tra trước khi ghi thay đổi kết nối Jira/Confluence/MCP
+Gateway, nên không có trường hợp lưu thành công rồi mới phát hiện không thể rebuild manager.
 
 ### E5. 🟡 Model chọn ở dropdown chỉ áp cho lượt gửi kế tiếp
 
@@ -553,16 +561,14 @@ ra khoảng 8 tuần một lần.
 
 Cần một chính sách nâng cấp Electron (ai theo dõi, bao lâu nâng một lần). Chưa có.
 
-### E8. 🟡 Chưa có file icon
+### E8. ✅ ĐÃ LÀM: đã có file icon
 
-`electron-builder.yml` trỏ tới `apps/desktop/resources/icon.ico` nhưng file đó chưa tồn tại —
-tôi không tạo được file nhị phân. Build sẽ dùng icon mặc định của Electron. Cần design cấp file.
+`apps/desktop/resources/icon.ico` tồn tại và được `electron-builder.yml` dùng khi đóng gói.
 
-### E9. 🟡 Repo chưa được khởi tạo git
+### E9. 🟡 Git đã có; branch protection và secret scanning vẫn cần cấu hình remote
 
-Tôi không chạy `git init` hay tạo commit nào. `.gitignore` và `.github/workflows/ci.yml` đã sẵn
-sàng. Việc khởi tạo repo, đặt branch protection và bật gitleaks là việc của bạn.
-
+Repo hiện đã là Git working tree. Các thay đổi remediation chưa được commit; branch protection,
+required checks và secret scanning vẫn là việc cấu hình trên Git hosting của tổ chức.
 
 ---
 
@@ -573,19 +579,19 @@ sàng. Việc khởi tạo repo, đặt branch protection và bật gitleaks là
 **Yêu cầu:** chủ sở hữu sản phẩm yêu cầu thêm kết nối ChatGPT/OpenAI, ngày 2026-08-01.
 Tôi đã nêu rõ hệ quả trước khi làm; quyết định được giữ nguyên.
 
-**Điều này trái với tài liệu thiết kế.** §6 ghi: *"Model Provider — Cung cấp LLM phía sau
-LiteLLM; **Nexa không kết nối trực tiếp provider**"*. §4.1 đặt LiteLLM làm chỗ duy nhất áp
+**Điều này trái với tài liệu thiết kế.** §6 ghi: _"Model Provider — Cung cấp LLM phía sau
+LiteLLM; **Nexa không kết nối trực tiếp provider**"_. §4.1 đặt LiteLLM làm chỗ duy nhất áp
 quota, usage log và quyết định key nào gọi được model nào.
 
 **Hệ quả cần ATTG duyệt trước khi phát hành:**
 
-| Vấn đề | Trạng thái |
-|---|---|
-| Dữ liệu hội thoại rời hạ tầng nội bộ, ra cloud công cộng | Người dùng **được cảnh báo trong UI**, nhưng không bị chặn |
-| Không còn usage log / quota của tổ chức cho các lời gọi này | Không có biện pháp bù. LiteLLM không thấy chúng |
-| §6.1 "Dữ liệu có thể phát sinh ngoài laptop" không còn đủ | **Cần cập nhật tài liệu thiết kế** |
-| `allowedDomains` phải mở `api.openai.com` | Nếu tổ chức đã dùng allowlist thì phải thêm tay |
-| Tài liệu nội bộ gửi ra ngoài | **Fail-closed** — xem dưới |
+| Vấn đề                                                      | Trạng thái                                                 |
+| ----------------------------------------------------------- | ---------------------------------------------------------- |
+| Dữ liệu hội thoại rời hạ tầng nội bộ, ra cloud công cộng    | Người dùng **được cảnh báo trong UI**, nhưng không bị chặn |
+| Không còn usage log / quota của tổ chức cho các lời gọi này | Không có biện pháp bù. LiteLLM không thấy chúng            |
+| §6.1 "Dữ liệu có thể phát sinh ngoài laptop" không còn đủ   | **Cần cập nhật tài liệu thiết kế**                         |
+| `allowedDomains` phải mở `api.openai.com`                   | Nếu tổ chức đã dùng allowlist thì phải thêm tay            |
+| Tài liệu nội bộ gửi ra ngoài                                | **Fail-closed** — xem dưới                                 |
 
 **Biện pháp tôi đã dựng để việc rò rỉ không xảy ra do vô tình:**
 
@@ -604,8 +610,9 @@ quota, usage log và quyết định key nào gọi được model nào.
 - Có chấp nhận việc **chat** (không kèm tài liệu) đi ra OpenAI mà không có kiểm soát nội dung
   không? Hiện Nexa chỉ cảnh báo, không chặn. Chặn được nếu cần — nhưng chặn chat thì tính năng
   gần như vô dụng.
-- Có nên dùng `forcedFeatures` trong `policy.json` để **IT tắt hẳn** kết nối OpenAI trên máy
-  của một số nhóm? Hiện chưa có cờ cho việc này.
+- ✅ **Đã làm 2026-08-23:** `policy.json` có `allowDirectOpenAi`. Khi đặt `false`, main process
+  từ chối lưu/test kết nối, thêm/chọn model và dựng client OpenAI, kể cả với cấu hình đã tồn tại;
+  UI ẩn model khỏi chat, khoá form nhưng vẫn cho phép xoá credential cũ.
 - Tài liệu thiết kế §6 và §6.1 **cần được cập nhật** để phản ánh thực tế mới. Ai làm?
 
 ### F2. 🟠 Không có usage log cho lời gọi OpenAI
@@ -645,12 +652,13 @@ DESTRUCTIVE "không bật trong MVP". Toàn bộ 98 tool của gateway đã đư
 hình/code, không phải viết thêm tool nào.
 
 **Đã đổi:**
+
 1. `packages/shared-types/src/settings.ts` — `featureFlagsSchema`: `jiraServiceDesk`,
    `jiraComment`, `jiraLink`, `jiraUpdate`, `jiraWorkflow`, `confluenceWrite`,
    `confluenceWriteHigh` đổi mặc định từ `false` sang `true`. Áp dụng cho **mọi cài đặt mới**,
    không chỉ máy đã yêu cầu — vì đây là default trong code, không phải policy riêng cho một máy.
 2. `packages/atlassian-mcp-manager/src/manager.ts` — gỡ hai chốt chặn cứng cho `riskLevel ===
-   'DESTRUCTIVE'` (trong `availableTools()` và `resolveCallable()`). Ba tool DESTRUCTIVE duy nhất
+'DESTRUCTIVE'` (trong `availableTools()` và `resolveCallable()`). Ba tool DESTRUCTIVE duy nhất
    hiện có (`jira_delete_issue`, `confluence_delete_page`, `confluence_delete_attachment`, đều xoá
    vĩnh viễn, không thể hoàn tác) giờ chỉ còn bị kiểm soát bằng `requiredFeature`
    (`jiraWorkflow`/`confluenceWriteHigh`) — **giống hệt mọi tool WRITE_HIGH khác, không có lớp
@@ -658,6 +666,7 @@ hình/code, không phải viết thêm tool nào.
 3. Cập nhật mô tả tool và nhãn UI (`SettingsView.tsx`) để không còn nói "hiện KHÔNG khả dụng".
 
 **Điều KHÔNG đổi (vẫn còn nguyên vẹn):**
+
 - Confirmation Guard: mọi tool WRITE/DESTRUCTIVE vẫn bắt buộc preview + xác nhận người dùng
   trước khi gọi thật (§10.2). Không có tool nào tự chạy.
 - `payload_hash` + `operation_id` chống double-submit (§10.3) vẫn áp dụng cho DESTRUCTIVE như
@@ -677,6 +686,7 @@ default mới lẫn lựa chọn của người dùng, và UI hiện tag "bị k
 năng nếu tổ chức có policy riêng.
 
 **Rủi ro thật cần bạn/ATTT biết:**
+
 - `jira_delete_issue`/`confluence_delete_page`/`confluence_delete_attachment` xoá **vĩnh viễn**
   (comment, worklog, attachment, trang con đều mất theo) và **không có gì ngăn model đề xuất gọi
   chúng** ngoài việc người dùng phải bấm xác nhận trên preview — không có bước xác nhận thứ hai

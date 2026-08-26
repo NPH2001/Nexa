@@ -5,8 +5,9 @@ và **hỏng thế nào**.
 
 Nguồn: §9 của tài liệu thiết kế. Nơi triển khai được ghi kèm để đối chiếu code.
 
-> Cả năm hợp đồng đều **chưa được kiểm chứng với hệ thống thật** — xem
-> [`../OPEN-QUESTIONS.md`](../OPEN-QUESTIONS.md) mục C2.
+> Phần lớn hợp đồng vẫn **chưa được kiểm chứng đầu-cuối với hệ thống thật**. Nhánh MCP gateway
+> đã chạy với một gateway thực tế nhưng chưa đại diện cho mọi môi trường — xem
+> [`../OPEN-QUESTIONS.md`](../OPEN-QUESTIONS.md) mục C2 và A4.
 
 ---
 
@@ -17,14 +18,14 @@ Nguồn: §9 của tài liệu thiết kế. Nơi triển khai được ghi kèm
 
 ### Gửi đi
 
-| Thuộc tính | Giá trị |
-|---|---|
-| Giao thức | HTTPS, tương thích OpenAI |
-| Endpoint | `POST /v1/chat/completions`, `GET /v1/models` |
-| Auth | `Authorization: Bearer <API key>` — gắn ở **main process**, renderer không chạm tới |
-| Header truy vết | `X-Request-ID: req_<32 hex>` |
-| Streaming | SSE, kèm `stream_options.include_usage` |
-| Timeout | `settings.llmTimeoutMs`, mặc định 120 s |
+| Thuộc tính      | Giá trị                                                                             |
+| --------------- | ----------------------------------------------------------------------------------- |
+| Giao thức       | HTTPS, tương thích OpenAI                                                           |
+| Endpoint        | `POST /v1/chat/completions`, `GET /v1/models`                                       |
+| Auth            | `Authorization: Bearer <API key>` — gắn ở **main process**, renderer không chạm tới |
+| Header truy vết | `X-Request-ID: req_<32 hex>`                                                        |
+| Streaming       | SSE, kèm `stream_options.include_usage`                                             |
+| Timeout         | `settings.llmTimeoutMs`, mặc định 120 s                                             |
 
 Body chỉ chứa: `model`, `messages`, `stream`, và `tools`/`tool_choice` khi có tool khả dụng.
 Không có device id, không có user id — §9.3 cấm gửi định danh ra ngoài khi chưa có chính sách.
@@ -36,14 +37,14 @@ CRLF, JSON hỏng lẻ tẻ (bỏ qua), `tool_calls` đến từng mảnh theo `
 
 ### Ánh xạ lỗi
 
-| HTTP | Mã Nexa | Ghi chú |
-|---|---|---|
-| 401, 403 | `LITELLM_AUTH_FAILED` | Key sai hoặc bị thu hồi |
-| 404, 405 | `UPSTREAM_UNAVAILABLE` | Endpoint không bật — `testConnection` dùng mã này để quyết định fallback |
-| 408, 504 | `LLM_TIMEOUT` | |
-| 429 | `LITELLM_RATE_LIMITED` | |
-| 400, 422 | `MODEL_NOT_CONFIGURED` | Nguyên nhân phổ biến nhất là model id sai |
-| 5xx | `UPSTREAM_UNAVAILABLE` (retryable) | |
+| HTTP     | Mã Nexa                            | Ghi chú                                                                  |
+| -------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| 401, 403 | `LITELLM_AUTH_FAILED`              | Key sai hoặc bị thu hồi                                                  |
+| 404, 405 | `UPSTREAM_UNAVAILABLE`             | Endpoint không bật — `testConnection` dùng mã này để quyết định fallback |
+| 408, 504 | `LLM_TIMEOUT`                      |                                                                          |
+| 429      | `LITELLM_RATE_LIMITED`             |                                                                          |
+| 400, 422 | `MODEL_NOT_CONFIGURED`             | Nguyên nhân phổ biến nhất là model id sai                                |
+| 5xx      | `UPSTREAM_UNAVAILABLE` (retryable) |                                                                          |
 
 **Thân response lỗi KHÔNG bao giờ được đưa vào thông báo hay log** — gateway thường echo lại
 nguyên request, tức là cả prompt.
@@ -52,8 +53,6 @@ nguyên request, tức là cả prompt.
 
 `GET /v1/models` trước. Nếu 404/405 (endpoint không bật) thì fallback sang một chat completion
 `max_tokens: 1` — vì mục tiêu là xác thực **key**, và 404 không nói được key đúng hay sai.
-
----
 
 ---
 
@@ -69,12 +68,13 @@ ai đứng sau.
 
 ### Khác biệt duy nhất đáng kể: đường dữ liệu
 
-| | LiteLLM | OpenAI trực tiếp |
-|---|---|---|
-| Đích | hạ tầng nội bộ | cloud công cộng |
-| Quota / usage log của tổ chức | có | **không** |
-| Tài liệu đính kèm | fail-open (§11.2, A5) | **fail-closed** — phải allowlist từng model |
-| Cảnh báo trong UI | không | có, ở ba chỗ |
+|                               | LiteLLM               | OpenAI trực tiếp                            |
+| ----------------------------- | --------------------- | ------------------------------------------- |
+| Đích                          | hạ tầng nội bộ        | cloud công cộng                             |
+| Quota / usage log của tổ chức | có                    | **không**                                   |
+| Tài liệu đính kèm             | fail-open (§11.2, A5) | **fail-closed** — phải allowlist từng model |
+| Chốt chặn của IT              | luôn khả dụng         | `allowDirectOpenAi: false`                  |
+| Cảnh báo trong UI             | không                 | có, ở ba chỗ                                |
 
 Danh sách cho phép gửi tài liệu tới model ngoài nằm ở `settings.externalDocumentAllowedModels`,
 ghi dạng `openai:gpt-4o`. **Tách khỏi** `documentAllowedModels` vì hai chính sách ngược chiều
@@ -82,33 +82,38 @@ nhau — dùng chung một danh sách thì mở cho model ngoài sẽ vô tình 
 
 ### Điều tổ chức phải làm trước khi dùng
 
-1. Thêm `api.openai.com` vào `allowedDomains` trong `policy.json` (nếu allowlist đang được dùng)
-2. ATTT duyệt việc dữ liệu ra ngoài — xem OPEN-QUESTIONS F1
-3. Quyết định có allowlist model nào cho tài liệu hay không (mặc định: không cái nào)
+1. ATTT đặt `allowDirectOpenAi: true` sau khi duyệt việc dữ liệu ra ngoài; để `false` sẽ chặn cả
+   cấu hình cũ ở execution boundary.
+2. Thêm `api.openai.com` vào `allowedDomains` trong `policy.json` nếu allowlist đang được dùng.
+3. Quyết định có allowlist model nào cho tài liệu hay không (mặc định: không cái nào).
 
 ---
 
 ## 2. MCP Atlassian
 
 **Triển khai:** `packages/mcp-client/`, `packages/atlassian-mcp-manager/`
-**Câu hỏi mở:** A4 🔴 (package chưa chốt) · ADR 0004
+**Câu hỏi mở:** A4 🔴 (package stdio chưa chốt) · ADR 0004, bổ sung bởi ADR 0008
 
 ### Gửi đi
 
-| Thuộc tính | Giá trị |
-|---|---|
-| Transport | **stdio only** — không có HTTP, kể cả loopback |
-| Protocol | JSON-RPC 2.0, newline-delimited |
-| Version | `2024-11-05` |
-| Method dùng | `initialize`, `notifications/initialized`, `tools/list`, `tools/call` |
-| Capability khai báo | `{}` — cố ý **không** khai `sampling` hay `roots` |
-| Credential | biến môi trường của process con, **không phải argv** |
+| Thuộc tính          | Giá trị                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| Transport           | stdio qua process con **hoặc** HTTPS client tới gateway; Nexa không mở cổng HTTP cục bộ   |
+| Protocol            | JSON-RPC 2.0; newline-delimited ở stdio, request/response qua HTTP ở gateway              |
+| Version             | `2024-11-05`                                                                              |
+| Method dùng         | `initialize`, `notifications/initialized`, `tools/list`, `tools/call`                     |
+| Capability khai báo | `{}` — cố ý **không** khai `sampling` hay `roots`                                         |
+| Credential          | env của process con (stdio) hoặc header dựng trong main process (gateway), không qua argv |
 
 Biến môi trường (quy ước của `mcp-atlassian`, chưa chốt):
 `JIRA_URL`, `JIRA_USERNAME`, `JIRA_PERSONAL_TOKEN`, `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`,
 `CONFLUENCE_PERSONAL_TOKEN`
 
 Process con **không** kế thừa environment của Nexa; chỉ nhận `PATH` cộng danh sách trên.
+
+Với nhánh gateway, kết nối `mcpGateway` cung cấp URL HTTPS và bearer token. Main process dựng
+các header Jira/Confluence ngay trước request, không đưa credential sang renderer và không
+follow redirect. Hai transport dùng chung registry tool, confirmation guard và policy.
 
 ### Mong đợi nhận
 
@@ -120,15 +125,15 @@ stdout; dòng nào không parse được JSON thì bỏ qua.
 
 ### Danh mục tool
 
-| Tên Nexa | Tên MCP | Risk | Feature flag |
-|---|---|---|---|
-| `jira_get_issue` | `jira_get_issue` | READ | `jiraRead` |
-| `jira_search` | `jira_search` | READ | `jiraSearch` |
-| `jira_create_issue` | `jira_create_issue` | WRITE_LOW | `jiraCreate` |
-| `jira_add_comment` | `jira_add_comment` | WRITE_LOW | `jiraComment` |
-| `jira_update_issue` | `jira_update_issue` | WRITE_HIGH | `jiraUpdate` |
-| `confluence_get_page` | `confluence_get_page` | READ | `confluenceRead` |
-| `confluence_search` | `confluence_search` | READ | `confluenceSearch` |
+| Tên Nexa              | Tên MCP               | Risk       | Feature flag       |
+| --------------------- | --------------------- | ---------- | ------------------ |
+| `jira_get_issue`      | `jira_get_issue`      | READ       | `jiraRead`         |
+| `jira_search`         | `jira_search`         | READ       | `jiraSearch`       |
+| `jira_create_issue`   | `jira_create_issue`   | WRITE_LOW  | `jiraCreate`       |
+| `jira_add_comment`    | `jira_add_comment`    | WRITE_LOW  | `jiraComment`      |
+| `jira_update_issue`   | `jira_update_issue`   | WRITE_HIGH | `jiraUpdate`       |
+| `confluence_get_page` | `confluence_get_page` | READ       | `confluenceRead`   |
+| `confluence_search`   | `confluence_search`   | READ       | `confluenceSearch` |
 
 Hai cột trùng giá trị vì registry hiện tại không có tiền tố namespace từ gateway; "Tên Nexa"
 (gửi cho LLM) phải khớp `[a-zA-Z0-9_-]` — Bedrock Converse API từ chối dấu chấm trong
@@ -140,15 +145,15 @@ Hai cột trùng giá trị vì registry hiện tại không có tiền tố nam
 **Tên tham số cũng là quy ước của package, không phải chuẩn MCP** — đổi package thì phải soi lại
 bảng này. `tools/list` của server công bố `inputSchema` đầy đủ; đó là nguồn sự thật.
 
-| Tên MCP | Tham số bắt buộc | Tuỳ chọn |
-|---|---|---|
-| `jira_get_issue` | `issue_key` | |
-| `jira_search` | `jql` | `limit` |
-| `jira_create_issue` | `project_key`, `summary`, `issue_type` | `description` |
-| `jira_add_comment` | `issue_key`, `comment` | |
-| `jira_update_issue` | `issue_key`, `fields` | |
-| `confluence_get_page` | `page_id` | |
-| `confluence_search` | `query` — text thường **hoặc** CQL, không phải `cql` | `limit` |
+| Tên MCP               | Tham số bắt buộc                                     | Tuỳ chọn      |
+| --------------------- | ---------------------------------------------------- | ------------- |
+| `jira_get_issue`      | `issue_key`                                          |               |
+| `jira_search`         | `jql`                                                | `limit`       |
+| `jira_create_issue`   | `project_key`, `summary`, `issue_type`               | `description` |
+| `jira_add_comment`    | `issue_key`, `comment`                               |               |
+| `jira_update_issue`   | `issue_key`, `fields`                                |               |
+| `confluence_get_page` | `page_id`                                            |               |
+| `confluence_search`   | `query` — text thường **hoặc** CQL, không phải `cql` | `limit`       |
 
 Chỉ hai dòng `confluence_*` đã được đối chiếu với gateway thật (03/08/2026); phần còn lại vẫn là
 quy ước chưa kiểm chứng — xem A4 trong [OPEN-QUESTIONS](../OPEN-QUESTIONS.md).
@@ -164,12 +169,12 @@ mất hàng trăm ms trở lên.
 Server báo lỗi nghiệp vụ bằng `isError: true` + text, không phải bằng mã. `classifyToolError`
 suy ra mã Nexa từ text — **đây là heuristic dựa trên chuỗi** và sẽ cần hiệu chỉnh khi có server thật.
 
-| Text chứa | Mã Nexa |
-|---|---|
-| `401`, `403`, `unauthorized`, `forbidden`, `permission`, `authentication` | `ATLASSIAN_AUTH_FAILED` |
-| `missing` + `credential` | `ATLASSIAN_CONFIG_REQUIRED` |
-| `timeout`, `timed out` | `MCP_SERVER_UNAVAILABLE` |
-| còn lại (404, lỗi validate của Jira…) | `UPSTREAM_UNAVAILABLE` — model có thể tự xử lý |
+| Text chứa                                                                 | Mã Nexa                                        |
+| ------------------------------------------------------------------------- | ---------------------------------------------- |
+| `401`, `403`, `unauthorized`, `forbidden`, `permission`, `authentication` | `ATLASSIAN_AUTH_FAILED`                        |
+| `missing` + `credential`                                                  | `ATLASSIAN_CONFIG_REQUIRED`                    |
+| `timeout`, `timed out`                                                    | `MCP_SERVER_UNAVAILABLE`                       |
+| còn lại (404, lỗi validate của Jira…)                                     | `UPSTREAM_UNAVAILABLE` — model có thể tự xử lý |
 
 ---
 
@@ -177,7 +182,7 @@ suy ra mã Nexa từ text — **đây là heuristic dựa trên chuỗi** và s�
 
 **Triển khai:** `packages/shared-types/src/ipc.ts`, `apps/desktop/src/main/ipc.ts`
 
-33 channel, mỗi channel có schema Zod bắt buộc. Bảng handler có kiểu `Record<IpcChannel, …>` nên
+35 channel, mỗi channel có schema Zod bắt buộc. Bảng handler có kiểu `Record<IpcChannel, …>` nên
 thiếu một channel là lỗi biên dịch, và không channel nào vào được handler mà chưa qua `parse`.
 
 Mọi phản hồi theo envelope §9.2:
@@ -211,7 +216,7 @@ Mặc định **tắt**. Chỉ chạy khi `policy.json` khai `updateManifestUrl`
   "releasedAt": "2026-08-01T00:00:00Z",
   "mandatory": false,
   "requireSignature": true,
-  "minimumSupportedVersion": "1.0.0"
+  "minimumSupportedVersion": "1.0.0",
 }
 ```
 

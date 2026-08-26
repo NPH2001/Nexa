@@ -1,9 +1,16 @@
-import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import {
+  test,
+  expect,
+  _electron as electron,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { electronEnvironment } from '../support/electron-env.js'
 
 /**
  * E2E desktop — T-13-13, §17.1 "E2E desktop: cấu hình LiteLLM, thêm model, chat, file attach,
@@ -33,7 +40,9 @@ interface Harness {
 }
 
 /** Khởi chạy mock LiteLLM và đọc cổng nó tự chọn. */
-function startMockLiteLlm(scenario: string): Promise<{ proc: ChildProcessWithoutNullStreams; port: number }> {
+function startMockLiteLlm(
+  scenario: string,
+): Promise<{ proc: ChildProcessWithoutNullStreams; port: number }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, [join(ROOT, 'tests/fixtures/mock-litellm-server.mjs')], {
       env: { ...process.env, MOCK_SCENARIO: scenario },
@@ -52,22 +61,29 @@ function startMockLiteLlm(scenario: string): Promise<{ proc: ChildProcessWithout
   })
 }
 
-async function launch(opts: { litellmScenario?: string; mcpScenario?: string } = {}): Promise<Harness> {
+async function launch(
+  opts: { litellmScenario?: string; mcpScenario?: string } = {},
+): Promise<Harness> {
   const { proc, port } = await startMockLiteLlm(opts.litellmScenario ?? 'ok')
   const userDataDir = mkdtempSync(join(tmpdir(), 'nexa-e2e-'))
 
   const app = await electron.launch({
     args: [DESKTOP, `--user-data-dir=${userDataDir}`, '--no-sandbox'],
-    env: {
-      ...process.env,
+    env: electronEnvironment({
       // MCP thật chưa được chốt (A4); E2E dùng mock server nói đúng JSON-RPC.
       NEXA_MCP_COMMAND: process.execPath,
       NEXA_MCP_ARGS: join(ROOT, 'tests/fixtures/mock-mcp-server.mjs'),
       MOCK_SCENARIO: opts.mcpScenario ?? 'ok',
-    },
+    }),
   })
 
   const page = await app.firstWindow()
+  page.on('console', (message) => {
+    if (message.type() === 'error') process.stderr.write(`[renderer console] ${message.text()}\n`)
+  })
+  page.on('pageerror', (error) =>
+    process.stderr.write(`[renderer error] ${error.stack ?? error.message}\n`),
+  )
   await page.waitForLoadState('domcontentloaded')
 
   return {
@@ -89,7 +105,9 @@ async function configureLiteLlm(h: Harness, apiKey = 'sk-e2e-0123456789abcdef'):
   // Chưa có kết nối nào ⇒ app tự mở thẳng Settings.
   await expect(h.page.getByRole('heading', { name: 'Kết nối LiteLLM' })).toBeVisible()
 
-  await h.page.getByLabel('Endpoint (https://…)').or(h.page.locator('.field input').first())
+  await h.page
+    .getByLabel('Endpoint (https://…)')
+    .or(h.page.locator('.field input').first())
     .fill(`http://127.0.0.1:${String(h.litellmPort)}`)
   await h.page.locator('input[type="password"]').fill(apiKey)
   await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
@@ -101,7 +119,7 @@ async function configureLiteLlm(h: Harness, apiKey = 'sk-e2e-0123456789abcdef'):
   await h.page.getByRole('button', { name: 'Kiểm tra kết nối' }).click()
   await expect(h.page.getByText(/Kết nối thành công/)).toBeVisible({ timeout: 15_000 })
 
-  await h.page.getByRole('button', { name: 'Model' }).click()
+  await h.page.getByRole('tab', { name: 'Model' }).click()
   await h.page.getByPlaceholder('Model id (ví dụ gpt-5.x-internal)').fill('model-a')
   await h.page.getByPlaceholder('Tên hiển thị').fill('Model A')
   await h.page.getByRole('button', { name: 'Thêm' }).click()
@@ -109,6 +127,27 @@ async function configureLiteLlm(h: Harness, apiKey = 'sk-e2e-0123456789abcdef'):
 }
 
 test.describe('E2E — cấu hình và chat', () => {
+  test('điều hướng tab cài đặt bằng bàn phím', async () => {
+    const h = await launch()
+    try {
+      expect(h.page.url()).toBe('nexa://app/index.html')
+      const liteLlmTab = h.page.getByRole('tab', { name: 'LiteLLM' })
+      const openAiTab = h.page.getByRole('tab', { name: 'OpenAI' })
+
+      await liteLlmTab.focus()
+      await h.page.keyboard.press('ArrowRight')
+
+      await expect(openAiTab).toBeFocused()
+      await expect(openAiTab).toHaveAttribute('aria-selected', 'true')
+      await expect(h.page.getByRole('tabpanel')).toHaveAttribute(
+        'aria-labelledby',
+        'settings-tab-openai',
+      )
+    } finally {
+      await h.close()
+    }
+  })
+
   test('cấu hình LiteLLM, thêm model, chat và nhận phản hồi streaming', async () => {
     const h = await launch()
     try {
@@ -129,6 +168,30 @@ test.describe('E2E — cấu hình và chat', () => {
     }
   })
 
+  test('request chậm chỉ hiện nút Dừng trong đúng hội thoại', async () => {
+    const h = await launch({ litellmScenario: 'slow' })
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Lượt chat đang chờ')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+      await expect(h.page.getByRole('button', { name: 'Dừng' })).toBeVisible()
+
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await expect(h.page.getByRole('button', { name: 'Đang xử lý…' })).toBeDisabled()
+      await expect(h.page.getByRole('button', { name: 'Dừng' })).toHaveCount(0)
+
+      await h.page.getByRole('button', { name: /Lượt chat đang chờ/ }).click()
+      await expect(h.page.getByRole('button', { name: 'Dừng' })).toBeVisible()
+      await h.page.getByRole('button', { name: 'Dừng' }).click()
+      await expect(h.page.getByRole('button', { name: 'Gửi' })).toBeVisible()
+    } finally {
+      await h.close()
+    }
+  })
+
   test('sửa và xoá một tin nhắn lẻ (OPEN-QUESTIONS D4)', async () => {
     const h = await launch()
     try {
@@ -138,9 +201,8 @@ test.describe('E2E — cấu hình và chat', () => {
 
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Nội dung ban đầu')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
-      await expect(h.page.getByText('Nội dung ban đầu')).toBeVisible()
-
       const userMessage = h.page.locator('.message-user').first()
+      await expect(userMessage.getByText('Nội dung ban đầu')).toBeVisible()
 
       await userMessage.hover()
       await userMessage.getByLabel('Sửa tin nhắn').click()
@@ -148,13 +210,23 @@ test.describe('E2E — cấu hình và chat', () => {
       await userMessage.getByRole('button', { name: 'Lưu' }).click()
 
       await expect(userMessage.getByText('Nội dung đã sửa')).toBeVisible()
-      await expect(userMessage.getByText(/đã sửa/)).toBeVisible()
+      await expect(userMessage.locator('.message-header-left').getByText(/đã sửa/)).toBeVisible()
 
-      await userMessage.hover()
-      await userMessage.getByLabel('Xoá tin nhắn').click()
+      const deleteButton = userMessage.getByLabel('Xoá tin nhắn')
+      await deleteButton.click()
+      let deleteDialog = h.page.getByRole('alertdialog')
+      await expect(deleteDialog.getByText('Xoá tin nhắn?')).toBeVisible()
+      await expect(deleteDialog.getByRole('button', { name: 'Huỷ' })).toBeFocused()
+      await h.page.keyboard.press('Escape')
+      await expect(deleteDialog).toBeHidden()
+      await expect(deleteButton).toBeFocused()
+
+      await deleteButton.click()
+      deleteDialog = h.page.getByRole('alertdialog')
+      await deleteDialog.getByRole('button', { name: 'Xoá tin nhắn' }).click()
 
       await expect(userMessage.getByText('Tin nhắn đã bị xoá.')).toBeVisible()
-      await expect(h.page.getByText('Nội dung đã sửa')).toHaveCount(0)
+      await expect(userMessage.getByText('Nội dung đã sửa')).toHaveCount(0)
     } finally {
       await h.close()
     }
@@ -205,8 +277,9 @@ test.describe('E2E — credential không rò rỉ', () => {
 
       // Đúng những gì một đoạn mã bị chèn vào renderer sẽ thử làm.
       const leaked = await h.page.evaluate(async () => {
-        const api = (window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } })
-          .nexa
+        const api = (
+          window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } }
+        ).nexa
         const connections = await api.invoke('connection:list')
         const settings = await api.invoke('settings:get')
         const diagnostics = await api.invoke('diagnostics:appInfo')
@@ -225,8 +298,9 @@ test.describe('E2E — credential không rò rỉ', () => {
     const h = await launch()
     try {
       const result = await h.page.evaluate(async () => {
-        const api = (window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } })
-          .nexa
+        const api = (
+          window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } }
+        ).nexa
         return api.invoke('fs:readFile', { path: '/etc/passwd' })
       })
       expect(JSON.stringify(result)).toContain('VALIDATION_FAILED')
@@ -260,9 +334,11 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
       await configureLiteLlm(h)
 
       // Cấu hình Jira để MCP khởi động được.
-      await h.page.getByRole('button', { name: 'Jira' }).click()
+      await h.page.getByRole('tab', { name: 'Jira' }).click()
       await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
-      await h.page.getByLabel('Tên đăng nhập').or(h.page.locator('.field input').nth(1))
+      await h.page
+        .getByLabel('Tên đăng nhập')
+        .or(h.page.locator('.field input').nth(1))
         .fill('nguyen.van.a')
       await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
       await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
@@ -284,9 +360,10 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
       // §10.2 cấm nhãn mơ hồ: phải là "Xác nhận" và "Huỷ".
       await expect(dialog.getByRole('button', { name: 'Xác nhận' })).toBeVisible()
       await expect(dialog.getByRole('button', { name: 'Huỷ' })).toBeVisible()
+      await expect(dialog.getByRole('button', { name: 'Huỷ' })).toBeFocused()
 
       // §17.2 kịch bản 2: huỷ ⇒ không có gì được gửi tới hệ thống đích.
-      await dialog.getByRole('button', { name: 'Huỷ' }).click()
+      await h.page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
     } finally {
       await h.close()
@@ -304,7 +381,7 @@ test.describe('E2E — lịch sử tồn tại qua các lần khởi động', (
       await first.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
       await first.page.getByPlaceholder(/Nhập câu hỏi/).fill('Câu hỏi cần nhớ')
       await first.page.getByRole('button', { name: 'Gửi' }).click()
-      await expect(first.page.getByText('Câu hỏi cần nhớ')).toBeVisible()
+      await expect(first.page.locator('.message-user').getByText('Câu hỏi cần nhớ')).toBeVisible()
       await expect(first.page.getByText(/câu trả lời từ mock/)).toBeVisible({ timeout: 20_000 })
 
       userDataDir = first.userDataDir
@@ -318,12 +395,15 @@ test.describe('E2E — lịch sử tồn tại qua các lần khởi động', (
     // Mở lại với cùng thư mục dữ liệu.
     const second = await electron.launch({
       args: [DESKTOP, `--user-data-dir=${userDataDir}`, '--no-sandbox'],
+      env: electronEnvironment(),
     })
     try {
       const page = await second.firstWindow()
       await page.waitForLoadState('domcontentloaded')
       // Nội dung được giải mã lại từ SQLite bằng master key trong secure storage.
-      await expect(page.getByText('Câu hỏi cần nhớ')).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('.message-user').getByText('Câu hỏi cần nhớ')).toBeVisible({
+        timeout: 20_000,
+      })
     } finally {
       await second.close()
       rmSync(userDataDir, { recursive: true, force: true })
@@ -341,16 +421,19 @@ test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
    * nối vào và người dùng thực sự bị chặn.
    */
   async function configureOpenAi(h: Harness): Promise<void> {
-    await h.page.getByRole('button', { name: 'OpenAI' }).click()
+    await h.page.getByRole('tab', { name: 'OpenAI' }).click()
     await expect(h.page.getByRole('heading', { name: 'Kết nối OpenAI (ChatGPT)' })).toBeVisible()
 
     // Endpoint được điền sẵn https://api.openai.com — thay bằng mock để không gọi ra Internet.
-    await h.page.locator('.field input').first().fill(`http://127.0.0.1:${String(h.litellmPort)}`)
+    await h.page
+      .locator('.field input')
+      .first()
+      .fill(`http://127.0.0.1:${String(h.litellmPort)}`)
     await h.page.locator('input[type="password"]').fill('sk-openai-e2e-0123456789')
     await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
     await expect(h.page.getByText('Đã lưu cấu hình kết nối.')).toBeVisible({ timeout: 10_000 })
 
-    await h.page.getByRole('button', { name: 'Model' }).click()
+    await h.page.getByRole('tab', { name: 'Model' }).click()
     await h.page.getByLabel('Provider').selectOption('openai')
     await h.page.getByPlaceholder('Model id (ví dụ gpt-5.x-internal)').fill('gpt-4o')
     await h.page.getByPlaceholder('Tên hiển thị').fill('GPT-4o ngoài')
@@ -362,7 +445,7 @@ test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
     const h = await launch()
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: 'OpenAI' }).click()
+      await h.page.getByRole('tab', { name: 'OpenAI' }).click()
 
       // §11.2 yêu cầu hiển thị cảnh báo dữ liệu. Đây là chỗ nó phải xuất hiện đầu tiên.
       await expect(h.page.getByText(/dịch vụ bên ngoài tổ chức/)).toBeVisible()

@@ -36,6 +36,7 @@ export class ChatController {
   private readonly inFlight = new Map<string, InFlight>()
   private readonly pendingConfirmations = new Map<string, PendingConfirmation>()
   private readonly log: Logger
+  private activeConversationId: string | null = null
 
   constructor(
     private readonly services: NexaServices,
@@ -52,86 +53,100 @@ export class ChatController {
    */
   async send(input: ChatSendInput): Promise<{ requestId: string; messageId: string }> {
     const requestId = newRequestId()
-    const conversation = this.services.conversations.get(input.conversationId)
-    if (conversation === null) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+    if (this.activeConversationId !== null) {
+      throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
         requestId,
-        safeDetail: 'unknown conversation',
+        safeDetail: 'another chat turn is active',
       })
     }
+    this.activeConversationId = input.conversationId
+    let backgroundStarted = false
 
-    // Người dùng đổi model ở dropdown thì `input` mang cả model id và provider; nếu không,
-    // dùng model đang gán cho hội thoại.
-    const model = this.services.models.resolveForConversation(
-      input.modelId ?? conversation.modelId,
-      input.modelProvider ?? conversation.modelProvider,
-    )
-    if (conversation.modelId !== model.modelId || conversation.modelProvider !== model.provider) {
-      this.services.conversations.setModel(conversation.id, {
+    try {
+      const conversation = this.services.conversations.get(input.conversationId)
+      if (conversation === null) {
+        throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+          requestId,
+          safeDetail: 'unknown conversation',
+        })
+      }
+
+      // Người dùng đổi model ở dropdown thì `input` mang cả model id và provider; nếu không,
+      // dùng model đang gán cho hội thoại.
+      const model = this.services.models.resolveForConversation(
+        input.modelId ?? conversation.modelId,
+        input.modelProvider ?? conversation.modelProvider,
+      )
+      if (conversation.modelId !== model.modelId || conversation.modelProvider !== model.provider) {
+        this.services.conversations.setModel(conversation.id, {
+          modelId: model.modelId,
+          provider: model.provider,
+        })
+      }
+
+      // §7.2 bước 1–3: đọc và trích xuất file TRƯỚC khi ghi message, để nếu file hỏng thì
+      // hội thoại không bị dính một tin nhắn cụt.
+      const documents = await this.extractDocuments(input.fileTokens, requestId)
+
+      const settings = this.services.settings.get()
+      const userMessage = this.services.conversations.appendMessage({
+        conversationId: conversation.id,
+        role: 'user',
+        content: input.content,
+        status: 'complete',
+        requestId,
+      })
+
+      for (const doc of documents) {
+        this.services.conversations.addAttachment({
+          messageId: userMessage.id,
+          fileName: doc.fileName,
+          fileType: doc.kind,
+          fileSize: doc.sizeBytes,
+          sourcePathHash: doc.sourcePathHash,
+          // §8.3: chỉ lưu text đã trích xuất nếu chính sách cho phép.
+          extractedText: settings.features.storeExtractedText ? doc.text : null,
+          extractedChars: doc.charCount,
+          ...(doc.pageCount !== undefined ? { pageCount: doc.pageCount } : {}),
+          ...(doc.suspectedScan === true ? { suspectedScan: true } : {}),
+        })
+      }
+
+      const assistantMessage = this.services.conversations.appendMessage({
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        requestId,
+      })
+
+      this.services.audit.record({
+        profileId: this.services.profileId,
+        eventType: AUDIT_EVENTS.chatRequested,
+        status: 'pending',
+        requestId,
+      })
+
+      const controller = new AbortController()
+      this.inFlight.set(requestId, { controller, conversationId: conversation.id })
+
+      void this.runTurn({
+        requestId,
+        conversationId: conversation.id,
+        assistantMessageId: assistantMessage.id,
         modelId: model.modelId,
-        provider: model.provider,
+        modelProvider: model.provider,
+        contextWindowTokens: model.contextWindowTokens,
+        documents,
+        controller,
+        fileTokens: input.fileTokens,
       })
+      backgroundStarted = true
+
+      return { requestId, messageId: assistantMessage.id }
+    } finally {
+      if (!backgroundStarted) this.activeConversationId = null
     }
-
-    // §7.2 bước 1–3: đọc và trích xuất file TRƯỚC khi ghi message, để nếu file hỏng thì
-    // hội thoại không bị dính một tin nhắn cụt.
-    const documents = await this.extractDocuments(input.fileTokens, requestId)
-
-    const settings = this.services.settings.get()
-    const userMessage = this.services.conversations.appendMessage({
-      conversationId: conversation.id,
-      role: 'user',
-      content: input.content,
-      status: 'complete',
-      requestId,
-    })
-
-    for (const doc of documents) {
-      this.services.conversations.addAttachment({
-        messageId: userMessage.id,
-        fileName: doc.fileName,
-        fileType: doc.kind,
-        fileSize: doc.sizeBytes,
-        sourcePathHash: doc.sourcePathHash,
-        // §8.3: chỉ lưu text đã trích xuất nếu chính sách cho phép.
-        extractedText: settings.features.storeExtractedText ? doc.text : null,
-        extractedChars: doc.charCount,
-        ...(doc.pageCount !== undefined ? { pageCount: doc.pageCount } : {}),
-        ...(doc.suspectedScan === true ? { suspectedScan: true } : {}),
-      })
-    }
-
-    const assistantMessage = this.services.conversations.appendMessage({
-      conversationId: conversation.id,
-      role: 'assistant',
-      content: '',
-      status: 'streaming',
-      requestId,
-    })
-
-    this.services.audit.record({
-      profileId: this.services.profileId,
-      eventType: AUDIT_EVENTS.chatRequested,
-      status: 'pending',
-      requestId,
-    })
-
-    const controller = new AbortController()
-    this.inFlight.set(requestId, { controller, conversationId: conversation.id })
-
-    void this.runTurn({
-      requestId,
-      conversationId: conversation.id,
-      assistantMessageId: assistantMessage.id,
-      modelId: model.modelId,
-      modelProvider: model.provider,
-      contextWindowTokens: model.contextWindowTokens,
-      documents,
-      controller,
-      fileTokens: input.fileTokens,
-    })
-
-    return { requestId, messageId: assistantMessage.id }
   }
 
   /** §9.3 "hỗ trợ cancel từ UI". */
@@ -145,6 +160,11 @@ export class ChatController {
       status: 'cancelled',
       requestId,
     })
+  }
+
+  /** Không cho xoá hội thoại trong lúc lượt chat/tool của nó vẫn có thể tạo side effect. */
+  isConversationActive(conversationId: string): boolean {
+    return this.activeConversationId === conversationId
   }
 
   /** Renderer báo người dùng đã bấm Xác nhận. */
@@ -176,6 +196,7 @@ export class ChatController {
     for (const [, entry] of this.inFlight) entry.controller.abort()
     this.inFlight.clear()
     for (const [operationId] of this.pendingConfirmations) {
+      this.services.guard.cancel(operationId)
       this.settleConfirmation(operationId, 'cancelled')
     }
   }
@@ -334,6 +355,7 @@ export class ChatController {
       })
     } finally {
       this.inFlight.delete(requestId)
+      this.activeConversationId = null
     }
   }
 

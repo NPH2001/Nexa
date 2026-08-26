@@ -17,7 +17,11 @@ import {
   type McpToolResult,
 } from '@nexa/mcp-client'
 import { buildToolRegistry } from './tool-registry.js'
-import { buildCredentialEnv, buildGatewayHeaders, type AtlassianCredentials } from './server-spec.js'
+import {
+  buildCredentialEnv,
+  buildGatewayHeaders,
+  type AtlassianCredentials,
+} from './server-spec.js'
 
 /** Bề mặt chung mà cả hai transport (stdio, http) phải thoả — manager không quan tâm bên dưới là gì. */
 interface McpTransportClient {
@@ -105,6 +109,8 @@ export class AtlassianMcpManager {
   private readonly opts: AtlassianMcpManagerOptions
   private readonly log: Logger
   private startInFlight: Promise<void> | null = null
+  private activeToolCallCount = 0
+  private restarting = false
 
   constructor(opts: AtlassianMcpManagerOptions) {
     this.opts = opts
@@ -117,6 +123,16 @@ export class AtlassianMcpManager {
 
   get isReady(): boolean {
     return this.state === 'ready' && this.client?.isReady === true
+  }
+
+  /** Dùng ở composition root để từ chối thay cấu hình trước khi đã ghi xuống DB. */
+  get hasActiveToolCalls(): boolean {
+    return this.activeToolCallCount > 0
+  }
+
+  /** Bao gồm cả tool call lẫn restart; dùng để chặn thay cấu hình trước commit. */
+  get isLifecycleBusy(): boolean {
+    return this.restarting || this.startInFlight !== null || this.hasActiveToolCalls
   }
 
   get statusSnapshot(): McpStatusEvent {
@@ -192,7 +208,9 @@ export class AtlassianMcpManager {
           missing,
           serverToolCount: tools.length,
           serverToolNamesJira: tools.map((t) => t.name).filter((n) => n.includes('jira')),
-          serverToolNamesConfluence: tools.map((t) => t.name).filter((n) => n.includes('confluence')),
+          serverToolNamesConfluence: tools
+            .map((t) => t.name)
+            .filter((n) => n.includes('confluence')),
           serverToolNamesOther: tools
             .map((t) => t.name)
             .filter((n) => !n.includes('jira') && !n.includes('confluence')),
@@ -256,8 +274,20 @@ export class AtlassianMcpManager {
   }
 
   async restart(): Promise<void> {
-    await this.stop()
-    await this.start()
+    if (this.isLifecycleBusy) {
+      throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+        safeDetail: 'cannot restart MCP while a tool call or restart is active',
+      })
+    }
+
+    // Gán trước `await` đầu tiên để `callTool()` không thể lọt vào giữa kiểm tra idle và stop().
+    this.restarting = true
+    try {
+      await this.stop()
+      await this.start()
+    } finally {
+      this.restarting = false
+    }
   }
 
   /** Base URL đổi (người dùng sửa Settings) ⇒ phải dựng lại danh mục vì preview nhúng URL. */
@@ -334,6 +364,11 @@ export class AtlassianMcpManager {
    * dễ có đường vòng bỏ qua xác nhận.
    */
   async callTool(name: string, args: Record<string, unknown>): Promise<ToolCallOutcome> {
+    if (this.restarting) {
+      throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+        safeDetail: 'MCP restart is active',
+      })
+    }
     const definition = this.resolveCallable(name)
     const client = this.client
     if (client === null || !client.isReady) {
@@ -349,41 +384,46 @@ export class AtlassianMcpManager {
       })
     }
 
-    const started = Date.now()
-    const result = await client.callTool(realToolName, args, this.opts.toolTimeoutMs)
-    const rawText = contentToText(result)
+    this.activeToolCallCount += 1
+    try {
+      const started = Date.now()
+      const result = await client.callTool(realToolName, args, this.opts.toolTimeoutMs)
+      const rawText = contentToText(result)
 
-    this.log.tool('mcp-tool-called', {
-      toolName: definition.name,
-      phase: result.isError ? 'failed' : 'done',
-      riskLevel: definition.riskLevel,
-      durationMs: Date.now() - started,
-      resultChars: rawText.length,
-    })
-
-    if (result.isError) {
-      // Chẩn đoán tạm thời (OPEN-QUESTIONS A4/C2): MCP server báo lỗi bằng TEXT, không bằng mã, và
-      // `classifyToolError` chỉ là heuristic chuỗi. Khi text không khớp mẫu nào, mọi thứ dồn vào
-      // UPSTREAM_UNAVAILABLE — người dùng thấy đúng một mã lỗi cho "PAT sai", "cert nội bộ không
-      // tin cậy", "header credential không tới được server", và không có gì trong log phân biệt
-      // được ba trường hợp đó. Ghi lại text (đã qua Redactor, cắt ngắn) là cách duy nhất để hiệu
-      // chỉnh heuristic bằng server thật thay vì đoán.
-      //
-      // `serverToolName`: xác nhận gateway đã đặt lại tên tool như thế nào — không phải secret.
-      this.log.warn('mcp-tool-error-detail', {
+      this.log.tool('mcp-tool-called', {
         toolName: definition.name,
-        serverToolName: realToolName,
-        errorText: rawText.slice(0, MAX_LOGGED_ERROR_CHARS),
-        errorChars: rawText.length,
+        phase: result.isError ? 'failed' : 'done',
+        riskLevel: definition.riskLevel,
+        durationMs: Date.now() - started,
+        resultChars: rawText.length,
       })
-      throw classifyToolError(rawText, definition.name)
+
+      if (result.isError) {
+        // Chẩn đoán tạm thời (OPEN-QUESTIONS A4/C2): MCP server báo lỗi bằng TEXT, không bằng mã, và
+        // `classifyToolError` chỉ là heuristic chuỗi. Khi text không khớp mẫu nào, mọi thứ dồn vào
+        // UPSTREAM_UNAVAILABLE — người dùng thấy đúng một mã lỗi cho "PAT sai", "cert nội bộ không
+        // tin cậy", "header credential không tới được server", và không có gì trong log phân biệt
+        // được ba trường hợp đó. Ghi lại text (đã qua Redactor, cắt ngắn) là cách duy nhất để hiệu
+        // chỉnh heuristic bằng server thật thay vì đoán.
+        //
+        // `serverToolName`: xác nhận gateway đã đặt lại tên tool như thế nào — không phải secret.
+        this.log.warn('mcp-tool-error-detail', {
+          toolName: definition.name,
+          serverToolName: realToolName,
+          errorText: rawText.slice(0, MAX_LOGGED_ERROR_CHARS),
+          errorChars: rawText.length,
+        })
+        throw classifyToolError(rawText, definition.name)
+      }
+
+      const summary =
+        definition.summarizeResult?.(rawText) ??
+        ({ forModel: rawText, forUser: 'Đã thực hiện' } satisfies ToolResultSummary)
+
+      return { summary, rawText }
+    } finally {
+      this.activeToolCallCount -= 1
     }
-
-    const summary =
-      definition.summarizeResult?.(rawText) ??
-      ({ forModel: rawText, forUser: 'Đã thực hiện' } satisfies ToolResultSummary)
-
-    return { summary, rawText }
   }
 
   /** Tool READ có gọi được ngay không (dùng khi dựng preview cho WRITE_HIGH). */

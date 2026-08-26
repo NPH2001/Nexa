@@ -18,10 +18,10 @@ thì không. Đó là bình thường.
 
 ## Chọn gói
 
-| Gói | Khi nào dùng | Quyền | Ghi chú |
-|---|---|---|---|
-| **NSIS** (`Nexa-Setup-x.y.z.exe`) | Người dùng tự cài | Không cần admin — per-user | Đáp ứng §21 *"cài và gỡ không cần quyền admin"* |
-| **MSI** (`Nexa-x.y.z.msi`) | Triển khai tập trung qua Intune/SCCM/GPO | **Cần admin** — per-machine | |
+| Gói                               | Khi nào dùng                             | Quyền                       | Ghi chú                                         |
+| --------------------------------- | ---------------------------------------- | --------------------------- | ----------------------------------------------- |
+| **NSIS** (`Nexa-Setup-x.y.z.exe`) | Người dùng tự cài                        | Không cần admin — per-user  | Đáp ứng §21 _"cài và gỡ không cần quyền admin"_ |
+| **MSI** (`Nexa-x.y.z.msi`)        | Triển khai tập trung qua Intune/SCCM/GPO | **Cần admin** — per-machine |                                                 |
 
 Hai mục tiêu này mâu thuẫn nhẹ và đó là chủ ý — xem `docs/OPEN-QUESTIONS.md` mục D3.
 **Đừng trộn hai kiểu trên cùng một máy**: người dùng đã tự cài NSIS rồi lại nhận MSI sẽ có hai
@@ -63,9 +63,13 @@ Get-AuthenticodeSignature Nexa-1.0.0.msi | Format-List Status, SignerCertificate
   // §11.2 — allowlist domain. RỖNG NGHĨA LÀ KHÔNG GIỚI HẠN.
   // Đây là biện pháp giảm thiểu chính cho rủi ro "người dùng nhập URL giả, PAT bay sai đích".
   // Đề nghị ATTT bắt buộc điền — xem OPEN-QUESTIONS D2.
-  // Nếu bật kết nối OpenAI trực tiếp (OPEN-QUESTIONS F1) thì phải thêm api.openai.com —
-  // nếu không, kết nối đó sẽ bị chặn bởi chính allowlist này.
-  "allowedDomains": ["*.corp.local", "api.openai.com"],
+  // Nếu allowDirectOpenAi=true thì phải thêm api.openai.com — nếu không, kết nối đó sẽ bị
+  // chặn bởi chính allowlist này.
+  "allowedDomains": ["*.corp.local"],
+
+  // Chốt chặn độc lập với allowlist: false từ chối lưu/test kết nối, thêm/chọn model và gửi chat
+  // qua OpenAI, kể cả khi máy đã có credential từ trước. Người dùng vẫn xoá được cấu hình cũ.
+  "allowDirectOpenAi": false,
 
   // Feature flag người dùng không được đổi.
   "lockedFeatures": ["confluenceWrite", "jiraUpdate"],
@@ -74,19 +78,20 @@ Get-AuthenticodeSignature Nexa-1.0.0.msi | Format-List Status, SignerCertificate
   "forcedFeatures": {
     "confluenceWrite": false,
     "jiraUpdate": false,
-    "autoUpdate": false
+    "autoUpdate": false,
   },
 
   // Trần retention. Người dùng đặt cao hơn sẽ bị kéo xuống mức này.
   "maxHistoryRetentionDays": 180,
 
   // Bỏ trống nếu IT tự phân phối bản cập nhật (khuyến nghị cho MVP).
-  "updateManifestUrl": "https://updates.corp.local/nexa/manifest.json"
+  "updateManifestUrl": "https://updates.corp.local/nexa/manifest.json",
 }
 ```
 
-File hỏng hoặc thiếu ⇒ Nexa dùng mặc định và ghi `org-policy-invalid-using-defaults` vào log.
-**Nó không chặn khởi động** — cấu hình sai không được biến thành sự cố ngừng việc.
+File thiếu ⇒ Nexa dùng mặc định. File có mặt nhưng sai schema ⇒ app vẫn khởi động, ghi
+`org-policy-invalid-using-safe-defaults` và **tắt OpenAI trực tiếp**; lỗi policy không được vô tình
+mở đường đưa dữ liệu ra ngoài tổ chức.
 
 ## Những gì Nexa KHÔNG cần
 
@@ -94,7 +99,8 @@ Hữu ích khi làm hồ sơ phê duyệt phần mềm:
 
 - **Không cần quyền admin** để chạy (chỉ NSIS install là per-user)
 - **Không cần GPU**
-- **Không mở port nào** — MCP dùng stdio, không phải localhost HTTP (ADR 0004)
+- **Không mở port nào** — MCP dùng stdio hoặc app làm HTTPS client tới gateway remote; Nexa không
+  bind localhost (ADR 0004, ADR 0008).
 - **Renderer bị CSP chặn hoàn toàn khỏi mạng** — mọi lời gọi ra ngoài đi từ main process.
 - Đích kết nối: LiteLLM, Jira, Confluence nội bộ, (tuỳ chọn) máy chủ cập nhật, và **(tuỳ chọn)
   `api.openai.com`** nếu tổ chức bật kết nối OpenAI trực tiếp.
@@ -102,29 +108,30 @@ Hữu ích khi làm hồ sơ phê duyệt phần mềm:
   ⚠️ **Kết nối OpenAI đưa dữ liệu ra ngoài tổ chức** và không có usage log của tổ chức. Đây là
   sai lệch có chủ ý so với §6 của tài liệu thiết kế, cần ATTT duyệt — xem
   `docs/OPEN-QUESTIONS.md` mục F1. Tài liệu đính kèm bị **chặn theo mặc định** với model ngoài.
+
 - **Không có telemetry tập trung** (§11.2)
 
 ## Những gì Nexa cần trên máy trạm
 
-| Thứ | Bắt buộc | Ghi chú |
-|---|---|---|
-| Windows 10/11 64-bit | ✔ | |
-| RAM 8 GB | ✔ | Khuyến nghị 16 GB (§12.1) |
-| Trống 2 GB | ✔ | Khuyến nghị 5 GB |
-| Truy cập mạng tới LiteLLM | ✔ | |
-| Truy cập mạng tới Jira/Confluence | — | Chỉ khi dùng tính năng Atlassian |
-| **Runtime MCP Atlassian** | — | ⚠️ Package chưa được chốt — xem OPEN-QUESTIONS A4 |
+| Thứ                               | Bắt buộc | Ghi chú                                           |
+| --------------------------------- | -------- | ------------------------------------------------- |
+| Windows 10/11 64-bit              | ✔        |                                                   |
+| RAM 8 GB                          | ✔        | Khuyến nghị 16 GB (§12.1)                         |
+| Trống 2 GB                        | ✔        | Khuyến nghị 5 GB                                  |
+| Truy cập mạng tới LiteLLM         | ✔        |                                                   |
+| Truy cập mạng tới Jira/Confluence | —        | Chỉ khi dùng tính năng Atlassian                  |
+| **Runtime MCP Atlassian**         | —        | ⚠️ Package chưa được chốt — xem OPEN-QUESTIONS A4 |
 
 **A4 là việc còn treo và nó ảnh hưởng trực tiếp tới IT**: nếu MCP server là một package Python
 chạy qua `uvx`, thì máy trạm cần Python/uv. Chốt xong A4 thì phần này phải được cập nhật.
 
 ## Dữ liệu người dùng
 
-| Đường dẫn | Nội dung |
-|---|---|
-| `%APPDATA%\Nexa\nexa.db` | Hội thoại — **đã mã hoá** bằng khoá gắn tài khoản Windows |
-| `%APPDATA%\Nexa\secure\credentials.bin` | API key và PAT — bảo vệ bằng DPAPI |
-| `%APPDATA%\Nexa\logs\` | Log chẩn đoán đã che thông tin nhạy cảm, giữ 14 ngày |
+| Đường dẫn                               | Nội dung                                                  |
+| --------------------------------------- | --------------------------------------------------------- |
+| `%APPDATA%\Nexa\nexa.db`                | Hội thoại — **đã mã hoá** bằng khoá gắn tài khoản Windows |
+| `%APPDATA%\Nexa\secure\credentials.bin` | API key và PAT — bảo vệ bằng DPAPI                        |
+| `%APPDATA%\Nexa\logs\`                  | Log chẩn đoán đã che thông tin nhạy cảm, giữ 14 ngày      |
 
 **Gỡ cài đặt KHÔNG xoá dữ liệu này** (`deleteAppDataOnUninstall: false`). Hội thoại là tài sản
 của người dùng; việc xoá để họ tự quyết qua Cài đặt → Dữ liệu → Xoá toàn bộ.

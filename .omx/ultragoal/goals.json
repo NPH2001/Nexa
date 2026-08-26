@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "createdAt": "2026-08-23T03:15:33.185Z",
+  "updatedAt": "2026-08-23T04:02:58.483Z",
+  "briefPath": ".omx/ultragoal/brief.md",
+  "goalsPath": ".omx/ultragoal/goals.json",
+  "ledgerPath": ".omx/ultragoal/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-nexa-desktop-remediation-continuatio",
+      "title": "Nexa desktop remediation continuation. Start from the existing workin...",
+      "objective": "Nexa desktop remediation continuation. Start from the existing working tree and preserve all user changes. Audit the current implementation and prior remediation evidence, then address remaining P0/P1 source-code, UI/UX, accessibility, reliability, security, maintainability, test-coverage, performance, documentation, and release-readiness gaps. Prioritize meaningful tests for critical main-process and async renderer behavior, fix defects revealed by those tests, improve responsive/keyboard/screen-reader behavior where evidence shows a gap, reconcile stale local docs and test counts, and keep dependencies unchanged unless essential. Do not alter product governance decisions such as direct provider access or the 98-tool policy without authority; record those as explicit external decisions. Verify with targeted tests, full lint/typecheck/unit tests, coverage, build, audit, E2E, packaging, and visual checks where locally possible. Windows-only behavior, real LiteLLM/Jira/Confluence integration, code signing, and organizational ownership remain documented external blockers unless locally verifiable. Maintain a complete durable journal in the ultragoal ledger and project wiki. Final completion requires an anti-slop pass, comprehensive code review approval, clean targeted/full verification, and a concise list of remaining external risks.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-23T03:15:33.185Z",
+      "updatedAt": "2026-08-23T04:02:58.483Z",
+      "startedAt": "2026-08-23T03:15:42.924Z",
+      "evidence": "Final remediation complete: 379 unit/integration tests, 15 Linux E2E with 2 Windows-only skips, 69.12% coverage, build/audits/package/fuses passed; code review APPROVE and architecture CLEAR. Journal in omx_wiki.",
+      "completedAt": "2026-08-23T04:02:58.483Z"
+    }
+  ],
+  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."
+}

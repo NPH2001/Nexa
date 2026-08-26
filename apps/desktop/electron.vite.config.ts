@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
 const workspace = (name: string): string =>
@@ -29,29 +29,32 @@ const alias: Record<string, string> = Object.fromEntries(
 )
 
 /**
- * Preload nạp danh sách channel từ module KHÔNG có zod.
+ * Preload nạp entrypoint channel tường minh, KHÔNG có zod.
  *
  * Nếu để nó import `@nexa/shared-types` (index), rollup kéo theo toàn bộ zod — preload phình
- * lên hơn 100 kB và mang một thư viện parser vào ngay ranh giới sandbox. Alias hẹp này giữ
- * preload ở mức vài kB.
+ * lên hơn 100 kB và mang một thư viện parser vào ngay ranh giới sandbox. Subpath tường minh
+ * khiến ranh giới này nhìn thấy ngay tại call site và giữ preload ở mức vài kB.
  */
 const preloadAlias: Record<string, string> = {
-  '@nexa/shared-types': resolve(__dirname, '../../packages/shared-types/src/channels.ts'),
+  '@nexa/shared-types/channels': resolve(__dirname, '../../packages/shared-types/src/channels.ts'),
+}
+
+/** Renderer chỉ cần type và helper UI thuần; entry này cố ý không import Zod/schema IPC. */
+const rendererAlias: Record<string, string> = {
+  '@nexa/shared-types/renderer': resolve(__dirname, '../../packages/shared-types/src/renderer.ts'),
 }
 
 /**
  * `@nexa/*` PHẢI nằm trong bundle: chúng là source TypeScript, Node không nạp trực tiếp được.
  * Chỉ các native module và thư viện nặng thật sự mới được để ngoài.
  */
-const externalizeExcept = externalizeDepsPlugin({
-  exclude: WORKSPACE_PACKAGES.map((name) => `@nexa/${name}`),
-})
-
 export default defineConfig({
   main: {
-    plugins: [externalizeExcept],
     resolve: { alias },
     build: {
+      externalizeDeps: {
+        exclude: WORKSPACE_PACKAGES.map((name) => `@nexa/${name}`),
+      },
       outDir: resolve(__dirname, 'out/main'),
       rollupOptions: {
         input: {
@@ -72,6 +75,7 @@ export default defineConfig({
     // nó dùng phải nằm sẵn trong bundle. `electron` là ngoại lệ do runtime cung cấp.
     resolve: { alias: preloadAlias },
     build: {
+      externalizeDeps: false,
       outDir: resolve(__dirname, 'out/preload'),
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/preload/index.ts') },
@@ -87,7 +91,7 @@ export default defineConfig({
     resolve: {
       // Renderer CHỈ được dùng shared-types. Mọi package khác chạm vào Node hoặc secret
       // (§13.1) — eslint chặn lúc lint, còn ở đây không khai alias để chặn cả lúc build.
-      alias: { '@nexa/shared-types': workspace('shared-types') },
+      alias: rendererAlias,
     },
     build: {
       outDir: resolve(__dirname, 'out/renderer'),

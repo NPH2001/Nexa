@@ -7,6 +7,7 @@ import { registerIpc } from './ipc.js'
 import { bootstrapServices, type NexaServices } from './services.js'
 import { createMainWindow } from './window.js'
 import { UpdateService } from './update-service.js'
+import { RENDERER_ENTRY_URL, registerRendererProtocol } from './renderer-protocol.js'
 
 const isDevelopment = !app.isPackaged
 let services: NexaServices | null = null
@@ -33,6 +34,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function start(): void {
+  registerRendererProtocol(join(app.getAppPath(), 'out', 'renderer'))
+
   try {
     services = bootstrapServices({ isDevelopment, onMcpStatus: emitMcpStatus })
   } catch (error) {
@@ -73,9 +76,7 @@ function openWindow(activeServices: NexaServices): void {
 
   mainWindow = createMainWindow({
     preloadPath: join(app.getAppPath(), 'out', 'preload', 'index.cjs'),
-    ...(devServerUrl !== undefined
-      ? { rendererUrl: devServerUrl }
-      : { rendererFile: join(app.getAppPath(), 'out', 'renderer', 'index.html') }),
+    rendererUrl: devServerUrl ?? RENDERER_ENTRY_URL,
     logger: activeServices.logger,
     allowedDomains: activeServices.policy.allowedDomains,
     isDevelopment,

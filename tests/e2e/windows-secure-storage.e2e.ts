@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { electronEnvironment } from '../support/electron-env.js'
 
 /**
  * Xác minh secure storage trên Windows — phần còn lại của docs/OPEN-QUESTIONS.md C1.
@@ -32,25 +33,31 @@ test('safeStorage dùng backend đạt chuẩn và credential sống qua lần k
 
   try {
     // ── Lần chạy 1: lưu credential ────────────────────────────────────────
-    const first = await electron.launch({ args: [DESKTOP, `--user-data-dir=${userDataDir}`] })
+    const first = await electron.launch({
+      args: [DESKTOP, `--user-data-dir=${userDataDir}`],
+      env: electronEnvironment(),
+    })
     const firstPage = await first.firstWindow()
     await firstPage.waitForLoadState('domcontentloaded')
 
     const info = await firstPage.evaluate(async () => {
-      const api = (window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } })
-        .nexa
+      const api = (
+        window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } }
+      ).nexa
       return api.invoke('diagnostics:appInfo')
     })
-    const appInfo = (info as { data: { secureStorageBackend: string; secureStorageProductionGrade: boolean } })
-      .data
+    const appInfo = (
+      info as { data: { secureStorageBackend: string; secureStorageProductionGrade: boolean } }
+    ).data
 
     // (1) Đây là điều Linux không chứng minh được.
     expect(appInfo.secureStorageProductionGrade).toBe(true)
     expect(appInfo.secureStorageBackend).toContain('safeStorage')
 
     const saved = await firstPage.evaluate(async (apiKey) => {
-      const api = (window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } })
-        .nexa
+      const api = (
+        window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } }
+      ).nexa
       return api.invoke('connection:save', {
         type: 'litellm',
         baseUrl: 'https://litellm.internal',
@@ -66,13 +73,17 @@ test('safeStorage dùng backend đạt chuẩn và credential sống qua lần k
     await first.close()
 
     // ── Lần chạy 2: đọc lại bằng cùng tài khoản Windows ───────────────────
-    const second = await electron.launch({ args: [DESKTOP, `--user-data-dir=${userDataDir}`] })
+    const second = await electron.launch({
+      args: [DESKTOP, `--user-data-dir=${userDataDir}`],
+      env: electronEnvironment(),
+    })
     const secondPage = await second.firstWindow()
     await secondPage.waitForLoadState('domcontentloaded')
 
     const connections = await secondPage.evaluate(async () => {
-      const api = (window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } })
-        .nexa
+      const api = (
+        window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } }
+      ).nexa
       return api.invoke('connection:list')
     })
     const list = (connections as { data: { type: string; hasCredential: boolean }[] }).data
@@ -101,7 +112,10 @@ test('khởi động trong ngân sách thời gian của §12.1', async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), 'nexa-win-perf-'))
   try {
     const started = Date.now()
-    const app = await electron.launch({ args: [DESKTOP, `--user-data-dir=${userDataDir}`] })
+    const app = await electron.launch({
+      args: [DESKTOP, `--user-data-dir=${userDataDir}`],
+      env: electronEnvironment(),
+    })
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
     const elapsed = Date.now() - started

@@ -151,6 +151,29 @@ jobs:
       - name: Đóng gói
         run: pnpm package:win
 
+      - name: Kiểm tra Electron fuses của executable phát hành
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path release -Recurse -Filter Nexa.exe |
+            Where-Object { $_.FullName -match 'win-unpacked' } |
+            Select-Object -First 1
+          if (-not $exe) { throw 'Không tìm thấy Nexa.exe trong win-unpacked.' }
+          $fuses = pnpm exec electron-fuses read --app $exe.FullName | Out-String
+          $required = @(
+            'RunAsNode is Disabled',
+            'EnableCookieEncryption is Enabled',
+            'EnableNodeOptionsEnvironmentVariable is Disabled',
+            'EnableNodeCliInspectArguments is Disabled',
+            'EnableEmbeddedAsarIntegrityValidation is Enabled',
+            'OnlyLoadAppFromAsar is Enabled',
+            'GrantFileProtocolExtraPrivileges is Disabled',
+            'WasmTrapHandlers is Enabled'
+          )
+          foreach ($entry in $required) {
+            if (-not $fuses.Contains($entry)) { throw "Electron fuse sai hoặc thiếu: $entry" }
+          }
+          $fuses
+
       - name: Sinh checksum
         shell: pwsh
         run: |

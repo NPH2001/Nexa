@@ -1,8 +1,9 @@
 {
   "_comment": "Chính sách do đội IT đặt lúc phân phối. Người dùng không sửa được file này. Xem docs/OPEN-QUESTIONS.md mục D2 — bộ phận ATTT nên bắt buộc điền allowedDomains.",
-  "_comment_openai": "Bật kết nối OpenAI trực tiếp thì phải thêm api.openai.com vào allowedDomains. Việc này đưa dữ liệu ra ngoài tổ chức — xem OPEN-QUESTIONS F1.",
+  "_comment_openai": "Đặt allowDirectOpenAi=false để chặn hoàn toàn cấu hình, model và lời gọi OpenAI trực tiếp. Nếu bật thì phải thêm api.openai.com vào allowedDomains khi allowlist không rỗng.",
   "_comment_confluenceWrite": "Trước đây forcedFeatures ép confluenceWrite = false, ghi đè cả cấu hình người dùng lẫn default trong code. Đã gỡ theo yêu cầu 2026-08-22 'full quyền 98 tool' (OPEN-QUESTIONS.md mục G1) — giờ confluenceWrite chỉ còn theo default trong settings.ts (true) và người dùng có thể tự tắt trong Settings nếu muốn, không còn bị khoá cứng ở đây.",
   "allowedDomains": [],
+  "allowDirectOpenAi": true,
   "lockedFeatures": [],
   "forcedFeatures": {},
   "maxHistoryRetentionDays": 180

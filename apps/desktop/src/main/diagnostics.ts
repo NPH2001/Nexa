@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, shell } from 'electron'
-import { globalRedactor } from '@nexa/observability'
+import { globalRedactor, type LogRecord } from '@nexa/observability'
 import type { NexaServices } from './services.js'
 
 /**
@@ -68,8 +68,11 @@ export function exportDiagnostics(services: NexaServices): DiagnosticsBundle {
     try {
       copyFileSync(path, target)
       written.push(target)
-    } catch {
-      // File đang bị giữ — bỏ qua, các file còn lại vẫn có giá trị.
+    } catch (error) {
+      // File đang bị giữ không làm hỏng toàn bộ bundle, nhưng vẫn để lại bằng chứng an toàn.
+      services.logger.warn('diagnostics-log-copy-failed', {
+        errorType: error instanceof Error ? error.name : 'unknown',
+      })
     }
   }
 
@@ -78,7 +81,9 @@ export function exportDiagnostics(services: NexaServices): DiagnosticsBundle {
     const memoryPath = join(outDir, 'memory-log.jsonl')
     writeFileSync(
       memoryPath,
-      services.memorySink.records.map((r) => JSON.stringify(globalRedactor.redact(r))).join('\n'),
+      services.memorySink.records
+        .map((record) => JSON.stringify(redactMemoryRecord(record)))
+        .join('\n'),
       'utf8',
     )
     written.push(memoryPath)
@@ -88,6 +93,25 @@ export function exportDiagnostics(services: NexaServices): DiagnosticsBundle {
   void shell.openPath(outDir)
 
   return { directory: outDir, files: written }
+}
+
+/**
+ * `fields` là metadata chuẩn của LogRecord, không phải payload nghiệp vụ. Redact toàn bộ record
+ * sẽ khiến denylist coi chính khoá này là nội dung và xoá sạch dữ liệu chẩn đoán. Giữ envelope
+ * cố định, rồi redact đệ quy phần giá trị bên trong để vẫn che secret/content nhạy cảm.
+ */
+function redactMemoryRecord(record: LogRecord): LogRecord {
+  return {
+    ts: record.ts,
+    level: record.level,
+    category: record.category,
+    event: record.event,
+    ...(record.requestId !== undefined ? { requestId: record.requestId } : {}),
+    ...(record.operationId !== undefined ? { operationId: record.operationId } : {}),
+    ...(record.fields !== undefined
+      ? { fields: globalRedactor.redact(record.fields) as Record<string, unknown> }
+      : {}),
+  }
 }
 
 function safeHost(url: string): string {

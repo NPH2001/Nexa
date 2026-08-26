@@ -10,7 +10,7 @@
  *   - đòi credential qua environment và từ chối nếu thiếu
  *
  * Kịch bản điều khiển bằng env `MOCK_SCENARIO`:
- *   ok (mặc định) | auth-failed | slow | crash-on-call | no-tools | garbage-stdout
+ *   ok (mặc định) | auth-failed | delayed | slow | crash-on-call | no-tools | garbage-stdout
  */
 
 const scenario = process.env.MOCK_SCENARIO ?? 'ok'
@@ -112,6 +112,9 @@ async function handleToolCall(id, params) {
   if (scenario === 'slow') {
     await new Promise((r) => setTimeout(r, 5_000))
   }
+  if (scenario === 'delayed') {
+    await new Promise((r) => setTimeout(r, 100))
+  }
 
   switch (name) {
     case 'jira_get_issue': {
@@ -147,10 +150,7 @@ async function handleToolCall(id, params) {
       return textResult(id, JSON.stringify(issue))
     }
     case 'jira_update_issue':
-      return textResult(
-        id,
-        JSON.stringify({ key: String(args.issue_key ?? ''), updated: true }),
-      )
+      return textResult(id, JSON.stringify({ key: String(args.issue_key ?? ''), updated: true }))
     case 'confluence_get_page': {
       const pageId = String(args.page_id ?? '')
       const confluenceUrl = process.env.CONFLUENCE_URL ?? ''
@@ -161,7 +161,11 @@ async function handleToolCall(id, params) {
         return textResult(
           id,
           JSON.stringify({
-            metadata: { id: pageId, title: `Trang ${pageId}`, url: `${confluenceUrl}/pages/${pageId}` },
+            metadata: {
+              id: pageId,
+              title: `Trang ${pageId}`,
+              url: `${confluenceUrl}/pages/${pageId}`,
+            },
             content: { value: 'Nội dung trang Confluence.', format: 'markdown' },
           }),
         )

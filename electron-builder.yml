@@ -1,5 +1,6 @@
 appId: net.fimaster.nexa
 productName: Nexa
+executableName: Nexa
 copyright: © 2026
 
 # Electron được hoist lên node_modules gốc của workspace, nên electron-builder không tự suy ra
@@ -32,6 +33,10 @@ extraResources:
     to: policy.json
 
 asar: true
+
+# Hook dùng @electron/fuses hiện hành và strict mode để Electron thêm fuse mới thì build phải fail
+# cho tới khi giá trị được review, thay vì âm thầm giữ default không được đặt tên.
+afterPack: ./scripts/after-pack-fuses.mjs
 
 # Không còn native module nào trong bộ cài, nên không cần rebuild và không cần asarUnpack.
 # SQLite dùng `node:sqlite` có sẵn trong Node 24 của Electron 43 — xem ADR 0003.

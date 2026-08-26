@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ToolCallRecord } from '@nexa/shared-types'
+import type { ToolCallRecord } from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
 
 /**
@@ -42,9 +42,7 @@ export function UncertainBanner(props: {
   return (
     <div className="uncertain-banner" role="alert">
       <div className="uncertain-banner-head">
-        <strong>
-          {pending.length} thao tác thay đổi dữ liệu chưa rõ kết quả
-        </strong>
+        <strong>{pending.length} thao tác thay đổi dữ liệu chưa rõ kết quả</strong>
         <button
           type="button"
           className="icon-btn"
@@ -55,8 +53,8 @@ export function UncertainBanner(props: {
         </button>
       </div>
       <p className="muted small">
-        Nexa không xác định được các thao tác dưới đây đã hoàn tất tại Jira/Confluence hay chưa.
-        Hãy kiểm tra trước khi thử lại, để tránh tạo dữ liệu trùng.
+        Nexa không xác định được các thao tác dưới đây đã hoàn tất tại Jira/Confluence hay chưa. Hãy
+        kiểm tra trước khi thử lại, để tránh tạo dữ liệu trùng.
       </p>
 
       <ul className="uncertain-list">

@@ -25,16 +25,18 @@ import {
   ProfileRepository,
   RetentionService,
 } from '@nexa/local-store'
-import { ConnectionService, ModelService, SettingsService, loadOrgPolicy } from '@nexa/connection-config'
+import {
+  ConnectionService,
+  ModelService,
+  SettingsService,
+  loadOrgPolicy,
+} from '@nexa/connection-config'
 import {
   AtlassianMcpManager,
   DEFAULT_ATLASSIAN_MCP_SPEC,
   type AtlassianCredentials,
 } from '@nexa/atlassian-mcp-manager'
-import {
-  ConfirmationGuard,
-  OperationTracker,
-} from '@nexa/agent-runtime'
+import { ConfirmationGuard, OperationTracker } from '@nexa/agent-runtime'
 import {
   DocumentProcessor,
   InlineRunner,
@@ -145,7 +147,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
 
   const policy = loadOrgPolicy(readPolicyFile(logger), logger)
   const settings = new SettingsService(config, profile.id, policy, logger)
-  const models = new ModelService(config, profile.id, logger)
+  const models = new ModelService(config, profile.id, logger, policy)
 
   const tempWorkspace = new TempWorkspace(join(userData, 'temp'), logger)
   // §8.3: dọn tàn dư của phiên trước nếu nó bị crash.
@@ -273,8 +275,7 @@ export function buildMcpManager(
             requestTimeoutMs: settings.toolTimeoutMs,
             // Đọc lại mỗi lần dùng, không chụp giá trị lúc dựng manager: người dùng tích/bỏ
             // tích trong Settings là có hiệu lực ngay, không phải khởi động lại app.
-            skipAtlassianTlsVerify: () =>
-              services.settings.get().mcpGatewaySkipAtlassianTlsVerify,
+            skipAtlassianTlsVerify: () => services.settings.get().mcpGatewaySkipAtlassianTlsVerify,
           },
         }
       : { spec: readMcpSpec(services.settings.get()) }
@@ -283,7 +284,10 @@ export function buildMcpManager(
     ...transport,
     logger: services.logger,
     credentials: (): AtlassianCredentials => {
-      const out: { jira?: AtlassianCredentials['jira']; confluence?: AtlassianCredentials['confluence'] } = {}
+      const out: {
+        jira?: AtlassianCredentials['jira']
+        confluence?: AtlassianCredentials['confluence']
+      } = {}
       if (jira !== null && jira.enabled && jira.username !== null) {
         out.jira = {
           baseUrl: jira.baseUrl,
@@ -353,7 +357,7 @@ function readPolicyFile(logger: Logger): unknown {
     try {
       return JSON.parse(readFileSync(path, 'utf8'))
     } catch {
-      logger.warn('org-policy-unreadable', { })
+      logger.warn('org-policy-unreadable', {})
     }
   }
   return null

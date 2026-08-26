@@ -18,9 +18,9 @@ export function truncateField(
   label: string,
   value: string,
   max = 500,
-): { label: string; value: string; truncated?: boolean } {
+): { label: string; value: string; truncated?: boolean; fullValue?: string } {
   if (value.length <= max) return { label, value }
-  return { label, value: `${value.slice(0, max)}…`, truncated: true }
+  return { label, value: `${value.slice(0, max)}…`, truncated: true, fullValue: value }
 }
 
 export function truncate(text: string, max: number): string {

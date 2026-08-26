@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { ERROR_CODES, DEFAULT_APP_SETTINGS, type FeatureFlags } from '@nexa/shared-types'
-import { AtlassianMcpManager, classifyToolError, buildCredentialEnv, SECRET_ENV_KEYS } from './index.js'
+import {
+  AtlassianMcpManager,
+  classifyToolError,
+  buildCredentialEnv,
+  SECRET_ENV_KEYS,
+} from './index.js'
 import { DEFAULT_ATLASSIAN_MCP_SPEC } from './server-spec.js'
 import { testLogger } from '../../../tests/support/factories.js'
 
@@ -156,6 +161,21 @@ describe('lifecycle', () => {
     const { manager } = makeManager()
     await manager.start()
     await manager.restart()
+    expect(manager.isReady).toBe(true)
+  })
+
+  it('refuses to restart while a tool call is active', async () => {
+    const { manager } = makeManager('delayed')
+    await manager.start()
+
+    const call = manager.callTool('jira_get_issue', { issue_key: 'PRJ-1' })
+    expect(manager.hasActiveToolCalls).toBe(true)
+    await expect(manager.restart()).rejects.toMatchObject({
+      code: ERROR_CODES.OPERATION_ALREADY_RUNNING,
+    })
+
+    await expect(call).resolves.toMatchObject({ summary: { targetKey: 'PRJ-1' } })
+    expect(manager.hasActiveToolCalls).toBe(false)
     expect(manager.isReady).toBe(true)
   })
 

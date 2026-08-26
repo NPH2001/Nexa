@@ -32,10 +32,21 @@ function makeServices(policyRaw: unknown = {}) {
     policy,
     logger,
   })
-  const models = new ModelService(repo, ctx.profileId, logger)
+  const models = new ModelService(repo, ctx.profileId, logger, policy)
   const settings = new SettingsService(repo, ctx.profileId, policy, logger)
 
-  return { connections, models, settings, security, repo, sink, redactor, store: ctx }
+  return {
+    connections,
+    models,
+    settings,
+    security,
+    repo,
+    audit,
+    logger,
+    sink,
+    redactor,
+    store: ctx,
+  }
 }
 
 describe('ConnectionService — URL validation (§11.2)', () => {
@@ -250,17 +261,135 @@ describe('ConnectionService — credential lifecycle (§8.2)', () => {
   })
 })
 
+describe('Org policy — direct OpenAI provider', () => {
+  it('blocks saving a direct OpenAI connection without persisting metadata or secrets', () => {
+    const { connections, security } = makeServices({ allowDirectOpenAi: false })
+
+    expect(() =>
+      connections.save({
+        type: 'openai',
+        baseUrl: 'https://api.openai.com',
+        username: null,
+        secret: 'sk-blocked-by-policy',
+        enabled: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY }))
+
+    expect(connections.get('openai')).toBeNull()
+    expect(security.hasCredential('openai')).toBe(false)
+  })
+
+  it('returns a policy error when testing OpenAI instead of attempting a connection', async () => {
+    const { connections } = makeServices({ allowDirectOpenAi: false })
+
+    await expect(connections.test('openai')).resolves.toMatchObject({
+      ok: false,
+      errorCode: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY,
+    })
+  })
+
+  it('blocks an existing OpenAI connection at the execution boundary', () => {
+    const allowed = makeServices()
+    allowed.connections.save({
+      type: 'openai',
+      baseUrl: 'https://api.openai.com',
+      username: null,
+      secret: 'sk-existing-before-policy',
+      enabled: true,
+    })
+
+    const blockedPolicy = orgPolicySchema.parse({ allowDirectOpenAi: false })
+    const blockedConnections = new ConnectionService({
+      repo: allowed.repo,
+      audit: allowed.audit,
+      security: allowed.security,
+      profileId: allowed.store.profileId,
+      policy: blockedPolicy,
+      logger: allowed.logger,
+    })
+
+    expect(() => blockedConnections.buildLlmClient('openai', 10_000)).toThrow(
+      expect.objectContaining({ code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY }),
+    )
+  })
+
+  it('blocks adding or resolving OpenAI models while keeping LiteLLM available', () => {
+    const { models, repo, store } = makeServices({ allowDirectOpenAi: false })
+
+    expect(() =>
+      models.add({
+        provider: 'openai',
+        modelId: 'gpt-4o',
+        displayName: 'GPT-4o',
+        contextWindowTokens: 128_000,
+      }),
+    ).toThrow(expect.objectContaining({ code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY }))
+
+    const existing = repo.addModel(store.profileId, {
+      provider: 'openai',
+      modelId: 'gpt-existing',
+      displayName: 'Existing external model',
+      contextWindowTokens: 128_000,
+    })
+    expect(() => models.resolveForConversation(existing.modelId, existing.provider)).toThrow(
+      expect.objectContaining({ code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY }),
+    )
+    expect(() => models.setDefault(existing.id)).toThrow(
+      expect.objectContaining({ code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY }),
+    )
+
+    expect(
+      models.add({
+        provider: 'litellm',
+        modelId: 'internal-model',
+        displayName: 'Internal',
+        contextWindowTokens: 128_000,
+      }).provider,
+    ).toBe('litellm')
+  })
+})
+
 describe('ModelService', () => {
+  it('does not clear the current default when asked to select an unknown model id', () => {
+    const { models } = makeServices()
+    const current = models.add({
+      provider: 'litellm',
+      modelId: 'model-a',
+      displayName: 'A',
+      contextWindowTokens: 128_000,
+    })
+
+    expect(() => models.setDefault('00000000-0000-4000-8000-000000000099')).toThrow(
+      expect.objectContaining({ code: ERROR_CODES.MODEL_NOT_CONFIGURED }),
+    )
+    expect(models.getDefault()?.id).toBe(current.id)
+  })
+
   it('resolves the default model when the conversation has none', () => {
     const { models } = makeServices()
-    models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
+    models.add({
+      provider: 'litellm',
+      modelId: 'model-a',
+      displayName: 'A',
+      contextWindowTokens: 128_000,
+    })
     expect(models.resolveForConversation(null, null).modelId).toBe('model-a')
   })
 
   it('fails loudly when a conversation references a removed model', () => {
     const { models } = makeServices()
-    const a = models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
-    models.add({ provider: 'litellm', modelId: 'model-b', displayName: 'B', contextWindowTokens: 128_000 })
+    const a = models.add({
+      provider: 'litellm',
+      modelId: 'model-a',
+      displayName: 'A',
+      contextWindowTokens: 128_000,
+    })
+    models.add({
+      provider: 'litellm',
+      modelId: 'model-b',
+      displayName: 'B',
+      contextWindowTokens: 128_000,
+    })
     models.remove(a.id)
 
     // Không âm thầm chuyển sang model-b: người dùng phải biết model đã đổi.
@@ -278,8 +407,18 @@ describe('ModelService', () => {
 
   it('marks models verified against GET /v1/models', async () => {
     const { models } = makeServices()
-    models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
-    models.add({ provider: 'litellm', modelId: 'model-khong-ton-tai', displayName: 'B', contextWindowTokens: 128_000 })
+    models.add({
+      provider: 'litellm',
+      modelId: 'model-a',
+      displayName: 'A',
+      contextWindowTokens: 128_000,
+    })
+    models.add({
+      provider: 'litellm',
+      modelId: 'model-khong-ton-tai',
+      displayName: 'B',
+      contextWindowTokens: 128_000,
+    })
 
     const result = await models.verifyAll('litellm', {
       listModels: () => Promise.resolve(['model-a', 'model-c']),
@@ -292,7 +431,12 @@ describe('ModelService', () => {
 
   it('leaves models unverified — not invalid — when the endpoint is unavailable', async () => {
     const { models } = makeServices()
-    models.add({ provider: 'litellm', modelId: 'model-a', displayName: 'A', contextWindowTokens: 128_000 })
+    models.add({
+      provider: 'litellm',
+      modelId: 'model-a',
+      displayName: 'A',
+      contextWindowTokens: 128_000,
+    })
 
     const result = await models.verifyAll('litellm', {
       listModels: () => Promise.reject(new Error('404')),
@@ -335,16 +479,22 @@ describe('SettingsService — policy precedence', () => {
 })
 
 describe('loadOrgPolicy', () => {
-  it('falls back to defaults for an invalid policy file rather than refusing to start', () => {
+  it('keeps the app available but disables direct OpenAI when a present policy is invalid', () => {
     const logger = new Logger({ sink: new MemorySink() })
-    expect(loadOrgPolicy({ allowedDomains: 'không phải mảng' }, logger)).toEqual(DEFAULT_ORG_POLICY)
+    expect(loadOrgPolicy({ allowedDomains: 'không phải mảng' }, logger)).toEqual({
+      ...DEFAULT_ORG_POLICY,
+      allowDirectOpenAi: false,
+    })
     expect(loadOrgPolicy(null, logger)).toEqual(DEFAULT_ORG_POLICY)
   })
 
   it('reads a valid policy', () => {
     const logger = new Logger({ sink: new MemorySink() })
-    expect(loadOrgPolicy({ allowedDomains: ['*.corp.local'] }, logger).allowedDomains).toEqual([
-      '*.corp.local',
-    ])
+    const policy = loadOrgPolicy(
+      { allowedDomains: ['*.corp.local'], allowDirectOpenAi: false },
+      logger,
+    )
+    expect(policy.allowedDomains).toEqual(['*.corp.local'])
+    expect(policy.allowDirectOpenAi).toBe(false)
   })
 })

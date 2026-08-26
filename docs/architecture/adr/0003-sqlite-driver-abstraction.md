@@ -19,10 +19,10 @@ kiểm chứng phần mã hoá và migration — đúng những chỗ rủi ro n
 
 Đưa vào một interface mỏng (`packages/local-store/src/driver.ts`) với hai implementation:
 
-| Driver | Dùng ở đâu | Lý do |
-|---|---|---|
-| `node:sqlite` | **Test và bản phát hành** | Có sẵn trong Node 24 của Electron 43, không cần build |
-| `better-sqlite3` | Không cài, không đóng gói — chỉ là lối thoát | Nhanh hơn, nhưng là native module |
+| Driver           | Dùng ở đâu                                   | Lý do                                                 |
+| ---------------- | -------------------------------------------- | ----------------------------------------------------- |
+| `node:sqlite`    | **Test và bản phát hành**                    | Có sẵn trong Node 24 của Electron 43, không cần build |
+| `better-sqlite3` | Không cài, không đóng gói — chỉ là lối thoát | Nhanh hơn, nhưng là native module                     |
 
 `openDatabase(path, preferred)` thử driver ưu tiên trước, rơi xuống driver còn lại nếu không nạp
 được. Cả hai đều nạp bằng `createRequire` chứ không `import()` — nếu dùng `import()` thì Vite
@@ -70,11 +70,13 @@ sau này bỏ `node:sqlite`, chỉ cần cài lại package và đổi một tha
 chuẩn nên không cần chuyển đổi gì.
 
 App đã được chạy thật và xác nhận: `local-db-opened {"driver":"node:sqlite"}`, migration v1 áp
-dụng, `window-ready` sau 304 ms. 8 test E2E chạy Electron thật cũng đi qua đúng driver này.
+dụng, `window-ready` sau 304 ms. Bộ E2E Electron thật cũng đi qua đúng driver này; hiện có 15
+test chạy trên Linux và 2 test DPAPI/startup dành riêng cho Windows.
 
 ## Hệ quả
 
 **Tích cực**
+
 - Test tầng lưu trữ chạy ở mọi nơi, kể cả CI không có toolchain C++.
 - **Bộ cài không còn phụ thuộc bắt buộc vào native module.** Bỏ được một mắt xích hay gãy nhất
   trong packaging Electron: không cần toolchain trên máy build, không cần asarUnpack để chạy.
@@ -82,6 +84,7 @@ dụng, `window-ready` sau 304 ms. 8 test E2E chạy Electron thật cũng đi q
   giảm mạnh so với đánh giá ban đầu.
 
 **Tiêu cực**
+
 - **`node:sqlite` vẫn được Node đánh dấu experimental.** Đây là rủi ro đã được nêu ra rõ ràng và
   chủ sở hữu sản phẩm chấp nhận. Cơ sở đánh giá rủi ro thấp: dữ liệu là file SQLite chuẩn nên đổi
   driver không mất dữ liệu, lối thoát chỉ là một tham số, và hiệu năng đã đo đủ dùng.

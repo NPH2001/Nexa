@@ -2,6 +2,8 @@ import { BrowserWindow, session, shell } from 'electron'
 import { matchesAllowlist } from '@nexa/security'
 import type { Logger } from '@nexa/observability'
 
+const LOCAL_RENDERER_ORIGIN = 'nexa://app'
+
 /**
  * §5.3 — nguyên tắc IPC/renderer:
  *   - tắt nodeIntegration, bật contextIsolation, bật sandbox
@@ -15,8 +17,7 @@ import type { Logger } from '@nexa/observability'
 
 export interface WindowOptions {
   readonly preloadPath: string
-  readonly rendererUrl?: string
-  readonly rendererFile?: string
+  readonly rendererUrl: string
   readonly logger: Logger
   readonly allowedDomains: readonly string[]
   readonly isDevelopment: boolean
@@ -55,8 +56,8 @@ export function createMainWindow(opts: WindowOptions): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
-    minWidth: 940,
-    minHeight: 600,
+    minWidth: 520,
+    minHeight: 520,
     show: false,
     backgroundColor: '#0f1115',
     title: 'Nexa',
@@ -81,7 +82,7 @@ export function createMainWindow(opts: WindowOptions): BrowserWindow {
   // Không cho renderer tự điều hướng đi đâu khác: một trang bị chèn mã có thể thử
   // chuyển hướng để lấy context.
   window.webContents.on('will-navigate', (event, url) => {
-    const allowed = opts.rendererUrl !== undefined && url.startsWith(opts.rendererUrl)
+    const allowed = url.startsWith(opts.rendererUrl)
     if (!allowed) {
       event.preventDefault()
       opts.logger.warn('navigation-blocked', { scheme: safeScheme(url) })
@@ -98,11 +99,7 @@ export function createMainWindow(opts: WindowOptions): BrowserWindow {
     return { action: 'deny' }
   })
 
-  if (opts.rendererUrl !== undefined) {
-    void window.loadURL(opts.rendererUrl)
-  } else if (opts.rendererFile !== undefined) {
-    void window.loadFile(opts.rendererFile)
-  }
+  void window.loadURL(opts.rendererUrl)
 
   return window
 }
@@ -133,6 +130,7 @@ function applySessionHardening(opts: WindowOptions): void {
     const url = details.url
     const isLocal =
       url.startsWith('file://') ||
+      url.startsWith(`${LOCAL_RENDERER_ORIGIN}/`) ||
       url.startsWith('devtools://') ||
       url.startsWith('blob:') ||
       url.startsWith('data:') ||

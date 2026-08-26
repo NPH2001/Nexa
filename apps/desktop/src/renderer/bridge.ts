@@ -17,14 +17,14 @@ import type {
   RiskLevel,
   ToolCallRecord,
   ToolStatusEvent,
-} from '@nexa/shared-types'
+} from '@nexa/shared-types/renderer'
 
 /**
  * Client typed cho preload bridge.
  *
- * Renderer KHÔNG import bất kỳ package nào khác của Nexa ngoài `@nexa/shared-types` (chỉ có
- * type và hằng số, không có Node) — xem quy tắc lint trong eslint.config.js. Mọi việc thật
- * đều nằm sau `window.nexa`.
+ * Renderer KHÔNG import bất kỳ package nào khác của Nexa ngoài entrypoint
+ * `@nexa/shared-types/renderer` (chỉ có type và hằng số, không có Node) — xem quy tắc lint
+ * trong eslint.config.js. Mọi việc thật đều nằm sau `window.nexa`.
  */
 
 interface NexaBridge {
@@ -115,12 +115,18 @@ export const api = {
         modelId: model?.modelId ?? null,
         modelProvider: model?.provider ?? null,
       }),
-    rename: (id: string, title: string) => call<{ ok: boolean }>('conversation:rename', { id, title }),
+    rename: (id: string, title: string) =>
+      call<{ ok: boolean }>('conversation:rename', { id, title }),
     remove: (id: string) => call<{ ok: boolean }>('conversation:delete', { id }),
     archive: (id: string) => call<{ ok: boolean }>('conversation:archive', { id }),
     search: (query: string) =>
       call<{
-        hits: { conversationId: string; conversationTitle: string; messageId: string; snippet: string }[]
+        hits: {
+          conversationId: string
+          conversationTitle: string
+          messageId: string
+          snippet: string
+        }[]
         truncated: boolean
         scanned: number
       }>('conversation:search', { query, limit: 50 }),
@@ -221,7 +227,6 @@ export const events = {
     bridge().on('nexa:tool-status', (p) => fn(p as ToolStatusEvent)),
   onMcpStatus: (fn: (e: McpStatusEvent) => void) =>
     bridge().on('nexa:mcp-status', (p) => fn(p as McpStatusEvent)),
-  onUpdateAvailable: (
-    fn: (e: { version: string; message: string; notes?: string }) => void,
-  ) => bridge().on('nexa:update-available', (p) => fn(p as Parameters<typeof fn>[0])),
+  onUpdateAvailable: (fn: (e: { version: string; message: string; notes?: string }) => void) =>
+    bridge().on('nexa:update-available', (p) => fn(p as Parameters<typeof fn>[0])),
 }

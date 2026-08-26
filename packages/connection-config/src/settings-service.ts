@@ -96,8 +96,12 @@ export function loadOrgPolicy(raw: unknown, logger: Logger): OrgPolicy {
   if (raw === null || raw === undefined) return DEFAULT_ORG_POLICY
   const parsed = orgPolicySchema.safeParse(raw)
   if (!parsed.success) {
-    logger.warn('org-policy-invalid-using-defaults', { issueCount: parsed.error.issues.length })
-    return DEFAULT_ORG_POLICY
+    logger.warn('org-policy-invalid-using-safe-defaults', {
+      issueCount: parsed.error.issues.length,
+    })
+    // Policy đã tồn tại nhưng hỏng có thể vốn định chặn provider ngoài. Giữ app chạy được,
+    // nhưng fail closed riêng OpenAI để lỗi cấu hình không vô tình đưa dữ liệu ra cloud công cộng.
+    return { ...DEFAULT_ORG_POLICY, allowDirectOpenAi: false }
   }
   return parsed.data
 }

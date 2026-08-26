@@ -1,0 +1,13 @@
+{
+  "score": 95,
+  "verdict": "pass",
+  "category_match": true,
+  "differences": [
+    "The OpenAI policy-locked state adds two amber notices above the existing connection form.",
+    "Policy-disabled controls use the established disabled styling while the delete action remains available."
+  ],
+  "suggestions": [
+    "Keep the organization-policy label as text so it renders consistently on Linux without relying on emoji glyph support."
+  ],
+  "reasoning": "The new state preserves the reference settings layout, spacing, typography, navigation, card geometry, and dark theme. The lock reason is prominent, controls clearly communicate their disabled state, and the permitted cleanup action remains visually distinct. No clipping, overlap, fallback glyph, or ambiguous primary action remains at the tested viewport."
+}

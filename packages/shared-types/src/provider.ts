@@ -1,0 +1,27 @@
+/** Provider LLM được Nexa hỗ trợ. */
+export const LLM_PROVIDERS = ['litellm', 'openai'] as const
+export type LlmProvider = (typeof LLM_PROVIDERS)[number]
+
+/** Provider nào nằm ngoài tầm kiểm soát của tổ chức. */
+export function isExternalProvider(provider: LlmProvider): boolean {
+  return provider !== 'litellm'
+}
+
+/** Phần tối thiểu của OrgPolicy cần để quyết định provider; giữ file này không phụ thuộc Zod. */
+export interface DirectProviderPolicy {
+  readonly allowDirectOpenAi: boolean
+}
+
+/** Policy tổ chức được kiểm tra ở cả UI và mọi execution boundary trong main process. */
+export function isProviderAllowedByPolicy(
+  provider: LlmProvider,
+  policy: DirectProviderPolicy,
+): boolean {
+  return provider !== 'openai' || policy.allowDirectOpenAi
+}
+
+/** Tên hiển thị cho người dùng. */
+export const PROVIDER_LABELS: Readonly<Record<LlmProvider, string>> = {
+  litellm: 'LiteLLM (nội bộ)',
+  openai: 'OpenAI / ChatGPT (bên ngoài)',
+}

@@ -1,5 +1,10 @@
-import { useEffect, useState } from 'react'
-import { PROVIDER_LABELS, RETENTION_CHOICES, isExternalProvider } from '@nexa/shared-types'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  PROVIDER_LABELS,
+  RETENTION_CHOICES,
+  isExternalProvider,
+  isProviderAllowedByPolicy,
+} from '@nexa/shared-types/renderer'
 import type {
   AppSettings,
   Connection,
@@ -7,25 +12,42 @@ import type {
   ConnectionType,
   LlmProvider,
   ModelConfig,
-} from '@nexa/shared-types'
+  OrgPolicy,
+} from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
+import { commitThenRefresh } from '../committed-mutation.js'
+import { DestructiveActionDialog } from './DestructiveActionDialog.js'
 import type { Toast } from './Toasts.js'
 
 type Tab = 'litellm' | 'openai' | 'models' | 'jira' | 'confluence' | 'mcpGateway' | 'data' | 'about'
 
+const SETTINGS_TABS: readonly { id: Tab; label: string }[] = [
+  { id: 'litellm', label: 'LiteLLM' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'models', label: 'Model' },
+  { id: 'jira', label: 'Jira' },
+  { id: 'confluence', label: 'Confluence' },
+  { id: 'mcpGateway', label: 'MCP Gateway' },
+  { id: 'data', label: 'Dữ liệu & quyền riêng tư' },
+  { id: 'about', label: 'Chẩn đoán' },
+]
+
 export function SettingsView(props: {
   models: readonly ModelConfig[]
   settings: AppSettings | null
+  policy: OrgPolicy | null
   onModelsChanged: (models: ModelConfig[]) => void
   onSettingsChanged: (settings: AppSettings) => void
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
+  const { onError, onSettingsChanged } = props
   const [tab, setTab] = useState<Tab>('litellm')
   const [connections, setConnections] = useState<Connection[]>([])
   const [lockedFeatures, setLockedFeatures] = useState<string[]>([])
+  const openAiAllowed = props.policy?.allowDirectOpenAi === true
 
-  const reload = async (): Promise<void> => {
+  const reload = useCallback(async (): Promise<void> => {
     try {
       const [conns, settingsResult] = await Promise.all([
         api.connections.list(),
@@ -33,44 +55,64 @@ export function SettingsView(props: {
       ])
       setConnections(conns)
       setLockedFeatures(settingsResult.lockedFeatures)
-      props.onSettingsChanged(settingsResult.settings)
+      onSettingsChanged(settingsResult.settings)
     } catch (error) {
-      props.onError(error, 'Không tải được cấu hình.')
+      onError(error, 'Không tải được cấu hình.')
     }
-  }
+  }, [onError, onSettingsChanged])
 
   useEffect(() => {
     void reload()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [reload])
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'litellm', label: 'LiteLLM' },
-    { id: 'openai', label: 'OpenAI' },
-    { id: 'models', label: 'Model' },
-    { id: 'jira', label: 'Jira' },
-    { id: 'confluence', label: 'Confluence' },
-    { id: 'mcpGateway', label: 'MCP Gateway' },
-    { id: 'data', label: 'Dữ liệu & quyền riêng tư' },
-    { id: 'about', label: 'Chẩn đoán' },
-  ]
+  const moveTab = (current: Tab, key: string): void => {
+    const currentIndex = SETTINGS_TABS.findIndex((item) => item.id === current)
+    const nextIndex =
+      key === 'Home'
+        ? 0
+        : key === 'End'
+          ? SETTINGS_TABS.length - 1
+          : (currentIndex + (key === 'ArrowLeft' ? -1 : 1) + SETTINGS_TABS.length) %
+            SETTINGS_TABS.length
+    const next = SETTINGS_TABS[nextIndex]
+    if (next === undefined) return
+    setTab(next.id)
+    requestAnimationFrame(() => document.getElementById(`settings-tab-${next.id}`)?.focus())
+  }
 
   return (
     <div className="settings">
-      <nav className="tabs">
-        {tabs.map((t) => (
+      <div className="tabs" role="tablist" aria-label="Nhóm cài đặt">
+        {SETTINGS_TABS.map((t) => (
           <button
             key={t.id}
+            id={`settings-tab-${t.id}`}
             type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            aria-controls={`settings-panel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
             className={`tab ${tab === t.id ? 'active' : ''}`}
             onClick={() => setTab(t.id)}
+            onKeyDown={(event) => {
+              if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault()
+                moveTab(t.id, event.key)
+              }
+            }}
           >
             {t.label}
           </button>
         ))}
-      </nav>
+      </div>
 
-      <div className="settings-body">
+      <div
+        id={`settings-panel-${tab}`}
+        className="settings-body"
+        role="tabpanel"
+        aria-labelledby={`settings-tab-${tab}`}
+        tabIndex={0}
+      >
         {tab === 'litellm' && (
           <ConnectionForm
             type="litellm"
@@ -81,6 +123,9 @@ export function SettingsView(props: {
             requiresUsername={false}
             connection={connections.find((c) => c.type === 'litellm') ?? null}
             onChanged={reload}
+            onRemoved={() =>
+              setConnections((current) => current.filter((c) => c.type !== 'litellm'))
+            }
             onError={props.onError}
             onToast={props.onToast}
           />
@@ -96,8 +141,16 @@ export function SettingsView(props: {
             requiresUsername={false}
             defaultBaseUrl="https://api.openai.com"
             externalWarning="Đây là dịch vụ bên ngoài tổ chức. Không dán dữ liệu nhạy cảm vào hội thoại dùng model OpenAI, và việc đính kèm tài liệu bị CHẶN theo mặc định."
+            disabledReason={
+              openAiAllowed
+                ? undefined
+                : 'Kết nối OpenAI trực tiếp đã bị chính sách của tổ chức vô hiệu hoá. Bạn vẫn có thể xoá cấu hình cũ khỏi máy.'
+            }
             connection={connections.find((c) => c.type === 'openai') ?? null}
             onChanged={reload}
+            onRemoved={() =>
+              setConnections((current) => current.filter((c) => c.type !== 'openai'))
+            }
             onError={props.onError}
             onToast={props.onToast}
           />
@@ -113,6 +166,7 @@ export function SettingsView(props: {
             requiresUsername
             connection={connections.find((c) => c.type === 'jira') ?? null}
             onChanged={reload}
+            onRemoved={() => setConnections((current) => current.filter((c) => c.type !== 'jira'))}
             onError={props.onError}
             onToast={props.onToast}
           />
@@ -128,6 +182,9 @@ export function SettingsView(props: {
             requiresUsername
             connection={connections.find((c) => c.type === 'confluence') ?? null}
             onChanged={reload}
+            onRemoved={() =>
+              setConnections((current) => current.filter((c) => c.type !== 'confluence'))
+            }
             onError={props.onError}
             onToast={props.onToast}
           />
@@ -144,6 +201,9 @@ export function SettingsView(props: {
               requiresUsername={false}
               connection={connections.find((c) => c.type === 'mcpGateway') ?? null}
               onChanged={reload}
+              onRemoved={() =>
+                setConnections((current) => current.filter((c) => c.type !== 'mcpGateway'))
+              }
               onError={props.onError}
               onToast={props.onToast}
             />
@@ -160,6 +220,7 @@ export function SettingsView(props: {
         {tab === 'models' && (
           <ModelsPanel
             models={props.models}
+            allowDirectOpenAi={openAiAllowed}
             onChanged={props.onModelsChanged}
             onError={props.onError}
             onToast={props.onToast}
@@ -196,8 +257,11 @@ function ConnectionForm(props: {
   defaultBaseUrl?: string
   /** Cảnh báo hiện nổi bật khi provider nằm ngoài tổ chức (§11.2). */
   externalWarning?: string
+  /** Policy có thể chặn sửa/test nhưng vẫn cho phép xoá credential cũ. */
+  disabledReason?: string
   connection: Connection | null
   onChanged: () => Promise<void>
+  onRemoved: () => void
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
@@ -206,6 +270,7 @@ function ConnectionForm(props: {
   const [secret, setSecret] = useState('')
   const [enabled, setEnabled] = useState(props.connection?.enabled ?? true)
   const [busy, setBusy] = useState<'saving' | 'testing' | 'deleting' | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(
     props.connection?.lastTest ?? null,
   )
@@ -263,9 +328,20 @@ function ConnectionForm(props: {
     void (async () => {
       setBusy('deleting')
       try {
-        await api.connections.remove(props.type)
-        await props.onChanged()
-        props.onToast({ kind: 'success', title: 'Đã xoá kết nối và thông tin đăng nhập.' })
+        await commitThenRefresh({
+          commit: () => api.connections.remove(props.type),
+          onCommitted: () => {
+            props.onRemoved()
+            setConfirmingDelete(false)
+            props.onToast({ kind: 'success', title: 'Đã xoá kết nối và thông tin đăng nhập.' })
+          },
+          refresh: props.onChanged,
+          onRefreshError: () =>
+            props.onToast({
+              kind: 'warning',
+              title: 'Đã xoá kết nối nhưng chưa làm mới được cấu hình.',
+            }),
+        })
       } catch (error) {
         props.onError(error, 'Không xoá được kết nối.')
       } finally {
@@ -275,86 +351,123 @@ function ConnectionForm(props: {
   }
 
   return (
-    <section className="panel">
-      <h2>{props.title}</h2>
-      {props.externalWarning !== undefined && (
-        <p className="external-warning">⚠ {props.externalWarning}</p>
-      )}
-      <p className="muted">{props.description}</p>
+    <>
+      <section className="panel">
+        <h2>{props.title}</h2>
+        {props.externalWarning !== undefined && (
+          <p className="external-warning">⚠ {props.externalWarning}</p>
+        )}
+        {props.disabledReason !== undefined && (
+          <p className="external-warning">
+            <strong>Chính sách tổ chức:</strong> {props.disabledReason}
+          </p>
+        )}
+        <p className="muted">{props.description}</p>
 
-      <label className="field">
-        <span>{props.urlLabel}</span>
-        <input
-          className="input"
-          value={baseUrl}
-          placeholder="https://..."
-          onChange={(e) => setBaseUrl(e.target.value)}
-        />
-      </label>
-
-      {props.requiresUsername && (
         <label className="field">
-          <span>Tên đăng nhập</span>
-          <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} />
+          <span>{props.urlLabel}</span>
+          <input
+            className="input"
+            value={baseUrl}
+            placeholder="https://..."
+            onChange={(e) => setBaseUrl(e.target.value)}
+            disabled={props.disabledReason !== undefined}
+          />
         </label>
-      )}
 
-      <label className="field">
-        <span>{props.secretLabel}</span>
-        <input
-          className="input"
-          type="password"
-          value={secret}
-          autoComplete="off"
-          placeholder={
-            props.connection?.hasCredential === true
-              ? '•••••••••• (đã lưu — để trống nếu không đổi)'
-              : 'Dán giá trị vào đây'
-          }
-          onChange={(e) => setSecret(e.target.value)}
+        {props.requiresUsername && (
+          <label className="field">
+            <span>Tên đăng nhập</span>
+            <input
+              className="input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={props.disabledReason !== undefined}
+            />
+          </label>
+        )}
+
+        <label className="field">
+          <span>{props.secretLabel}</span>
+          <input
+            className="input"
+            type="password"
+            value={secret}
+            autoComplete="off"
+            placeholder={
+              props.connection?.hasCredential === true
+                ? '•••••••••• (đã lưu — để trống nếu không đổi)'
+                : 'Dán giá trị vào đây'
+            }
+            onChange={(e) => setSecret(e.target.value)}
+            disabled={props.disabledReason !== undefined}
+          />
+          {/* §11.1: mặc định chỉ hiển thị giá trị đã che; Nexa không đọc lại secret ra UI. */}
+          <span className="muted small">
+            Nexa không hiển thị lại giá trị đã lưu. Muốn đổi thì nhập giá trị mới.
+          </span>
+        </label>
+
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            disabled={props.disabledReason !== undefined}
+          />
+          <span>Bật kết nối này</span>
+        </label>
+
+        {testResult !== null && (
+          <p className={testResult.ok ? 'ok' : 'danger'}>
+            {testResult.ok ? '✓ ' : '✗ '}
+            Kiểm tra lúc {new Date(testResult.checkedAt).toLocaleString('vi-VN')}
+            {testResult.detail !== undefined && ` — ${testResult.detail}`}
+            {testResult.errorCode !== undefined && ` — ${testResult.errorCode}`}
+          </p>
+        )}
+
+        <div className="actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={save}
+            disabled={busy !== null || props.disabledReason !== undefined}
+          >
+            {busy === 'saving' ? 'Đang lưu…' : 'Lưu'}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={test}
+            disabled={
+              busy !== null || props.connection === null || props.disabledReason !== undefined
+            }
+          >
+            {busy === 'testing' ? 'Đang kiểm tra…' : 'Kiểm tra kết nối'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={busy !== null || props.connection === null}
+          >
+            Xoá kết nối
+          </button>
+        </div>
+      </section>
+
+      {confirmingDelete && (
+        <DestructiveActionDialog
+          title={`Xoá kết nối ${props.title.replace('Kết nối ', '')}?`}
+          description="Endpoint, trạng thái cấu hình và thông tin đăng nhập đã lưu sẽ bị xoá khỏi máy này."
+          confirmLabel="Xoá kết nối"
+          busy={busy === 'deleting'}
+          onConfirm={remove}
+          onCancel={() => setConfirmingDelete(false)}
         />
-        {/* §11.1: mặc định chỉ hiển thị giá trị đã che; Nexa không đọc lại secret ra UI. */}
-        <span className="muted small">
-          Nexa không hiển thị lại giá trị đã lưu. Muốn đổi thì nhập giá trị mới.
-        </span>
-      </label>
-
-      <label className="checkbox">
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        <span>Bật kết nối này</span>
-      </label>
-
-      {testResult !== null && (
-        <p className={testResult.ok ? 'ok' : 'danger'}>
-          {testResult.ok ? '✓ ' : '✗ '}
-          Kiểm tra lúc {new Date(testResult.checkedAt).toLocaleString('vi-VN')}
-          {testResult.detail !== undefined && ` — ${testResult.detail}`}
-          {testResult.errorCode !== undefined && ` — ${testResult.errorCode}`}
-        </p>
       )}
-
-      <div className="actions">
-        <button type="button" className="btn btn-primary" onClick={save} disabled={busy !== null}>
-          {busy === 'saving' ? 'Đang lưu…' : 'Lưu'}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={test}
-          disabled={busy !== null || props.connection === null}
-        >
-          {busy === 'testing' ? 'Đang kiểm tra…' : 'Kiểm tra kết nối'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-danger"
-          onClick={remove}
-          disabled={busy !== null || props.connection === null}
-        >
-          Xoá kết nối
-        </button>
-      </div>
-    </section>
+    </>
   )
 }
 
@@ -362,6 +475,7 @@ function ConnectionForm(props: {
 
 function ModelsPanel(props: {
   models: readonly ModelConfig[]
+  allowDirectOpenAi: boolean
   onChanged: (models: ModelConfig[]) => void
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
@@ -370,177 +484,232 @@ function ModelsPanel(props: {
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [contextWindow, setContextWindow] = useState(128_000)
+  const [modelToDelete, setModelToDelete] = useState<ModelConfig | null>(null)
+  const [deletingModel, setDeletingModel] = useState(false)
 
   const refresh = async (): Promise<void> => props.onChanged(await api.models.list())
 
-  return (
-    <section className="panel">
-      <h2>Model</h2>
-      <p className="muted">
-        Thêm những model bạn được phép dùng. Danh sách này chỉ để chọn nhanh — quyền thực tế do
-        LiteLLM quyết định theo API key của bạn.
-      </p>
+  const removeModel = (): void => {
+    if (modelToDelete === null || deletingModel) return
+    void (async () => {
+      setDeletingModel(true)
+      try {
+        const model = modelToDelete
+        await commitThenRefresh({
+          commit: () => api.models.remove(model.id),
+          onCommitted: () => {
+            props.onChanged(props.models.filter((item) => item.id !== model.id))
+            setModelToDelete(null)
+            props.onToast({ kind: 'success', title: `Đã xoá model ${model.displayName}.` })
+          },
+          refresh,
+          onRefreshError: () =>
+            props.onToast({
+              kind: 'warning',
+              title: 'Đã xoá model nhưng chưa làm mới được danh sách.',
+            }),
+        })
+      } catch (error) {
+        props.onError(error, 'Không xoá được model.')
+      } finally {
+        setDeletingModel(false)
+      }
+    })()
+  }
 
-      <div className="model-add">
-        <select
-          className="input input-compact"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value as LlmProvider)}
-          aria-label="Provider"
-        >
-          {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <input
-          className="input"
-          placeholder="Model id (ví dụ gpt-5.x-internal)"
-          value={modelId}
-          onChange={(e) => setModelId(e.target.value)}
-        />
-        <input
-          className="input"
-          placeholder="Tên hiển thị"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-        />
-        <input
-          className="input input-compact"
-          type="number"
-          min={1024}
-          step={1024}
-          value={contextWindow}
-          onChange={(e) => setContextWindow(Number(e.target.value))}
-          title="Cửa sổ ngữ cảnh (token)"
-        />
+  return (
+    <>
+      <section className="panel">
+        <h2>Model</h2>
+        <p className="muted">
+          Thêm những model bạn được phép dùng. Danh sách này chỉ để chọn nhanh — quyền thực tế do
+          endpoint tương ứng và chính sách của tổ chức quyết định.
+        </p>
+
+        <div className="model-add">
+          <select
+            className="input input-compact"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as LlmProvider)}
+            aria-label="Provider"
+          >
+            {Object.entries(PROVIDER_LABELS)
+              .filter(([value]) =>
+                isProviderAllowedByPolicy(value as LlmProvider, {
+                  allowDirectOpenAi: props.allowDirectOpenAi,
+                }),
+              )
+              .map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+          </select>
+          <input
+            className="input"
+            aria-label="Model ID"
+            placeholder="Model id (ví dụ gpt-5.x-internal)"
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+          />
+          <input
+            className="input"
+            aria-label="Tên hiển thị của model"
+            placeholder="Tên hiển thị"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+          <input
+            className="input input-compact"
+            type="number"
+            aria-label="Cửa sổ ngữ cảnh theo token"
+            min={1024}
+            step={1024}
+            value={contextWindow}
+            onChange={(e) => setContextWindow(Number(e.target.value))}
+            title="Cửa sổ ngữ cảnh (token)"
+          />
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={modelId.trim() === ''}
+            onClick={() => {
+              void (async () => {
+                try {
+                  await api.models.add({
+                    provider,
+                    modelId: modelId.trim(),
+                    displayName: displayName.trim() === '' ? modelId.trim() : displayName.trim(),
+                    contextWindowTokens: contextWindow,
+                  })
+                  setModelId('')
+                  setDisplayName('')
+                  await refresh()
+                } catch (error) {
+                  props.onError(error, 'Không thêm được model.')
+                }
+              })()
+            }}
+          >
+            Thêm
+          </button>
+        </div>
+
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Provider</th>
+              <th>Ngữ cảnh</th>
+              <th>Trạng thái</th>
+              <th scope="col">Thao tác</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.models.map((model) => (
+              <tr key={model.id}>
+                <td>
+                  <strong>{model.displayName}</strong>
+                  <br />
+                  <code className="muted small">{model.modelId}</code>
+                  {model.isDefault && <span className="tag">mặc định</span>}
+                </td>
+                <td>
+                  {isExternalProvider(model.provider) ? (
+                    <>
+                      <span className="external-tag">{PROVIDER_LABELS[model.provider]}</span>
+                      {!props.allowDirectOpenAi && <span className="tag">bị policy khoá</span>}
+                    </>
+                  ) : (
+                    <span className="muted small">{PROVIDER_LABELS[model.provider]}</span>
+                  )}
+                </td>
+                <td>{model.contextWindowTokens.toLocaleString('vi-VN')} token</td>
+                <td>
+                  {model.verified ? (
+                    <span className="ok">✓ đã kiểm chứng</span>
+                  ) : (
+                    <span className="muted">chưa kiểm chứng</span>
+                  )}
+                </td>
+                <td className="row-actions">
+                  {!model.isDefault && (
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={
+                        !isProviderAllowedByPolicy(model.provider, {
+                          allowDirectOpenAi: props.allowDirectOpenAi,
+                        })
+                      }
+                      onClick={() => {
+                        void api.models
+                          .setDefault(model.id)
+                          .then(refresh)
+                          .catch((e: unknown) => props.onError(e, 'Không đặt được model mặc định.'))
+                      }}
+                    >
+                      Đặt mặc định
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-small btn-danger"
+                    onClick={() => setModelToDelete(model)}
+                  >
+                    Xoá
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {props.models.length === 0 && (
+              <tr>
+                <td colSpan={5} className="muted center">
+                  Chưa có model nào. Hãy thêm ít nhất một model để bắt đầu chat.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
         <button
           type="button"
-          className="btn btn-primary"
-          disabled={modelId.trim() === ''}
+          className="btn"
           onClick={() => {
             void (async () => {
               try {
-                await api.models.add({
-                  provider,
-                  modelId: modelId.trim(),
-                  displayName: displayName.trim() === '' ? modelId.trim() : displayName.trim(),
-                  contextWindowTokens: contextWindow,
-                })
-                setModelId('')
-                setDisplayName('')
+                // Mỗi provider có endpoint /v1/models riêng — kiểm chứng theo provider đang chọn.
+                const result = await api.models.verifyAll(provider)
                 await refresh()
+                props.onToast({
+                  kind: result.unknown.length === 0 ? 'success' : 'warning',
+                  title: `Đã kiểm chứng ${String(result.verified.length)} model`,
+                  detail:
+                    result.unknown.length === 0
+                      ? undefined
+                      : `Không tìm thấy ở ${PROVIDER_LABELS[provider]}: ${result.unknown.join(', ')}`,
+                })
               } catch (error) {
-                props.onError(error, 'Không thêm được model.')
+                props.onError(error, 'Không kiểm chứng được model.')
               }
             })()
           }}
         >
-          Thêm
+          Kiểm chứng với {PROVIDER_LABELS[provider]}
         </button>
-      </div>
+      </section>
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Model</th>
-            <th>Provider</th>
-            <th>Ngữ cảnh</th>
-            <th>Trạng thái</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {props.models.map((model) => (
-            <tr key={model.id}>
-              <td>
-                <strong>{model.displayName}</strong>
-                <br />
-                <code className="muted small">{model.modelId}</code>
-                {model.isDefault && <span className="tag">mặc định</span>}
-              </td>
-              <td>
-                {isExternalProvider(model.provider) ? (
-                  <span className="external-tag">{PROVIDER_LABELS[model.provider]}</span>
-                ) : (
-                  <span className="muted small">{PROVIDER_LABELS[model.provider]}</span>
-                )}
-              </td>
-              <td>{model.contextWindowTokens.toLocaleString('vi-VN')} token</td>
-              <td>
-                {model.verified ? (
-                  <span className="ok">✓ có ở LiteLLM</span>
-                ) : (
-                  <span className="muted">chưa kiểm chứng</span>
-                )}
-              </td>
-              <td className="row-actions">
-                {!model.isDefault && (
-                  <button
-                    type="button"
-                    className="btn btn-small"
-                    onClick={() => {
-                      void api.models
-                        .setDefault(model.id)
-                        .then(refresh)
-                        .catch((e: unknown) => props.onError(e, 'Không đặt được model mặc định.'))
-                    }}
-                  >
-                    Đặt mặc định
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-small btn-danger"
-                  onClick={() => {
-                    void api.models
-                      .remove(model.id)
-                      .then(refresh)
-                      .catch((e: unknown) => props.onError(e, 'Không xoá được model.'))
-                  }}
-                >
-                  Xoá
-                </button>
-              </td>
-            </tr>
-          ))}
-          {props.models.length === 0 && (
-            <tr>
-              <td colSpan={5} className="muted center">
-                Chưa có model nào. Hãy thêm ít nhất một model để bắt đầu chat.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      <button
-        type="button"
-        className="btn"
-        onClick={() => {
-          void (async () => {
-            try {
-              // Mỗi provider có endpoint /v1/models riêng — kiểm chứng theo provider đang chọn.
-              const result = await api.models.verifyAll(provider)
-              await refresh()
-              props.onToast({
-                kind: result.unknown.length === 0 ? 'success' : 'warning',
-                title: `Đã kiểm chứng ${String(result.verified.length)} model`,
-                detail:
-                  result.unknown.length === 0
-                    ? undefined
-                    : `Không tìm thấy ở LiteLLM: ${result.unknown.join(', ')}`,
-              })
-            } catch (error) {
-              props.onError(error, 'Không kiểm chứng được model.')
-            }
-          })()
-        }}
-      >
-        Kiểm chứng với {PROVIDER_LABELS[provider]}
-      </button>
-    </section>
+      {modelToDelete !== null && (
+        <DestructiveActionDialog
+          title="Xoá model?"
+          description={`Model “${modelToDelete.displayName}” sẽ bị xoá khỏi danh sách lựa chọn. Các hội thoại cũ không bị xoá.`}
+          confirmLabel="Xoá model"
+          busy={deletingModel}
+          onConfirm={removeModel}
+          onCancel={() => setModelToDelete(null)}
+        />
+      )}
+    </>
   )
 }
 
@@ -820,15 +989,15 @@ function DiagnosticsPanel(props: {
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
+  const { onError } = props
   const [info, setInfo] = useState<Awaited<ReturnType<typeof api.diagnostics.appInfo>> | null>(null)
 
   useEffect(() => {
     void api.diagnostics
       .appInfo()
       .then(setInfo)
-      .catch((e: unknown) => props.onError(e, 'Không đọc được thông tin chẩn đoán.'))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+      .catch((e: unknown) => onError(e, 'Không đọc được thông tin chẩn đoán.'))
+  }, [onError])
 
   return (
     <section className="panel">

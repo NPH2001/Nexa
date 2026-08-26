@@ -2,6 +2,7 @@ import {
   ERROR_CODES,
   NexaError,
   isLlmConnection,
+  isProviderAllowedByPolicy,
   requiresUsername,
   type Connection,
   type ConnectionSaveInput,
@@ -28,7 +29,9 @@ export interface ConnectionServiceOptions {
    * Kiểm tra kết nối MCP — cần `AtlassianMcpManager` nên host tiêm vào để tránh phụ thuộc vòng.
    * `'mcpGateway'`: chỉ bắt tay MCP (initialize), không gọi tool cụ thể nào.
    */
-  readonly testAtlassian?: (type: 'jira' | 'confluence' | 'mcpGateway') => Promise<ConnectionTestResult>
+  readonly testAtlassian?: (
+    type: 'jira' | 'confluence' | 'mcpGateway',
+  ) => Promise<ConnectionTestResult>
 }
 
 /**
@@ -76,6 +79,7 @@ export class ConnectionService {
    * gửi ra renderer).
    */
   save(input: ConnectionSaveInput): Connection {
+    if (isLlmConnection(input.type)) this.assertProviderAllowed(input.type)
     const baseUrl = this.validateUrl(input.baseUrl, input.type)
 
     // Chỉ Atlassian (jira/confluence) cần username; LLM và mcpGateway xác thực bằng một
@@ -146,6 +150,13 @@ export class ConnectionService {
 
   /** §9.1 `connection.test`. Không bao giờ ném — trả kết quả để UI hiển thị trạng thái. */
   async test(type: ConnectionType): Promise<ConnectionTestResult> {
+    if (isLlmConnection(type) && !isProviderAllowedByPolicy(type, this.opts.policy)) {
+      return this.record(type, {
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        errorCode: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY,
+      })
+    }
     const connection = this.get(type)
     if (connection === null) {
       return this.record(type, {
@@ -204,6 +215,7 @@ export class ConnectionService {
    * "Secret chỉ được giải mã ngay trước khi tạo kết nối".
    */
   buildLlmClient(provider: LlmProvider, timeoutMs: number): OpenAiCompatibleClient {
+    this.assertProviderAllowed(provider)
     const connection = this.get(provider)
     if (connection === null || !connection.enabled) {
       throw new NexaError(
@@ -236,6 +248,14 @@ export class ConnectionService {
         { connectionType: type, errorCode: nexa.code },
       )
       throw nexa
+    }
+  }
+
+  private assertProviderAllowed(provider: LlmProvider): void {
+    if (!isProviderAllowedByPolicy(provider, this.opts.policy)) {
+      throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+        safeDetail: `provider "${provider}" is disabled by organisation policy`,
+      })
     }
   }
 

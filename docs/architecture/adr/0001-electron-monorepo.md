@@ -12,7 +12,7 @@ việc đánh giá Tauri nếu có ràng buộc RAM cứng.
 
 ## Quyết định
 
-1. **Electron 33 + React 19 + TypeScript strict**, build bằng `electron-vite`.
+1. **Electron 43 + React 19 + TypeScript strict**, build bằng `electron-vite`.
 2. **Monorepo pnpm workspaces**, các package là **source-only**: `main`/`types` trỏ thẳng vào
    `src/index.ts`, không có bước build riêng cho từng package.
 3. Bundler của ứng dụng (electron-vite) biên dịch tất cả trong một lần.
@@ -30,13 +30,17 @@ chấp nhận được.
 
 ## Ranh giới được thực thi bằng công cụ
 
-Nguyên tắc §13.1 *"Không import trực tiếp code main process vào renderer"* được thực thi ở
+Nguyên tắc §13.1 _"Không import trực tiếp code main process vào renderer"_ được thực thi ở
 **hai** tầng, không chỉ bằng quy ước:
 
 - **eslint** (`eslint.config.js`): renderer bị cấm import `@nexa/security`, `@nexa/local-store`,
   `@nexa/llm-client`, `electron`, và mọi `node:*`.
-- **bundler** (`electron.vite.config.ts`): cấu hình renderer chỉ khai alias cho
-  `@nexa/shared-types`. Import package khác sẽ lỗi ngay lúc build, kể cả khi ai đó tắt eslint.
+- **entrypoint + bundler** (`packages/shared-types/package.json`, `electron.vite.config.ts`):
+  renderer phải import `@nexa/shared-types/renderer`, preload phải import
+  `@nexa/shared-types/channels`; bare specifier đầy đủ chỉ dành cho main/package nội bộ.
+  Import package main-process khác vẫn lỗi ngay lúc build, kể cả khi ai đó tắt eslint.
+- **protocol** (`renderer-protocol.ts`): production chỉ phục vụ asset nằm trong renderer root qua
+  origin `nexa://app`; không tải trang bằng `file://`.
 
 ## Hệ quả
 

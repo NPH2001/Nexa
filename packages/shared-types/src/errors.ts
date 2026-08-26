@@ -34,6 +34,7 @@ export const ERROR_CODES = {
   OPENAI_CONFIG_REQUIRED: 'OPENAI_CONFIG_REQUIRED',
   OPENAI_AUTH_FAILED: 'OPENAI_AUTH_FAILED',
   OPENAI_RATE_LIMITED: 'OPENAI_RATE_LIMITED',
+  PROVIDER_DISABLED_BY_POLICY: 'PROVIDER_DISABLED_BY_POLICY',
   /** Người dùng bấm huỷ khi đang streaming (§2.1). Không phải lỗi thật. */
   LLM_CANCELLED: 'LLM_CANCELLED',
   /** LiteLLM/MCP trả lỗi mạng hoặc 5xx. */
@@ -168,6 +169,11 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     message: 'Đã vượt hạn mức của OpenAI.',
     retryable: true,
     hint: 'Chờ hạn mức được đặt lại, hoặc kiểm tra hạn mức của tài khoản OpenAI.',
+  },
+  PROVIDER_DISABLED_BY_POLICY: {
+    message: 'Provider này đã bị chính sách của tổ chức vô hiệu hoá.',
+    retryable: false,
+    hint: 'Dùng model nội bộ qua LiteLLM hoặc liên hệ bộ phận IT nếu cần quyền truy cập.',
   },
   LLM_CANCELLED: { message: 'Đã huỷ yêu cầu.', retryable: true },
   UPSTREAM_UNAVAILABLE: {

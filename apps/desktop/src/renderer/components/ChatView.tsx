@@ -7,7 +7,7 @@ import {
   type LlmProvider,
   type ModelConfig,
   type Message,
-} from '@nexa/shared-types'
+} from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
 import type { Toast } from './Toasts.js'
 
@@ -22,7 +22,9 @@ export function ChatView(props: {
   messages: readonly Message[]
   models: readonly ModelConfig[]
   settings: AppSettings | null
+  busy: boolean
   streaming: boolean
+  canCancel: boolean
   onSend: (
     content: string,
     fileTokens: string[],
@@ -60,8 +62,11 @@ export function ChatView(props: {
   const selectedModel = props.models.find((m) => modelKey(m) === selectedKey) ?? null
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [props.messages])
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    bottomRef.current?.scrollIntoView({
+      behavior: reduceMotion || props.streaming ? 'auto' : 'smooth',
+    })
+  }, [props.messages, props.streaming])
 
   /**
    * Chính sách tài liệu, phản chiếu đúng logic ở main (`document-policy.ts`).
@@ -128,13 +133,15 @@ export function ChatView(props: {
   }
 
   const removeAttachment = (token: string): void => {
-    void api.files.release(token).catch(() => undefined)
+    void api.files
+      .release(token)
+      .catch((error: unknown) => props.onError(error, 'Không giải phóng được file đính kèm.'))
     setAttachments((prev) => prev.filter((a) => a.token !== token))
   }
 
   const submit = (): void => {
     const content = draft.trim()
-    if (content === '' || props.streaming) return
+    if (content === '' || props.busy) return
     props.onSend(
       content,
       attachments.map((a) => a.token),
@@ -169,7 +176,8 @@ export function ChatView(props: {
               setModelOverride(key)
               const picked = props.models.find((m) => modelKey(m) === key)
               props.onToast({
-                kind: picked !== undefined && isExternalProvider(picked.provider) ? 'warning' : 'info',
+                kind:
+                  picked !== undefined && isExternalProvider(picked.provider) ? 'warning' : 'info',
                 title:
                   picked === undefined
                     ? 'Đã đổi model'
@@ -181,9 +189,7 @@ export function ChatView(props: {
       </header>
 
       <div className="messages">
-        {props.messages.length === 0 && (
-          <p className="muted center">Hãy đặt câu hỏi để bắt đầu.</p>
-        )}
+        {props.messages.length === 0 && <p className="muted center">Hãy đặt câu hỏi để bắt đầu.</p>}
         {props.messages.map((message) => (
           <MessageBubble
             key={message.id}
@@ -221,8 +227,8 @@ export function ChatView(props: {
             // §11.2: "Nexa phải hiển thị cảnh báo dữ liệu".
             <p className="warning-inline">
               Nội dung các file này sẽ được gửi tới{' '}
-              {selectedModel === null ? 'model' : PROVIDER_LABELS[selectedModel.provider]}. Chỉ
-              đính kèm tài liệu mà bạn được phép chia sẻ.
+              {selectedModel === null ? 'model' : PROVIDER_LABELS[selectedModel.provider]}. Chỉ đính
+              kèm tài liệu mà bạn được phép chia sẻ.
             </p>
           )}
 
@@ -238,11 +244,18 @@ export function ChatView(props: {
         )}
 
         <div className="composer-row">
-          <button type="button" className="icon-btn" title="Đính kèm tài liệu" onClick={pickFiles}>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Đính kèm tài liệu"
+            title="Đính kèm tài liệu"
+            onClick={pickFiles}
+          >
             📎
           </button>
           <textarea
             className="composer-input"
+            aria-label="Nội dung câu hỏi"
             placeholder="Nhập câu hỏi… (Ctrl+Enter để gửi)"
             value={draft}
             rows={3}
@@ -255,8 +268,13 @@ export function ChatView(props: {
             }}
           />
           {props.streaming ? (
-            <button type="button" className="btn btn-danger" onClick={props.onCancel}>
-              Dừng
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={props.onCancel}
+              disabled={!props.canCancel}
+            >
+              {props.canCancel ? 'Dừng' : 'Đang gửi…'}
             </button>
           ) : (
             <button
@@ -264,10 +282,12 @@ export function ChatView(props: {
               className="btn btn-primary"
               onClick={submit}
               disabled={
-                draft.trim() === '' || (attachments.length > 0 && documentPolicy.blocked)
+                props.busy ||
+                draft.trim() === '' ||
+                (attachments.length > 0 && documentPolicy.blocked)
               }
             >
-              Gửi
+              {props.busy ? 'Đang xử lý…' : 'Gửi'}
             </button>
           )}
         </div>
@@ -397,6 +417,7 @@ function MessageBubble(props: {
         <div className="message-body message-edit">
           <textarea
             className="composer-input"
+            aria-label="Nội dung tin nhắn đang sửa"
             value={draft}
             rows={3}
             onChange={(e) => setDraft(e.target.value)}
@@ -437,7 +458,9 @@ function MessageBubble(props: {
               <span className={`risk-badge risk-${call.riskLevel.toLowerCase()}`}>
                 {call.riskLevel}
               </span>
-              <span className="muted">{describeToolCall(call.operationStatus, call.approvalStatus)}</span>
+              <span className="muted">
+                {describeToolCall(call.operationStatus, call.approvalStatus)}
+              </span>
               {call.resultSummary !== undefined && <span> — {call.resultSummary}</span>}
               {call.targetUrl !== undefined && (
                 // §7.4 bước 8: hiển thị liên kết hoặc mã đối tượng vừa tạo/cập nhật.

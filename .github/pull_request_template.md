@@ -17,7 +17,9 @@ Liên quan: <!-- T-xx-yy · EPIC-nn · OPEN-QUESTIONS A1 · (không có) -->
 ## Checklist bắt buộc
 
 - [ ] `pnpm verify` chạy sạch (lint + typecheck + test)
+- [ ] `pnpm build` chạy sạch; nếu đổi main/preload/renderer thì bundle không tăng bất thường
 - [ ] Đã thêm hoặc cập nhật test cho hành vi mới
+- [ ] Nếu đổi luồng người dùng hoặc IPC: E2E liên quan đã chạy; nếu không chạy được đã ghi lý do
 - [ ] Comment giải thích **vì sao**, không phải **làm gì** — và tham chiếu số mục tài liệu (§n) ở
       những chỗ hiện thực một yêu cầu cụ thể
 
@@ -31,6 +33,7 @@ Bỏ qua mục nào **không** liên quan, nhưng đừng bỏ qua mục có li�
 - [ ] Channel IPC mới có schema Zod trong `IPC_SCHEMAS` **và** tên trong `channels.ts`
 - [ ] Tool mới có `riskLevel`, `requiredFeature`, và `buildPreview` nếu là write (§10.1, §13.1)
 - [ ] Không nới lỏng bất biến nào trong bảng "Các bất biến bảo mật" của README
+- [ ] Nếu đổi packaging/protocol: Electron fuses vẫn được kiểm tra, `file://` privilege vẫn tắt và binary chỉ tải `app.asar`
 - [ ] Nếu đụng vào `ConfirmationGuard`, `canonicalize()` hay `payload_hash`: 7 kịch bản §17.2
       vẫn xanh, và đã cân nhắc việc mọi approval cũ trở nên vô hiệu
 

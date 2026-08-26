@@ -1,8 +1,10 @@
 import {
   ERROR_CODES,
   NexaError,
+  isProviderAllowedByPolicy,
   type LlmProvider,
   type ModelConfig,
+  type OrgPolicy,
 } from '@nexa/shared-types'
 import type { ConfigRepository } from '@nexa/local-store'
 import { newRequestId, type Logger } from '@nexa/observability'
@@ -12,14 +14,16 @@ import type { OpenAiCompatibleClient } from '@nexa/llm-client'
  * Danh sách model cục bộ (EPIC-03).
  *
  * §4.1: "Người dùng lưu danh sách model cục bộ và chọn model — LiteLLM quyết định key có được
- * gọi model đó hay không." Nghĩa là Nexa KHÔNG được coi danh sách này là quyền: nó chỉ là
- * tiện ích chọn nhanh. Quyền thực tế do LiteLLM áp khi request tới.
+ * gọi model đó hay không." Nghĩa là danh sách model chỉ là tiện ích chọn nhanh; quyền model cụ
+ * thể vẫn do endpoint áp. Ngoại lệ duy nhất là policy tổ chức có thể chặn cứng cả provider
+ * OpenAI trực tiếp trước khi model được thêm/chọn/thực thi.
  */
 export class ModelService {
   constructor(
     private readonly repo: ConfigRepository,
     private readonly profileId: string,
     private readonly logger: Logger,
+    private readonly policy: OrgPolicy,
   ) {}
 
   list(): ModelConfig[] {
@@ -32,6 +36,7 @@ export class ModelService {
     displayName: string
     contextWindowTokens: number
   }): ModelConfig {
+    this.assertProviderAllowed(input.provider)
     const modelId = input.modelId.trim()
     if (modelId === '') {
       throw new NexaError(ERROR_CODES.VALIDATION_FAILED, { safeDetail: 'empty model id' })
@@ -49,6 +54,13 @@ export class ModelService {
   }
 
   setDefault(id: string): void {
+    const model = this.repo.getModel(id)
+    if (model === null) {
+      throw new NexaError(ERROR_CODES.MODEL_NOT_CONFIGURED, {
+        safeDetail: `cannot set unknown model "${id}" as default`,
+      })
+    }
+    this.assertProviderAllowed(model.provider)
     this.repo.setDefaultModel(this.profileId, id)
   }
 
@@ -70,6 +82,7 @@ export class ModelService {
       // Provider có thể null với hội thoại tạo trước migration v2; khi đó suy ra 'litellm'
       // vì đó là provider duy nhất tồn tại lúc ấy.
       const provider = conversationProvider ?? 'litellm'
+      this.assertProviderAllowed(provider)
       const found = this.repo.findModelByModelId(this.profileId, provider, conversationModelId)
       if (found !== null) return found
       // Model từng dùng nay đã bị xoá khỏi danh sách. Nói rõ thay vì âm thầm đổi model —
@@ -85,6 +98,7 @@ export class ModelService {
         safeDetail: 'no models configured',
       })
     }
+    this.assertProviderAllowed(fallback.provider)
     return fallback
   }
 
@@ -99,6 +113,7 @@ export class ModelService {
     provider: LlmProvider,
     client: OpenAiCompatibleClient,
   ): Promise<{ verified: string[]; unknown: string[] }> {
+    this.assertProviderAllowed(provider)
     // Chỉ đối chiếu model CỦA provider này. Model của provider khác không nằm trong danh sách
     // mà endpoint này trả về, nên đánh dấu chúng "không tìm thấy" là kết luận sai.
     const scope = this.repo.listModelsByProvider(this.profileId, provider)
@@ -130,5 +145,13 @@ export class ModelService {
       unknownCount: unknownModels.length,
     })
     return { verified, unknown: unknownModels }
+  }
+
+  private assertProviderAllowed(provider: LlmProvider): void {
+    if (!isProviderAllowedByPolicy(provider, this.policy)) {
+      throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+        safeDetail: `provider "${provider}" is disabled by organisation policy`,
+      })
+    }
   }
 }

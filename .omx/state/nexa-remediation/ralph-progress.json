@@ -1,0 +1,18 @@
+{
+  "score": 92,
+  "verdict": "pass",
+  "category_match": true,
+  "differences": [
+    "Không có ảnh thiết kế tham chiếu nên chỉ đánh giá tính nhất quán nội bộ, không đánh giá pixel fidelity.",
+    "Ở 520 px, tab chuyển thành hai hàng nên chiếm nhiều chiều cao hơn bản rộng."
+  ],
+  "suggestions": [
+    "Giữ breakpoint hiện tại và theo dõi khi số lượng tab tăng.",
+    "Bổ sung reference design nếu cần chấm pixel fidelity trong vòng sau."
+  ],
+  "reasoning": "Ảnh rộng, modal và layout 520 px đều có hierarchy rõ; trạng thái hẹp không còn clipping hoặc cuộn ngang.",
+  "next_actions": [
+    "Giữ ảnh wide, modal và narrow-v3 làm bằng chứng QA.",
+    "Không cần chỉnh UI thêm trong phạm vi remediation này."
+  ]
+}

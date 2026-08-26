@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { IPC_CHANNEL_NAMES, NEXA_EVENT_NAMES } from '@nexa/shared-types'
+import { IPC_CHANNEL_NAMES, NEXA_EVENT_NAMES } from '@nexa/shared-types/channels'
 
 /**
  * Preload bridge (§5.2, §5.3).
