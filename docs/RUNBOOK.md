@@ -125,6 +125,32 @@ cũ bị lược bỏ (ADR 0006 — cửa sổ trượt, không tóm tắt).
 
 Cách xử lý: bắt đầu hội thoại mới, hoặc đổi sang model có cửa sổ lớn hơn trong Cài đặt → Model.
 
+### Người dùng nói "trợ lý bảo là không có công cụ phù hợp"
+
+Đây là chế độ lỗi đã lường trước của ADR 0009 (thu hẹp danh mục tool) và là chế độ lỗi **âm
+thầm** — nó không sinh error code nào, nên chỉ phát hiện được qua lời người dùng.
+
+Grep sự kiện `tool-preset` trong log. Mỗi lượt có ít nhất một dòng:
+
+```
+tool-preset  preset=jira-read  toolCount=34  expanded=false
+tool-preset  preset=all        toolCount=98  expanded=true    ← có dòng này = model đã tự mở rộng
+```
+
+Đọc như sau:
+
+| Thấy gì | Nghĩa là | Làm gì |
+| --- | --- | --- |
+| `expanded=true` rồi vẫn lỗi | Model đã có đủ 98 tool. Vấn đề **không** phải thu hẹp danh mục. | Điều tra như một lỗi tool thường (mục "Không kết nối được Jira/Confluence") |
+| Chỉ có `expanded=false`, preset hẹp | Model **không** gọi `nexa_mo_rong_tool` — đúng rủi ro chính của ADR 0009 | Tắt `toolScoping` cho máy đó (Cài đặt → Tính năng), xác nhận hết lỗi, rồi báo đội phát triển kèm câu hỏi người dùng đã hỏi |
+| `preset=all-read` | Câu hỏi không có tín hiệu Jira/Confluence nào nên bộ chọn không đoán được hệ đích | Hướng dẫn người dùng nhắc rõ "Jira" hoặc "Confluence" trong câu hỏi — vừa là cách khắc phục ngay, vừa là dữ liệu tốt để báo lại |
+
+Tắt toàn tổ chức: `forcedFeatures: { "toolScoping": false }` trong `policy.json` rồi phân phối
+lại — không cần build lại app.
+
+**Log không ghi câu hỏi của người dùng** (đúng `docs/security/threat-model.md`). Nên khi báo lại,
+phải xin người dùng nguyên văn câu hỏi; không lấy được từ gói chẩn đoán.
+
 ### Tìm kiếm báo "kết quả chưa đầy đủ"
 
 Đúng thiết kế (ADR 0005). Lịch sử đã lớn hơn ngân sách quét. Hướng dẫn người dùng thu hẹp từ khoá.

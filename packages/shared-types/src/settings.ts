@@ -74,6 +74,22 @@ export const featureFlagsSchema = z.object({
   storeExtractedText: z.boolean().default(true),
   /** OPEN-QUESTIONS A7: cho phép người dùng tắt lưu lịch sử. */
   storeHistory: z.boolean().default(true),
+  /**
+   * Thu hẹp danh mục tool gửi cho model theo ngữ cảnh câu hỏi (ADR 0009).
+   *
+   * BẬT: mỗi lượt chỉ gửi một preset tool (xem `TOOL_PRESET_FLAGS` trong `tools.ts`) thay vì
+   * cả 98 tool — tiết kiệm ~50–65% token khối `tools`. Model vẫn lấy được danh mục đầy đủ bằng
+   * cách gọi tool meta `nexa_mo_rong_tool`, nên thu hẹp không bao giờ chặn được việc gì.
+   *
+   * TẮT: gửi toàn bộ tool khả dụng như trước ADR 0009, và không đưa tool meta vào request.
+   *
+   * Đây KHÔNG phải cờ quyền: nó chỉ đổi cái model *thấy*, không đổi cái được phép *chạy* —
+   * `resolveCallable()` vẫn là cổng duy nhất. Tắt cờ không mở thêm quyền nào.
+   *
+   * IT khoá được cờ này qua `forcedFeatures` trong `resources/policy.json` để rollback toàn
+   * tổ chức không cần build lại.
+   */
+  toolScoping: z.boolean().default(true),
 })
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>
 

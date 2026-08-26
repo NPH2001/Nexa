@@ -77,6 +77,10 @@ describe('feature flag', () => {
         'autoUpdate',
         'storeExtractedText',
         'storeHistory',
+        // Điều khiển việc gửi BAO NHIÊU tool cho model, không điều khiển tool nào cụ thể
+        // (ADR 0009). Nó gate preset, và preset là hợp của các cờ khác trong danh sách này —
+        // nên nó không bao giờ xuất hiện trong `requiredFeature` của một tool.
+        'toolScoping',
       ].sort(),
     )
   })

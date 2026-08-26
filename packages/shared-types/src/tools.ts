@@ -92,3 +92,72 @@ export interface ConfirmationRequest {
 export function isWriteRisk(level: RiskLevel): boolean {
   return level !== 'READ'
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Preset tool — ADR 0009
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Tập tool được gửi cho model trong một lượt.
+ *
+ * Vì sao là một danh sách ĐÓNG và không phải "chọn đúng tool liên quan tới câu hỏi này":
+ * khối `tools` nằm ở đầu request, nên nó là prefix của prompt. Một tập tool khác nhau cho mỗi
+ * câu hỏi nghĩa là một prefix mới mỗi lần ⇒ prompt cache luôn miss, và việc lọc có thể thành
+ * LỖ RÒNG so với gửi cả 98 tool nhưng cache được. Sáu preset = sáu prefix khả dĩ, biết trước.
+ *
+ * ĐỪNG biến cái này thành động. Xem `docs/architecture/adr/0009-tool-preset-scoping.md`.
+ */
+export type ToolPreset =
+  | 'jira-read'
+  | 'jira-full'
+  | 'confluence-read'
+  | 'confluence-full'
+  | 'all-read'
+  | 'all'
+
+const JIRA_READ_FLAGS = ['jiraRead', 'jiraSearch'] as const
+const JIRA_WRITE_FLAGS = [
+  'jiraCreate',
+  'jiraComment',
+  'jiraLink',
+  'jiraUpdate',
+  'jiraWorkflow',
+  'jiraServiceDesk',
+] as const
+const CONFLUENCE_READ_FLAGS = ['confluenceRead', 'confluenceSearch'] as const
+const CONFLUENCE_WRITE_FLAGS = ['confluenceWrite', 'confluenceWriteHigh'] as const
+
+/**
+ * Preset → tập feature flag của nó. Preset là HỢP của các nhóm cờ đã có, không phải một trục
+ * phân loại mới: 12 cờ tool hiện tại đã phân hoạch trọn 98 tool, mỗi tool đúng một cờ.
+ *
+ * Thêm một cờ tool mới mà quên cập nhật `all` ở đây sẽ làm mọi tool của nhóm đó IM LẶNG biến
+ * mất khỏi mọi preset. `tool-preset.test.ts` trong agent-runtime khẳng định `all` phủ trọn
+ * tập cờ mà registry thật sự dùng, nên lỗi đó thành đỏ ngay chứ không âm thầm.
+ */
+export const TOOL_PRESET_FLAGS: Readonly<Record<ToolPreset, readonly (keyof FeatureFlags)[]>> = {
+  'jira-read': JIRA_READ_FLAGS,
+  'jira-full': [...JIRA_READ_FLAGS, ...JIRA_WRITE_FLAGS],
+  'confluence-read': CONFLUENCE_READ_FLAGS,
+  'confluence-full': [...CONFLUENCE_READ_FLAGS, ...CONFLUENCE_WRITE_FLAGS],
+  'all-read': [...JIRA_READ_FLAGS, ...CONFLUENCE_READ_FLAGS],
+  all: [
+    ...JIRA_READ_FLAGS,
+    ...JIRA_WRITE_FLAGS,
+    ...CONFLUENCE_READ_FLAGS,
+    ...CONFLUENCE_WRITE_FLAGS,
+  ],
+}
+
+/** Mọi preset khả dĩ — dùng để test tính hữu hạn của tập prefix. */
+export const TOOL_PRESETS: readonly ToolPreset[] = Object.keys(TOOL_PRESET_FLAGS) as ToolPreset[]
+
+/**
+ * Tên tool meta cho phép model tự yêu cầu danh mục đầy đủ khi preset hẹp không đủ (ADR 0009).
+ *
+ * Tên này KHÔNG có trong `buildToolRegistry()` và không được thêm vào đó. `runTurn` chặn lời gọi
+ * này trước khi tới lớp thực thi; `resolveCallable()` vẫn phải từ chối nó. Nhét một
+ * `ToolDefinition` giả vào registry để nó "lọt qua" đúng là đường vòng mà comment trong
+ * `AtlassianMcpManager.callTool` cảnh báo.
+ */
+export const EXPAND_TOOLS_TOOL_NAME = 'nexa_mo_rong_tool'

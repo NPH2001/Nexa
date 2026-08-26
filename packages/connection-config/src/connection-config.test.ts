@@ -456,6 +456,21 @@ describe('SettingsService — policy precedence', () => {
     expect(settings.lockedFeatureNames()).toContain('jiraCreate')
   })
 
+  it('lets the organisation force tool scoping off — đường rollback của ADR 0009', () => {
+    // Rollback cho cơ chế thu hẹp danh mục tool phải làm được bằng phân phối lại policy.json,
+    // không cần build lại app. Cờ `toolScoping` đi qua đúng cơ chế forcedFeatures chung, nên
+    // test này khẳng định nó không cần đường riêng nào.
+    const { settings } = makeServices({ forcedFeatures: { toolScoping: false } })
+    const updated = settings.update({ features: { toolScoping: true } as never })
+    expect(updated.features.toolScoping).toBe(false)
+    expect(settings.lockedFeatureNames()).toContain('toolScoping')
+  })
+
+  it('mặc định bật thu hẹp danh mục tool khi policy không nói gì', () => {
+    const { settings } = makeServices({})
+    expect(settings.get().features.toolScoping).toBe(true)
+  })
+
   it('caps history retention at the organisation limit', () => {
     const { settings } = makeServices({ maxHistoryRetentionDays: 90 })
     expect(settings.update({ historyRetentionDays: 3650 }).historyRetentionDays).toBe(90)

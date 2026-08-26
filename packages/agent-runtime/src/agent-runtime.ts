@@ -1,6 +1,8 @@
 import {
   ERROR_CODES,
+  EXPAND_TOOLS_TOOL_NAME,
   NexaError,
+  TOOL_PRESET_FLAGS,
   type ApprovalStatus,
   type AppSettings,
   type ConfirmationRequest,
@@ -9,6 +11,7 @@ import {
   type OperationStatus,
   type RiskLevel,
   type ToolDefinition,
+  type ToolPreset,
   type ToolPreview,
 } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
@@ -25,6 +28,7 @@ import { buildContext, toolResultMessage, type ContextBudget } from './context-b
 import { ConfirmationGuard, type ApprovalDecision } from './confirmation-guard.js'
 import { OperationTracker, isUncertainOutcome } from './operation-tracker.js'
 import { assertModelMayReceiveDocuments } from './document-policy.js'
+import { selectPresetForHistory } from './tool-preset-selector.js'
 
 /** Sự kiện runtime đẩy ra ngoài cho host (main process) chuyển tiếp tới UI. */
 export type RuntimeEvent =
@@ -139,7 +143,18 @@ export class AgentRuntime {
     }
 
     const messages: ChatMessage[] = [...context.messages]
-    const tools = this.buildToolSpecs()
+
+    // ADR 0009 — chỉ gửi preset tool phù hợp câu hỏi, không phải cả 98 tool mỗi vòng.
+    // `tools` phải gán lại được: model có thể xin danh mục đầy đủ giữa lượt qua tool meta.
+    const scoping = settings.features.toolScoping
+    let preset: ToolPreset = scoping ? selectPresetForHistory(input.history) : 'all'
+    let tools = this.buildToolSpecs(preset, scoping && preset !== 'all')
+    this.log.info('tool-preset', {
+      requestId: input.requestId,
+      preset,
+      toolCount: tools.length,
+      expanded: false,
+    })
 
     let finalText = ''
     let usage: TokenUsage | undefined
@@ -170,6 +185,29 @@ export class AgentRuntime {
       for (const call of turn.toolCalls) {
         input.signal?.throwIfAborted()
         toolCallCount++
+
+        if (call.function.name === EXPAND_TOOLS_TOOL_NAME) {
+          // Chặn ở ĐÂY, không trong executeToolCall: tên này không có trong registry nên
+          // `resolveCallable()` sẽ — và phải — từ chối nó. Cách "sửa" bằng cách nhét một
+          // ToolDefinition giả vào registry đúng là đường vòng mà comment trong
+          // `AtlassianMcpManager.callTool` cảnh báo. Cổng bảo mật ở dưới không đổi một dòng.
+          //
+          // Lời gọi này không phải thao tác lên hệ thống đích mà lên chính request: không
+          // preview, không xác nhận, không operation_id, không ghi ToolCallSink, và không
+          // chiếm hạn mức một-write-mỗi-lượt (vì `continue` bỏ qua toàn bộ đường write).
+          messages.push(toolResultMessage(call.id, this.buildCatalogListing()))
+          if (preset !== 'all') {
+            preset = 'all'
+            tools = this.buildToolSpecs('all', false)
+            this.log.info('tool-preset', {
+              requestId: input.requestId,
+              preset,
+              toolCount: tools.length,
+              expanded: true,
+            })
+          }
+          continue
+        }
 
         const outcome = await this.executeToolCall(call, input, writesThisTurn)
         if (outcome.wasWrite) writesThisTurn++
@@ -552,18 +590,82 @@ export class AgentRuntime {
   }
 
   /** Danh sách tool gửi cho model — chỉ những tool thực sự khả dụng lúc này (§10.1). */
-  private buildToolSpecs(): ChatToolSpec[] {
+  /**
+   * Khối `tools` cho một vòng (ADR 0009).
+   *
+   * Lọc chạy SAU `availableTools()` — tức sau feature flag và sau "server có công bố tool này
+   * không". Preset chỉ thu hẹp cái model THẤY, không bao giờ nới cái được phép CHẠY.
+   *
+   * Sort theo tên là bắt buộc, không phải cho đẹp: khối `tools` nằm ở đầu request nên nó là
+   * prefix của prompt, và prompt cache chỉ dùng lại được khi prefix giống nhau từng byte. Thứ tự
+   * registry vốn đã ổn định, nhưng đó là hệ quả tình cờ của thứ tự bốn hàm `build*Tools()` —
+   * sort tường minh biến nó thành thứ được test khẳng định. Áp dụng cho cả nhánh cờ tắt.
+   */
+  private buildToolSpecs(preset: ToolPreset, includeExpandTool: boolean): ChatToolSpec[] {
     const mcp = this.deps.mcp
     if (mcp === null || !mcp.isReady) return []
-    return mcp.availableTools().map((definition) => ({
-      type: 'function' as const,
-      function: {
-        name: definition.name,
-        description: definition.description,
-        parameters: definition.jsonSchema,
-      },
-    }))
+
+    const allowedFlags = new Set<string>(TOOL_PRESET_FLAGS[preset])
+    const specs: ChatToolSpec[] = mcp
+      .availableTools()
+      .filter((definition) => allowedFlags.has(definition.requiredFeature))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      .map((definition) => ({
+        type: 'function' as const,
+        function: {
+          name: definition.name,
+          description: definition.description,
+          parameters: definition.jsonSchema,
+        },
+      }))
+
+    // Không có tool nào thì không có gì để mở rộng — thêm tool meta chỉ gây nhiễu.
+    if (includeExpandTool && specs.length > 0) specs.push(EXPAND_TOOLS_SPEC)
+    return specs
   }
+
+  /**
+   * Tool result cho lời gọi mở rộng: tên + mô tả rút gọn của mọi tool ĐANG khả dụng.
+   *
+   * Rút gọn mô tả có chủ ý — mục đích là để model biết tool nào TỒN TẠI; schema đầy đủ đã nằm
+   * trong khối `tools` của vòng sau.
+   */
+  private buildCatalogListing(): string {
+    const mcp = this.deps.mcp
+    const available = mcp === null || !mcp.isReady ? [] : mcp.availableTools()
+    if (available.length === 0) {
+      return 'Hiện không có công cụ nào khả dụng. Hãy trả lời bằng thông tin đã có, hoặc nói rõ với người dùng là chưa kết nối được Jira/Confluence.'
+    }
+
+    const lines = available
+      .slice()
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      .map((d) => `- ${d.name}: ${shortenDescription(d.description)}`)
+
+    return `Danh mục đầy đủ gồm ${String(lines.length)} công cụ khả dụng. Từ vòng này bạn gọi được mọi công cụ trong danh sách:\n${lines.join('\n')}`
+  }
+}
+
+/**
+ * Tool meta cho phép model tự xin danh mục đầy đủ khi preset hẹp không đủ (ADR 0009).
+ *
+ * Mô tả viết ở thể mệnh lệnh vì rủi ro lớn nhất của cả cơ chế là model KHÔNG gọi nó mà chỉ trả
+ * lời "tôi không có công cụ phù hợp" — biến một câu hỏi làm được thành một lời từ chối âm thầm.
+ */
+const EXPAND_TOOLS_SPEC: ChatToolSpec = {
+  type: 'function',
+  function: {
+    name: EXPAND_TOOLS_TOOL_NAME,
+    description:
+      'Lấy danh mục đầy đủ các công cụ khả dụng. Danh sách công cụ bạn đang thấy đã được thu hẹp theo câu hỏi, nên có thể thiếu công cụ bạn cần. Hãy gọi hàm này NGAY khi không thấy công cụ phù hợp — đừng nói với người dùng là không làm được, và đừng giải thích gì trước khi gọi.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  },
+}
+
+/** Một dòng, tối đa 120 ký tự — đủ để model nhận ra tool, không đủ để tốn token. */
+function shortenDescription(description: string): string {
+  const firstLine = description.split('\n')[0]?.trim() ?? ''
+  return firstLine.length <= 120 ? firstLine : `${firstLine.slice(0, 117)}...`
 }
 
 /** Model đôi khi trả arguments rỗng hoặc JSON hỏng. Không được để nó ném ra ngoài vòng lặp. */

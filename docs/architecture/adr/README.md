@@ -2,7 +2,7 @@
 
 Mỗi file ghi một quyết định kiến trúc: bối cảnh, lựa chọn, hệ quả.
 
-**Trạng thái: 1/8 đã được chốt.** Bảy ADR còn lại vẫn là `Đề xuất` — chúng là giả định tôi đã
+**Trạng thái: 1/9 đã được chốt.** Tám ADR còn lại vẫn là `Đề xuất` — chúng là giả định tôi đã
 dùng để viết code, không phải quyết định đã được tổ chức thông qua.
 Câu hỏi tương ứng nằm ở [`docs/OPEN-QUESTIONS.md`](../../OPEN-QUESTIONS.md).
 
@@ -16,6 +16,7 @@ Câu hỏi tương ứng nằm ở [`docs/OPEN-QUESTIONS.md`](../../OPEN-QUESTIO
 | [0006](0006-tool-calling-loop.md) | Ràng buộc vòng lặp tool-calling | Đề xuất | B3 |
 | [0007](0007-approval-binding.md) | Approval gắn payload hash, dùng một lần | Đề xuất | B7, B8 |
 | [0008](0008-controlled-http-mcp-transport.md) | Thêm transport HTTP remote cho MCP Atlassian, có kiểm soát | Đề xuất | A4 🔴 |
+| [0009](0009-tool-preset-scoping.md) | Thu hẹp danh mục tool theo ngữ cảnh bằng preset cố định | Đề xuất | H1 |
 
 ## Cách dùng
 

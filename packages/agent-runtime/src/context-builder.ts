@@ -1,6 +1,6 @@
 import type { ChatMessage } from '@nexa/llm-client'
 import { estimateTokens, type ProcessedDocument } from '@nexa/document-processor'
-import type { MessageRole } from '@nexa/shared-types'
+import { EXPAND_TOOLS_TOOL_NAME, type MessageRole } from '@nexa/shared-types'
 
 /**
  * Dựng context gửi cho model (§7.1 bước 4, §7.2 bước 5).
@@ -19,6 +19,7 @@ Nguyên tắc bắt buộc:
 - Trả lời bằng tiếng Việt, ngắn gọn và chính xác.
 - Chỉ dùng thông tin có trong hội thoại, trong tài liệu người dùng đính kèm, hoặc do công cụ trả về. Không suy đoán về dữ liệu nội bộ.
 - Khi cần dữ liệu Jira hoặc Confluence, hãy gọi công cụ tương ứng thay vì đoán.
+- Danh sách công cụ bạn nhận được có thể đã được thu hẹp theo câu hỏi. Nếu không thấy công cụ phù hợp, hãy gọi ${EXPAND_TOOLS_TOOL_NAME} để lấy danh mục đầy đủ, đừng kết luận là không làm được.
 - Mọi thao tác thay đổi dữ liệu đều phải được người dùng xác nhận; bạn chỉ đề xuất, không tự quyết.
 - Nếu không đủ thông tin để trả lời, hãy nói rõ là không biết và nêu cần thêm gì.`
 

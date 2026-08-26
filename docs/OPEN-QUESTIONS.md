@@ -4,7 +4,7 @@
 > từ bên ngoài (admin LiteLLM, admin Atlassian, ATTT).
 > Mỗi mục có: câu hỏi → **giả định tôi đã dùng để code** → chỗ cần sửa nếu bạn quyết khác.
 >
-> Cập nhật lần cuối: 2026-08-23 (vòng remediation 2 — policy OpenAI và MCP lifecycle)
+> Cập nhật lần cuối: 2026-08-26 (thu hẹp danh mục tool theo ngữ cảnh — ADR 0009, mục H)
 
 ## Cách đọc
 
@@ -700,3 +700,83 @@ năng nếu tổ chức có policy riêng.
 **Việc cần bạn/ATTT quyết định tiếp:** có cần đặt `forcedFeatures` trong `policy.json` để giữ các
 tổ chức chưa sẵn sàng ở mức mặc định cũ (an toàn hơn) không, và §10.1/§22.3 của tài liệu thiết kế
 gốc có cần cập nhật để phản ánh thực tế mới này không.
+
+---
+
+## H. Thu hẹp danh mục tool theo ngữ cảnh (2026-08-26, ADR 0009)
+
+Bối cảnh: `buildToolSpecs()` gửi cả 98 tool ở **mỗi vòng** của vòng lặp tool-calling. Đo trên
+`buildToolRegistry()` — đúng những gì Nexa gửi — là **~10.661 token mỗi vòng**, nhân với
+`maxToolIterations` (mặc định 5). ADR 0009 chốt thu hẹp thành sáu preset cố định, chọn bằng một
+hàm thuần xác định, kèm tool meta `nexa_mo_rong_tool` để model tự xin danh mục đầy đủ.
+
+Đã có: `toolScoping` trong `featureFlagsSchema` (mặc định **bật**), khoá được bằng
+`forcedFeatures` trong `resources/policy.json`.
+
+### H1. 🟠 Ngưỡng nào coi là bộ chọn preset hỏng?
+
+**Câu hỏi:** Tỉ lệ mở rộng (`tool-preset` với `expanded: true` / tổng số lượt) bao nhiêu phần trăm
+thì kết luận bộ chọn sai nhiều hơn giá trị nó mang lại, và tắt `toolScoping`?
+
+**Giả định đã dùng:** không có ngưỡng nào được cài trong code. Log ghi đủ số liệu để tính, nhưng
+việc đọc và quyết định là thủ công. Chưa có cơ sở để chốt trước pilot — cần phân bố preset trên
+câu hỏi thật.
+
+**Rủi ro thật cần để mắt:** rủi ro lớn nhất **không** phải mở rộng quá nhiều mà là model **không**
+gọi tool meta, chỉ trả lời "tôi không có công cụ phù hợp". Nó biến một câu hỏi làm được thành một
+lời từ chối, âm thầm, và **không để lại dấu vết lỗi nào trong log**. Dấu hiệu: preset hẹp có tỉ lệ
+mở rộng gần 0 trong khi người dùng vẫn báo trợ lý nói không làm được. Nếu gặp, tắt `toolScoping`
+trước, điều tra sau.
+
+**Sửa ở đâu nếu khác:** `packages/agent-runtime/src/tool-preset-selector.ts` (quy tắc chọn),
+`packages/agent-runtime/src/agent-runtime.ts` (mô tả `EXPAND_TOOLS_SPEC`),
+`packages/agent-runtime/src/context-builder.ts` (dòng trong `DEFAULT_SYSTEM_PROMPT`).
+
+---
+
+### H2. 🟡 Mở rộng có nên nhớ theo hội thoại?
+
+**Câu hỏi:** Khi một lượt đã phải mở rộng, lượt sau trong cùng hội thoại có nên bỏ qua bộ chọn?
+
+**Giả định đã dùng:** **không**. Mở rộng chỉ có phạm vi một lượt; lượt sau lại bắt đầu từ bộ chọn.
+Lý do: `AgentRuntime` hiện không giữ trạng thái nào giữa các lượt, và thêm trạng thái đầu tiên vào
+đó cần lý do mạnh hơn "tiết kiệm một round-trip đôi khi".
+
+**Sửa ở đâu nếu khác:** `runTurn` trong `packages/agent-runtime/src/agent-runtime.ts` — cần một
+map theo `conversationId`, và cần quyết định khi nào xoá nó.
+
+---
+
+### H3. 🟡 `jiraServiceDesk` có nên là preset riêng?
+
+**Câu hỏi:** JSM (5 tool) là miền nghiệp vụ khác hẳn, hiện bị gộp vào `jira-full`. Có nên tách?
+
+**Giả định đã dùng:** **không tách**. 5 tool ≈ 300 token, chưa đáng thêm một preset (mỗi preset là
+thêm một prefix mà prompt cache phải giữ). Tổ chức không dùng JSM thì cách đúng là **tắt cờ
+`jiraServiceDesk`**, không phải thêm preset.
+
+**Sửa ở đâu nếu khác:** `TOOL_PRESET_FLAGS` trong `packages/shared-types/src/tools.ts`, và cập
+nhật số 6 trong `tool-preset.test.ts`.
+
+---
+
+### H4. 🟡 Hai bẫy bỏ dấu tiếng Việt — danh sách hiện tại đã đủ chưa?
+
+**Bối cảnh:** bộ chọn bỏ dấu trước khi khớp từ khoá, và việc đó sinh ra trùng lặp thật:
+
+| Cụm | Bỏ dấu thành | Trùng với | Đã xử lý |
+| --- | --- | --- | --- |
+| "trạng thái" | `trang thai` | `trang` (dấu hiệu Confluence) | gỡ cụm trước khi khớp |
+| "hoạt động" | `hoat dong` | `dong` ("đóng" — động từ write) | **bỏ** `dong` khỏi danh sách |
+| "gần đây" | `gan day` | `gan` ("gán" — động từ write) | **bỏ** `gan` khỏi danh sách |
+
+**Câu hỏi:** còn cụm nào tương tự trong câu hỏi thật của người dùng? Danh sách này được xây từ suy
+luận, không từ dữ liệu.
+
+**Giả định đã dùng:** ba trường hợp trên là đủ cho pilot, và mọi trường hợp trượt đều được đường
+mở rộng che. Sau pilot nên rà lại bằng chính câu hỏi thật — nhưng **log không ghi câu hỏi** (đúng
+`threat-model.md`), nên việc rà này cần người dùng cung cấp ví dụ, không lấy được từ log.
+
+**Sửa ở đâu nếu khác:** `WRITE_WORDS`, `CONFLUENCE_WORDS`, `CONFLUENCE_FALSE_FRIENDS` trong
+`packages/agent-runtime/src/tool-preset-selector.ts` — mỗi thay đổi cần một ca test tương ứng
+trong `tool-preset-selector.test.ts`.

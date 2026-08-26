@@ -6,12 +6,14 @@ import {
   type AppSettings,
   type ApprovalStatus,
   type ConfirmationRequest,
+  type MessageRole,
   type OperationStatus,
   type RiskLevel,
   type ToolPreview,
 } from '@nexa/shared-types'
 import { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
 import { computePayloadHash } from '@nexa/security'
+import { EXPAND_TOOLS_TOOL_NAME } from '@nexa/shared-types'
 import {
   AgentRuntime,
   ConfirmationGuard,
@@ -74,7 +76,10 @@ interface Harness {
   /** Ghi lại mọi ConfirmationRequest UI nhận được. */
   confirmations: ConfirmationRequest[]
   emitted: unknown[]
-  run(overrides?: { signal?: AbortSignal }): Promise<Awaited<ReturnType<AgentRuntime['runTurn']>>>
+  run(overrides?: {
+    signal?: AbortSignal
+    history?: readonly { role: MessageRole; content: string }[]
+  }): Promise<Awaited<ReturnType<AgentRuntime['runTurn']>>>
 }
 
 const managers: AtlassianMcpManager[] = []
@@ -816,5 +821,299 @@ describe('mayReceiveDocuments (dùng cho UI)', () => {
         expect(allowedByHelper).toBe(allowedByAssert)
       }
     }
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADR 0009 — thu hẹp danh mục tool theo ngữ cảnh
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Tên tool trong khối `tools` của request thứ `index`. */
+function toolNames(h: Harness, index = 0): string[] {
+  return (h.llm.requests[index]?.tools ?? []).map((t) => t.function.name)
+}
+
+const HOI_JIRA_READ = 'Cho tôi xem issue PRJ-1 đang ở trạng thái nào'
+const HOI_CONFLUENCE_READ = 'Tìm trang wiki về quy trình onboarding'
+const HOI_KHONG_TIN_HIEU = 'Tóm tắt đoạn văn này giúp tôi'
+
+describe('ADR 0009 — preset quyết định khối `tools`', () => {
+  it('câu hỏi Jira chỉ tra cứu ⇒ không gửi tool Confluence và không gửi tool write', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    const names = toolNames(h)
+    expect(names).toContain('jira_get_issue')
+    expect(names).toContain('jira_search')
+    expect(names).not.toContain('jira_create_issue')
+    expect(names).not.toContain('jira_update_issue')
+    expect(names).not.toContain('confluence_get_page')
+  })
+
+  it('câu hỏi Confluence chỉ tra cứu ⇒ không gửi tool Jira', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({ history: [{ role: 'user', content: HOI_CONFLUENCE_READ }] })
+
+    const names = toolNames(h)
+    expect(names).toContain('confluence_get_page')
+    expect(names).toContain('confluence_search')
+    expect(names).not.toContain('jira_get_issue')
+  })
+
+  it('câu hỏi có ý định write ⇒ gửi cả tool write của đúng hệ đó', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({ history: [{ role: 'user', content: 'Tạo một issue mới trong Jira' }] })
+
+    const names = toolNames(h)
+    expect(names).toContain('jira_create_issue')
+    expect(names).toContain('jira_update_issue')
+    expect(names).not.toContain('confluence_get_page')
+  })
+
+  it('câu hỏi không có tín hiệu hệ đích ⇒ read của cả hai hệ, không tool write nào', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({ history: [{ role: 'user', content: HOI_KHONG_TIN_HIEU }] })
+
+    const names = toolNames(h)
+    expect(names).toContain('jira_get_issue')
+    expect(names).toContain('confluence_get_page')
+    expect(names).not.toContain('jira_create_issue')
+    expect(names).not.toContain('jira_update_issue')
+  })
+
+  it('hai câu hỏi khác nhau cùng preset ⇒ khối `tools` giống nhau hoàn toàn (prefix ổn định)', async () => {
+    // Đây là bất biến giữ cho prompt cache còn dùng lại được. Nếu ai đó biến preset thành động,
+    // test này đỏ. Xem ADR 0009.
+    const a = await makeHarness({ script: [{ text: 'ok' }] })
+    await a.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    const b = await makeHarness({ script: [{ text: 'ok' }] })
+    await b.run({ history: [{ role: 'user', content: 'Liệt kê các bug trong sprint này' }] })
+
+    expect(a.llm.requests[0]?.tools).toEqual(b.llm.requests[0]?.tools)
+  })
+
+  it('thứ tự tool được sort theo tên, kể cả khi cờ thu hẹp bị tắt', async () => {
+    const h = await makeHarness({
+      script: [{ text: 'ok' }],
+      settings: { features: { ...DEFAULT_APP_SETTINGS.features, toolScoping: false } },
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    const names = toolNames(h)
+    expect(names).toEqual([...names].sort())
+  })
+
+  it('preset không nới quyền: cờ tắt thì tool vẫn không xuất hiện dù preset chứa nhóm đó', async () => {
+    const h = await makeHarness({
+      script: [{ text: 'ok' }],
+      settings: { features: { ...DEFAULT_APP_SETTINGS.features, jiraCreate: false } },
+    })
+    await h.run({ history: [{ role: 'user', content: 'Tạo một issue mới trong Jira' }] })
+
+    const names = toolNames(h)
+    expect(names).not.toContain('jira_create_issue')
+    expect(names).toContain('jira_update_issue')
+  })
+
+  it('tắt cờ thu hẹp ⇒ gửi toàn bộ tool khả dụng như trước ADR 0009', async () => {
+    const h = await makeHarness({
+      script: [{ text: 'ok' }],
+      settings: { features: { ...DEFAULT_APP_SETTINGS.features, toolScoping: false } },
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    const names = toolNames(h)
+    expect(names).toContain('jira_get_issue')
+    expect(names).toContain('jira_create_issue')
+    expect(names).toContain('confluence_get_page')
+    expect(names).not.toContain(EXPAND_TOOLS_TOOL_NAME)
+  })
+
+  it('ghi log preset và số tool, không ghi nội dung câu hỏi', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({
+      history: [{ role: 'user', content: `${HOI_JIRA_READ} MARKER-BI-MAT-KHONG-DUOC-LOG` }],
+    })
+
+    const entry = h.logSink.records.find((r) => r.event === 'tool-preset')
+    expect(entry?.fields).toMatchObject({ preset: 'jira-read', expanded: false })
+    expect(entry?.fields?.toolCount).toBeGreaterThan(0)
+    expect(h.logSink.asText()).not.toContain('MARKER-BI-MAT-KHONG-DUOC-LOG')
+  })
+})
+
+describe('ADR 0009 — mở rộng danh mục qua tool meta', () => {
+  it('preset hẹp có tool meta, preset đầy đủ thì không', async () => {
+    const hep = await makeHarness({ script: [{ text: 'ok' }] })
+    await hep.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+    expect(toolNames(hep)).toContain(EXPAND_TOOLS_TOOL_NAME)
+
+    const day = await makeHarness({ script: [{ text: 'ok' }] })
+    await day.run({
+      history: [{ role: 'user', content: 'Đọc bug trong sprint rồi tạo một trang Confluence' }],
+    })
+    expect(toolNames(day)).not.toContain(EXPAND_TOOLS_TOOL_NAME)
+  })
+
+  it('gọi tool meta ⇒ vòng sau nhận toàn bộ tool khả dụng', async () => {
+    const h = await makeHarness({
+      script: [
+        { toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] },
+        { text: 'Giờ tôi thấy đủ công cụ' },
+      ],
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    expect(toolNames(h, 0)).not.toContain('confluence_get_page')
+    const sau = toolNames(h, 1)
+    expect(sau).toContain('confluence_get_page')
+    expect(sau).toContain('jira_create_issue')
+    expect(sau).not.toContain(EXPAND_TOOLS_TOOL_NAME)
+  })
+
+  it('lời gọi meta không đi tới MCP: tool result là danh mục, không phải lỗi tool lạ', async () => {
+    const h = await makeHarness({
+      script: [{ toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] }, { text: 'xong' }],
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    const messages = h.llm.requests[1]?.messages ?? []
+    const toolResult = messages[messages.length - 1]
+    expect(toolResult?.role).toBe('tool')
+    expect(String(toolResult?.content)).toContain('Danh mục đầy đủ')
+    expect(String(toolResult?.content)).not.toContain('unknown tool')
+    expect(String(toolResult?.content)).not.toContain('Lỗi')
+  })
+
+  it('tên meta không có trong registry và vẫn bị cổng thực thi từ chối', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    expect(h.mcp.findTool(EXPAND_TOOLS_TOOL_NAME)).toBeNull()
+    expect(() => h.mcp.resolveCallable(EXPAND_TOOLS_TOOL_NAME)).toThrowError(
+      expect.objectContaining({ code: ERROR_CODES.TOOL_NOT_ALLOWED }),
+    )
+  })
+
+  it('lời gọi meta không sinh xác nhận, không bản ghi tool call, không operation', async () => {
+    const h = await makeHarness({
+      script: [{ toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] }, { text: 'xong' }],
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    expect(h.confirmations).toHaveLength(0)
+    expect(h.sink.records).toHaveLength(0)
+  })
+
+  it('gọi meta hai lần trong một lượt không ném lỗi', async () => {
+    const h = await makeHarness({
+      script: [
+        { toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] },
+        { toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] },
+        { text: 'xong' },
+      ],
+    })
+    const result = await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    expect(result.text).toBe('xong')
+    expect(result.toolCallCount).toBe(2)
+  })
+
+  it('lời gọi meta không chiếm hạn mức một write mỗi lượt', async () => {
+    const h = await makeHarness({
+      script: [
+        {
+          toolCalls: [
+            { name: EXPAND_TOOLS_TOOL_NAME, args: {} },
+            {
+              name: 'jira_create_issue',
+              args: { project_key: 'PRJ', summary: 'Sau khi mở rộng', issue_type: 'Task' },
+            },
+          ],
+        },
+        { text: 'đã tạo' },
+      ],
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    // Write đi qua đủ preview + xác nhận, không bị chặn bởi hạn mức.
+    expect(h.confirmations).toHaveLength(1)
+    const record = h.sink.byTool('jira_create_issue')[0]
+    expect(record?.approvalStatus).toBe('approved')
+    expect(record?.operationStatus).toBe('success')
+  })
+
+  it('mở rộng chỉ có hiệu lực trong một lượt', async () => {
+    const h = await makeHarness({
+      script: [
+        { toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] },
+        { text: 'xong lượt 1' },
+        { text: 'xong lượt 2' },
+      ],
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+    expect(toolNames(h, 1)).toContain('confluence_get_page')
+
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+    const luot2 = toolNames(h, 2)
+    expect(luot2).not.toContain('confluence_get_page')
+    expect(luot2).toContain(EXPAND_TOOLS_TOOL_NAME)
+  })
+
+  it('ghi log lần mở rộng để đo độ chính xác của bộ chọn', async () => {
+    const h = await makeHarness({
+      script: [{ toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] }, { text: 'xong' }],
+    })
+    await h.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+
+    const entries = h.logSink.records.filter((r) => r.event === 'tool-preset')
+    expect(entries).toHaveLength(2)
+    expect(entries[0]?.fields).toMatchObject({ preset: 'jira-read', expanded: false })
+    expect(entries[1]?.fields).toMatchObject({ preset: 'all', expanded: true })
+  })
+})
+
+describe('ADR 0009 — mở rộng khi chưa kết nối được MCP', () => {
+  it('trả tool result nói rõ không có công cụ nào, lượt vẫn tiếp tục thay vì lỗi', async () => {
+    const { logger } = testLogger()
+    const llm = new FakeLlmClient([
+      { toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] },
+      { text: 'Chưa kết nối được Jira/Confluence' },
+    ])
+    const sink = new MemoryToolCallSink()
+    const confirmations: ConfirmationRequest[] = []
+
+    const runtime = new AgentRuntime({
+      llm: llm.asClient(),
+      // Người dùng chưa cấu hình Atlassian — chat vẫn phải chạy được.
+      mcp: null,
+      guard: new ConfirmationGuard({ logger, ttlSeconds: 120 }),
+      tracker: new OperationTracker(logger),
+      logger,
+      settings: () => DEFAULT_APP_SETTINGS,
+      actingAccount: () => ACCOUNT,
+      jiraBaseUrl: () => JIRA_URL,
+      confluenceBaseUrl: () => CONFLUENCE_URL,
+      requestConfirmation: (request) => {
+        confirmations.push(request)
+        return Promise.resolve('cancelled')
+      },
+    })
+
+    const result = await runtime.runTurn({
+      requestId: 'req_no_mcp',
+      conversationId: '00000000-0000-4000-8000-000000000003',
+      modelId: 'model-a',
+      modelProvider: 'litellm',
+      contextWindowTokens: 128_000,
+      history: [{ role: 'user', content: 'Cho tôi xem issue PRJ-1' }],
+      emit: () => undefined,
+      toolCalls: sink,
+    })
+
+    expect(result.text).toBe('Chưa kết nối được Jira/Confluence')
+    const messages = llm.requests[1]?.messages ?? []
+    expect(String(messages[messages.length - 1]?.content)).toContain('không có công cụ nào khả dụng')
+    expect(sink.records).toHaveLength(0)
+    expect(confirmations).toHaveLength(0)
   })
 })

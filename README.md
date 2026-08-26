@@ -129,6 +129,17 @@ source-only và dependency đã hoist. CI thực thi cùng contract này; đóng
 dùng không sửa được. Dùng để đặt allowlist domain, tắt hoàn toàn OpenAI trực tiếp bằng
 `allowDirectOpenAi: false`, khoá feature flag, đặt trần retention và URL version manifest.
 
+**Thu hẹp danh mục tool** — cờ `toolScoping`, mặc định **bật** (ADR 0009). Mỗi lượt chỉ gửi cho
+model một trong sáu preset tool thay vì cả 98, giảm 36–82% token khối `tools` (98 tool ≈ 10.661
+token mỗi vòng, nhân với `maxToolIterations`). Model tự xin danh mục đầy đủ bằng cách gọi
+`nexa_mo_rong_tool`, nên thu hẹp không chặn được việc gì. Đây **không** phải cờ quyền: nó đổi cái
+model *thấy*, không đổi cái được phép *chạy*. Tắt toàn tổ chức bằng `forcedFeatures` trong
+`policy.json`:
+
+```json
+{ "forcedFeatures": { "toolScoping": false } }
+```
+
 **MCP Atlassian** — package chưa được chốt (OPEN-QUESTIONS A4 🔴). Ghi đè để thử package khác:
 
 ```bash

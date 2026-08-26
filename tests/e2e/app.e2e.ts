@@ -371,6 +371,55 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
   })
 })
 
+test.describe('E2E — thu hẹp danh mục tool theo ngữ cảnh (ADR 0009)', () => {
+  test('câu hỏi Confluence chỉ gửi tool Confluence, kèm đường mở rộng', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+
+      // Cấu hình Jira để MCP khởi động được — mock MCP công bố cả tool Jira lẫn Confluence,
+      // nên đây đúng là tình huống preset phải lọc bớt.
+      await h.page.getByRole('tab', { name: 'Jira' }).click()
+      await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
+      await h.page
+        .getByLabel('Tên đăng nhập')
+        .or(h.page.locator('.field input').nth(1))
+        .fill('nguyen.van.a')
+      await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
+      await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Tìm trang wiki về quy trình onboarding')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+      await expect(h.page.getByText('Xin chào, đây là câu trả lời từ mock LiteLLM.')).toBeVisible({
+        timeout: 25_000,
+      })
+
+      const received = (await (
+        await fetch(`http://127.0.0.1:${String(h.litellmPort)}/__received`)
+      ).json()) as { url: string; body: string }[]
+
+      const chat = received.filter((r) => r.url === '/v1/chat/completions')
+      expect(chat.length).toBeGreaterThan(0)
+      const tools = (JSON.parse(chat[chat.length - 1]?.body ?? '{}') as {
+        tools?: { function: { name: string } }[]
+      }).tools
+      const names = (tools ?? []).map((t) => t.function.name)
+
+      expect(names).toContain('confluence_get_page')
+      expect(names).toContain('confluence_search')
+      // Đây là điểm của cả ADR 0009: tool Jira tồn tại và được phép, nhưng không được gửi đi.
+      expect(names).not.toContain('jira_get_issue')
+      expect(names).not.toContain('jira_create_issue')
+      // Và model luôn có đường lấy lại danh mục đầy đủ.
+      expect(names).toContain('nexa_mo_rong_tool')
+    } finally {
+      await h.close()
+    }
+  })
+})
+
 test.describe('E2E — lịch sử tồn tại qua các lần khởi động', () => {
   test('hội thoại được lưu và đọc lại sau khi mở lại app', async () => {
     const first = await launch()
