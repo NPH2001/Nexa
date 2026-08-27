@@ -102,6 +102,29 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     return commitment
   }
 
+  const requireCheckInForCurrentProfile = (id: string) => {
+    const checkIn = services.checkInState.get(id)
+    if (checkIn === null || checkIn.profileId !== services.profileId) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'check-in suggestion not found for current profile',
+      })
+    }
+    return checkIn
+  }
+
+  const recordLocalMutation = (input: {
+    type: 'memory_mutation' | 'commitment_mutation'
+    action: 'created' | 'updated' | 'archived' | 'restored' | 'deleted'
+    subjectType: 'memory' | 'commitment'
+    subjectId: string
+  }): void => {
+    services.activity.record({
+      profileId: services.profileId,
+      status: 'success',
+      ...input,
+    })
+  }
+
   const changesMcpConnection = (type: string): boolean =>
     type === 'jira' || type === 'confluence' || type === 'mcpGateway'
 
@@ -220,8 +243,8 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     // ── Memory ────────────────────────────────────────────────────────────
     'memory:list': (input) =>
       services.memory.list(services.profileId, { includeArchived: input.includeArchived }),
-    'memory:create': (input) =>
-      services.memory.create({
+    'memory:create': (input) => {
+      const fact = services.memory.create({
         profileId: services.profileId,
         content: input.content,
         kind: input.kind,
@@ -232,10 +255,18 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         // đóng dấu mặc định để renderer không phải là nguồn sự thật cho thời điểm xác nhận.
         lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
         expiresAt: input.expiresAt,
-      }),
+      })
+      recordLocalMutation({
+        type: 'memory_mutation',
+        action: 'created',
+        subjectType: 'memory',
+        subjectId: fact.id,
+      })
+      return fact
+    },
     'memory:update': (input) => {
       requireMemoryFactForCurrentProfile(input.id)
-      return services.memory.update(input.id, {
+      const fact = services.memory.update(input.id, {
         content: input.content,
         kind: input.kind,
         scope: input.scope,
@@ -244,20 +275,45 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
         expiresAt: input.expiresAt,
       })
+      recordLocalMutation({
+        type: 'memory_mutation',
+        action: 'updated',
+        subjectType: 'memory',
+        subjectId: fact.id,
+      })
+      return fact
     },
     'memory:archive': (input) => {
       requireMemoryFactForCurrentProfile(input.id)
       services.memory.archive(input.id)
+      recordLocalMutation({
+        type: 'memory_mutation',
+        action: 'archived',
+        subjectType: 'memory',
+        subjectId: input.id,
+      })
       return { ok: true }
     },
     'memory:restore': (input) => {
       requireMemoryFactForCurrentProfile(input.id)
       services.memory.restore(input.id)
+      recordLocalMutation({
+        type: 'memory_mutation',
+        action: 'restored',
+        subjectType: 'memory',
+        subjectId: input.id,
+      })
       return { ok: true }
     },
     'memory:delete': (input) => {
       requireMemoryFactForCurrentProfile(input.id)
       services.memory.delete(input.id)
+      recordLocalMutation({
+        type: 'memory_mutation',
+        action: 'deleted',
+        subjectType: 'memory',
+        subjectId: input.id,
+      })
       return { ok: true }
     },
 
@@ -266,8 +322,8 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       services.commitments.list(services.profileId, {
         includeCompleted: input.includeCompleted,
       }),
-    'commitment:create': (input) =>
-      services.commitments.create({
+    'commitment:create': (input) => {
+      const commitment = services.commitments.create({
         profileId: services.profileId,
         title: input.title,
         nextAction: input.nextAction,
@@ -275,10 +331,19 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         dueAt: input.dueAt,
         checkInAt: input.checkInAt,
         sourceConversationId: input.sourceConversationId,
-      }),
+      })
+      recordLocalMutation({
+        type: 'commitment_mutation',
+        action: 'created',
+        subjectType: 'commitment',
+        subjectId: commitment.id,
+      })
+      services.checkIns.reconcile()
+      return commitment
+    },
     'commitment:update': (input) => {
       requireCommitmentForCurrentProfile(input.id)
-      return services.commitments.update(input.id, {
+      const commitment = services.commitments.update(input.id, {
         title: input.title,
         nextAction: input.nextAction,
         status: input.status,
@@ -286,12 +351,56 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         checkInAt: input.checkInAt,
         sourceConversationId: input.sourceConversationId,
       })
+      recordLocalMutation({
+        type: 'commitment_mutation',
+        action: 'updated',
+        subjectType: 'commitment',
+        subjectId: commitment.id,
+      })
+      services.checkIns.reconcile()
+      return commitment
     },
     'commitment:delete': (input) => {
       requireCommitmentForCurrentProfile(input.id)
       services.commitments.delete(input.id)
+      recordLocalMutation({
+        type: 'commitment_mutation',
+        action: 'deleted',
+        subjectType: 'commitment',
+        subjectId: input.id,
+      })
       return { ok: true }
     },
+
+    // ── Proactive check-ins ─────────────────────────────────────────────
+    'checkin:list': () => services.checkIns.list(),
+    'checkin:setEnabled': (input) => {
+      services.settings.update({ proactiveCheckInsEnabled: input.enabled })
+      services.checkIns.reconfigure()
+      return services.checkIns.list()
+    },
+    'checkin:respond': (input) => {
+      requireCheckInForCurrentProfile(input.id)
+      return services.checkIns.respond(input.id, input.action, input.snoozeMinutes)
+    },
+    'checkin:unmute': (input) => {
+      requireCommitmentForCurrentProfile(input.commitmentId)
+      return { suggestion: services.checkIns.unmute(input.commitmentId) }
+    },
+
+    // ── Agent activity ──────────────────────────────────────────────────
+    'activity:list': (input) =>
+      services.activity
+        .list(services.profileId, {
+          type: input.type,
+          status: input.status,
+          limit: input.limit,
+          offset: input.offset,
+        })
+        .map((event) => ({
+          ...event,
+          subjectLabel: resolveActivitySubjectLabel(services, event.subjectType, event.subjectId),
+        })),
 
     // ── Chat ──────────────────────────────────────────────────────────────
     'chat:send': (input) => chat.send(input),
@@ -337,7 +446,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
           safeDetail: 'tool has no lookup strategy',
         })
       }
-      return services.tracker.resolveUncertain(
+      const result = await services.tracker.resolveUncertain(
         input.operationId,
         definition,
         definition.lookupResult,
@@ -355,6 +464,34 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
           },
         },
       )
+      if (
+        result.status !== 'success' &&
+        result.status !== 'failed' &&
+        result.status !== 'uncertain'
+      ) {
+        throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+          operationId: input.operationId,
+          safeDetail: 'operation is not ready for uncertain-result lookup',
+        })
+      }
+      if (result.status === 'success' || result.status === 'failed') {
+        services.conversations.updateToolCall(operation.toolCallRecordId, {
+          operationStatus: result.status,
+          ...(result.targetKey !== undefined ? { targetKey: result.targetKey } : {}),
+          ...(result.targetUrl !== undefined ? { targetUrl: result.targetUrl } : {}),
+        })
+        services.guard.finishExecution(input.operationId, result.status)
+      }
+      services.activity.record({
+        profileId: services.profileId,
+        type: result.status === 'uncertain' ? 'uncertain_operation' : 'tool_result',
+        action: 'resolved',
+        status: result.status,
+        subjectType: 'tool',
+        subjectId: definition.name,
+        operationId: input.operationId,
+      })
+      return result
     },
     /**
      * §16: thao tác write còn treo từ phiên trước phải hiện lại, nếu không người dùng sẽ
@@ -376,7 +513,11 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       settings: services.settings.get(),
       lockedFeatures: services.settings.lockedFeatureNames(),
     }),
-    'settings:update': (input) => services.settings.update(input),
+    'settings:update': (input) => {
+      const updated = services.settings.update(input)
+      if (input.proactiveCheckInsEnabled !== undefined) services.checkIns.reconfigure()
+      return updated
+    },
     'policy:get': () => services.policy,
 
     // ── MCP ───────────────────────────────────────────────────────────────
@@ -416,4 +557,22 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       return { purged: true }
     },
   }
+}
+
+function resolveActivitySubjectLabel(
+  services: NexaServices,
+  subjectType: 'memory' | 'commitment' | 'tool' | null,
+  subjectId: string | null,
+): string {
+  if (subjectType === null || subjectId === null) return 'Hoạt động hệ thống'
+  if (subjectType === 'tool') return subjectId
+  if (subjectType === 'memory') {
+    const fact = services.memory.get(subjectId)
+    return fact !== null && fact.profileId === services.profileId ? 'Nexa nhớ' : 'Memory đã xoá'
+  }
+
+  const commitment = services.commitments.get(subjectId)
+  return commitment !== null && commitment.profileId === services.profileId
+    ? commitment.title
+    : 'Cam kết đã xoá'
 }

@@ -8,6 +8,14 @@ export { PROVIDER_LABELS, isExternalProvider, isProviderAllowedByPolicy } from '
 export { RETENTION_CHOICES } from './ui-constants.js'
 
 export type {
+  ActivityAction,
+  ActivityEvent,
+  ActivityStatus,
+  ActivitySubjectType,
+  ActivityType,
+  CheckInSuggestion,
+  CheckInState,
+  CheckInTriggerKind,
   Connection,
   ConnectionTestResult,
   ConnectionType,
@@ -29,6 +37,7 @@ export type {
   ChatDeltaEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  CheckInsChangedEvent,
   McpStatusEvent,
   ToolStatusEvent,
 } from './ipc.js'

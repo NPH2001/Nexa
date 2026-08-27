@@ -190,12 +190,72 @@ code {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+.today-card-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .today-list,
-.today-goals {
+.today-goals,
+.activity-list {
   list-style: none;
   padding: 0;
   margin: 0;
   display: grid;
+  gap: 8px;
+}
+.today-checkins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.today-checkin-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  padding: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
+  gap: 16px;
+}
+.today-checkin-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.today-checkin-copy strong {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.today-checkin-copy p {
+  margin: 0;
+}
+.today-checkin-next {
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: rgba(255, 255, 255, 0.04);
+}
+.today-checkin-actions {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.today-snooze-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.today-snooze-row .field {
+  margin-bottom: 0;
+}
+.today-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .today-row {
@@ -436,6 +496,69 @@ code {
   width: min(980px, 100%);
   margin-inline: auto;
 }
+.activity-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+.activity-page > * {
+  width: min(980px, 100%);
+  margin-inline: auto;
+}
+.activity-header h1 {
+  margin: 2px 0 6px;
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.2;
+}
+.activity-header p {
+  margin: 0;
+}
+.activity-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.activity-filters .field {
+  margin-bottom: 0;
+}
+.activity-panel {
+  display: grid;
+  gap: 12px;
+}
+.activity-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+.activity-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+.activity-item-head p {
+  margin: 4px 0 0;
+}
+.activity-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+.activity-meta dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.activity-meta dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
 .goals-header {
   display: flex;
   justify-content: space-between;
@@ -559,6 +682,26 @@ code {
 }
 .attention-paused {
   color: var(--text-muted);
+}
+.activity-status.status-pending {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.activity-status.status-success {
+  color: var(--success);
+  border-color: var(--success);
+}
+.activity-status.status-failed,
+.activity-status.status-cancelled {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.activity-status.status-uncertain,
+.activity-status.status-snoozed,
+.activity-status.status-muted,
+.activity-status.status-dismissed {
+  color: var(--warning);
+  border-color: var(--warning);
 }
 
 /* ── Danh sách hội thoại ──────────────────────────────────────────────── */
@@ -1294,7 +1437,10 @@ code {
   .memory-meta,
   .memory-form,
   .goal-form,
-  .goal-meta {
+  .goal-meta,
+  .activity-filters,
+  .activity-meta,
+  .today-checkin-item {
     grid-template-columns: 1fr;
   }
 
@@ -1353,6 +1499,10 @@ code {
 
   .today-grid,
   .today-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .today-snooze-row {
     grid-template-columns: 1fr;
   }
 

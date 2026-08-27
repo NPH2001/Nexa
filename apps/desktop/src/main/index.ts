@@ -37,7 +37,11 @@ function start(): void {
   registerRendererProtocol(join(app.getAppPath(), 'out', 'renderer'))
 
   try {
-    services = bootstrapServices({ isDevelopment, onMcpStatus: emitMcpStatus })
+    services = bootstrapServices({
+      isDevelopment,
+      onMcpStatus: emitMcpStatus,
+      onCheckInsChanged: emitCheckInsChanged,
+    })
   } catch (error) {
     // Fail closed (§3): không mở app khi secure storage hoặc DB không dùng được. Người dùng
     // cần một thông báo rõ ràng chứ không phải một cửa sổ trắng.
@@ -62,6 +66,7 @@ function start(): void {
   })
 
   openWindow(activeServices)
+  activeServices.checkIns.start()
   scheduleRetention(activeServices)
   scheduleUpdateCheck(activeServices)
   void startMcp(activeServices)
@@ -187,6 +192,11 @@ function scheduleUpdateCheck(activeServices: NexaServices): void {
 function emitMcpStatus(event: McpStatusEvent): void {
   if (mainWindow === null || mainWindow.isDestroyed()) return
   mainWindow.webContents.send(NEXA_EVENTS.mcpStatus, event)
+}
+
+function emitCheckInsChanged(changedAt: string): void {
+  if (mainWindow === null || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(NEXA_EVENTS.checkInsChanged, { changedAt })
 }
 
 /**

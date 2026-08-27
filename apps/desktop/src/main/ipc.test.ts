@@ -74,6 +74,15 @@ function registerHarness(getWindow: () => unknown = () => null): {
   readonly commitmentCreate: ReturnType<typeof vi.fn>
   readonly commitmentUpdate: ReturnType<typeof vi.fn>
   readonly commitmentDelete: ReturnType<typeof vi.fn>
+  readonly checkInGet: ReturnType<typeof vi.fn>
+  readonly checkInsList: ReturnType<typeof vi.fn>
+  readonly checkInsRespond: ReturnType<typeof vi.fn>
+  readonly checkInsUnmute: ReturnType<typeof vi.fn>
+  readonly checkInsReconcile: ReturnType<typeof vi.fn>
+  readonly checkInsReconfigure: ReturnType<typeof vi.fn>
+  readonly activityRecord: ReturnType<typeof vi.fn>
+  readonly activityList: ReturnType<typeof vi.fn>
+  readonly settingsUpdate: ReturnType<typeof vi.fn>
   readonly purgeProfile: ReturnType<typeof vi.fn>
   readonly purgeAllSecrets: ReturnType<typeof vi.fn>
   readonly mcpStop: ReturnType<typeof vi.fn>
@@ -107,6 +116,15 @@ function registerHarness(getWindow: () => unknown = () => null): {
     ...patch,
   }))
   const commitmentDelete = vi.fn()
+  const checkInGet = vi.fn()
+  const checkInsList = vi.fn(() => ({ enabled: false, suggestions: [] }))
+  const checkInsRespond = vi.fn()
+  const checkInsUnmute = vi.fn()
+  const checkInsReconcile = vi.fn()
+  const checkInsReconfigure = vi.fn()
+  const activityRecord = vi.fn((input) => input)
+  const activityList = vi.fn(() => [])
+  const settingsUpdate = vi.fn((patch) => patch)
   const purgeProfile = vi.fn()
   const purgeAllSecrets = vi.fn()
   const mcpStop = vi.fn()
@@ -130,6 +148,19 @@ function registerHarness(getWindow: () => unknown = () => null): {
       create: commitmentCreate,
       update: commitmentUpdate,
       delete: commitmentDelete,
+    },
+    checkInState: { get: checkInGet },
+    checkIns: {
+      list: checkInsList,
+      respond: checkInsRespond,
+      unmute: checkInsUnmute,
+      reconcile: checkInsReconcile,
+      reconfigure: checkInsReconfigure,
+    },
+    activity: { record: activityRecord, list: activityList },
+    settings: {
+      get: vi.fn(() => ({ proactiveCheckInsEnabled: false, llmTimeoutMs: 120_000 })),
+      update: settingsUpdate,
     },
     models: { resolveForConversation: modelResolve },
     connections: { save: connectionSave, delete: connectionDelete, get: vi.fn(() => null) },
@@ -167,6 +198,15 @@ function registerHarness(getWindow: () => unknown = () => null): {
     commitmentCreate,
     commitmentUpdate,
     commitmentDelete,
+    checkInGet,
+    checkInsList,
+    checkInsRespond,
+    checkInsUnmute,
+    checkInsReconcile,
+    checkInsReconfigure,
+    activityRecord,
+    activityList,
+    settingsUpdate,
     purgeProfile,
     purgeAllSecrets,
     mcpStop,
@@ -438,6 +478,15 @@ describe('registerIpc', () => {
       expiresAt: '2026-08-27T00:00:00.000Z',
     })
     expect(result).toMatchObject({ data: created })
+    expect(h.activityRecord).toHaveBeenCalledWith({
+      profileId: 'profile-test',
+      type: 'memory_mutation',
+      action: 'created',
+      status: 'success',
+      subjectType: 'memory',
+      subjectId: created.id,
+    })
+    expect(JSON.stringify(h.activityRecord.mock.calls)).not.toContain('Need dark coffee')
     expect(h.sink.asText()).not.toContain('Need dark coffee')
   })
 
@@ -514,9 +563,7 @@ describe('registerIpc', () => {
     h.commitmentList.mockReturnValueOnce([commitment])
     h.commitmentCreate.mockReturnValueOnce(commitment)
 
-    const listResult = await h.handlers
-      .get('commitment:list')
-      ?.({}, { includeCompleted: true })
+    const listResult = await h.handlers.get('commitment:list')?.({}, { includeCompleted: true })
     const createResult = await h.handlers.get('commitment:create')?.(
       {},
       {
@@ -541,6 +588,16 @@ describe('registerIpc', () => {
     })
     expect(listResult).toMatchObject({ data: [commitment] })
     expect(createResult).toMatchObject({ data: commitment })
+    expect(h.activityRecord).toHaveBeenCalledWith({
+      profileId: 'profile-test',
+      type: 'commitment_mutation',
+      action: 'created',
+      status: 'success',
+      subjectType: 'commitment',
+      subjectId: commitment.id,
+    })
+    expect(h.checkInsReconcile).toHaveBeenCalledOnce()
+    expect(JSON.stringify(h.activityRecord.mock.calls)).not.toContain('Ship the pilot')
     expect(h.sink.asText()).not.toContain('Ship the pilot')
   })
 
@@ -575,6 +632,95 @@ describe('registerIpc', () => {
     expect(updated).toMatchObject({ data: { status: 'completed' } })
     expect(h.commitmentDelete).toHaveBeenCalledWith(own.id)
     expect(deleted).toMatchObject({ data: { ok: true } })
+  })
+
+  it('check-in list/toggle chi dung profile service va scheduler main-owned', async () => {
+    const h = registerHarness()
+    const enabledResult = { enabled: true, suggestions: [] }
+    h.checkInsList
+      .mockReturnValueOnce({ enabled: false, suggestions: [] })
+      .mockReturnValueOnce(enabledResult)
+
+    const initial = await h.handlers.get('checkin:list')?.({}, {})
+    const toggled = await h.handlers.get('checkin:setEnabled')?.({}, { enabled: true })
+
+    expect(initial).toMatchObject({ data: { enabled: false, suggestions: [] } })
+    expect(h.settingsUpdate).toHaveBeenCalledWith({ proactiveCheckInsEnabled: true })
+    expect(h.checkInsReconfigure).toHaveBeenCalledOnce()
+    expect(toggled).toMatchObject({ data: enabledResult })
+  })
+
+  it('tu choi respond check-in khac profile truoc khi mutate', async () => {
+    const h = registerHarness()
+    const id = '00000000-0000-4000-8000-000000000444'
+    h.checkInGet
+      .mockReturnValueOnce({ id, profileId: 'profile-other' })
+      .mockReturnValueOnce({ id, profileId: 'profile-test' })
+    h.checkInsRespond.mockReturnValueOnce({ id, state: 'snoozed' })
+
+    const rejected = await h.handlers.get('checkin:respond')?.({}, { id, action: 'dismissed' })
+    const accepted = await h.handlers.get('checkin:respond')?.(
+      {},
+      { id, action: 'snoozed', snoozeMinutes: 60 },
+    )
+
+    expect(rejected).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.checkInsRespond).toHaveBeenCalledTimes(1)
+    expect(h.checkInsRespond).toHaveBeenCalledWith(id, 'snoozed', 60)
+    expect(accepted).toMatchObject({ data: { id, state: 'snoozed' } })
+  })
+
+  it('chi unmute sau ownership gate cua commitment', async () => {
+    const h = registerHarness()
+    const commitment = makeCommitment()
+    h.commitmentGet
+      .mockReturnValueOnce(makeCommitment({ profileId: 'profile-other' }))
+      .mockReturnValueOnce(commitment)
+    h.checkInsUnmute.mockReturnValueOnce({ id: 'check-in', state: 'pending' })
+
+    const rejected = await h.handlers.get('checkin:unmute')?.({}, { commitmentId: commitment.id })
+    const accepted = await h.handlers.get('checkin:unmute')?.({}, { commitmentId: commitment.id })
+
+    expect(rejected).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.checkInsUnmute).toHaveBeenCalledOnce()
+    expect(h.checkInsUnmute).toHaveBeenCalledWith(commitment.id)
+    expect(accepted).toMatchObject({ data: { suggestion: { state: 'pending' } } })
+  })
+
+  it('activity list inject profile, giu filter va chi resolve nhan hien tai', async () => {
+    const h = registerHarness()
+    const commitment = makeCommitment()
+    h.activityList.mockReturnValueOnce([
+      {
+        id: 'activity-1',
+        type: 'commitment_mutation',
+        action: 'updated',
+        status: 'success',
+        subjectType: 'commitment',
+        subjectId: commitment.id,
+        subjectLabel: null,
+        requestId: null,
+        operationId: null,
+        createdAt: '2026-08-27T08:00:00.000Z',
+      },
+    ])
+    h.commitmentGet.mockReturnValueOnce(commitment)
+
+    const result = await h.handlers.get('activity:list')?.(
+      {},
+      { type: 'commitment_mutation', status: 'success', limit: 20, offset: 0 },
+    )
+
+    expect(h.activityList).toHaveBeenCalledWith('profile-test', {
+      type: 'commitment_mutation',
+      status: 'success',
+      limit: 20,
+      offset: 0,
+    })
+    expect(result).toMatchObject({
+      data: [{ id: 'activity-1', subjectLabel: 'Ship the pilot' }],
+    })
+    expect(JSON.stringify(h.activityList.mock.calls)).not.toContain('Ship the pilot')
   })
 
   it('purge dữ liệu chỉ xoá profile hiện tại và dựa vào cascade trong store', async () => {

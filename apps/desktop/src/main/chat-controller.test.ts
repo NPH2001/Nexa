@@ -11,12 +11,19 @@ import { Logger, MemorySink } from '@nexa/observability'
 import type { NexaServices } from './services.js'
 
 interface RuntimeDependencies {
-  requestConfirmation(request: ConfirmationRequest): Promise<'approved' | 'cancelled'>
+  requestConfirmation(
+    request: ConfirmationRequest,
+    requestId: string,
+  ): Promise<'approved' | 'cancelled'>
 }
 
 interface RuntimeInput {
   readonly signal: AbortSignal
   readonly emit: (event: unknown) => void
+  readonly toolCalls: {
+    begin(info: unknown): string
+    update(recordId: string, patch: unknown): void
+  }
   readonly memoryFacts?: readonly {
     readonly content: string
     readonly kind: string
@@ -51,6 +58,7 @@ interface Harness {
   readonly services: NexaServices
   readonly mocks: {
     readonly auditRecord: ReturnType<typeof vi.fn>
+    readonly activityRecord: ReturnType<typeof vi.fn>
     readonly appendMessage: ReturnType<typeof vi.fn>
     readonly finalizeMessage: ReturnType<typeof vi.fn>
     readonly addAttachment: ReturnType<typeof vi.fn>
@@ -66,6 +74,7 @@ interface Harness {
 
 function makeHarness(): Harness {
   const auditRecord = vi.fn()
+  const activityRecord = vi.fn()
   const appendMessage = vi.fn((input: { role: string }) => ({
     id: input.role === 'user' ? 'message-user' : 'message-assistant',
   }))
@@ -115,6 +124,7 @@ function makeHarness(): Harness {
       releaseAll,
     },
     audit: { record: auditRecord },
+    activity: { record: activityRecord },
     connections: {
       buildLlmClient: vi.fn(() => ({})),
       get: vi.fn(() => null),
@@ -135,6 +145,7 @@ function makeHarness(): Harness {
     services,
     mocks: {
       auditRecord,
+      activityRecord,
       appendMessage,
       finalizeMessage,
       addAttachment,
@@ -334,11 +345,11 @@ describe('ChatController', () => {
       operationId: OPERATION_ID,
       payloadHash: 'a'.repeat(64),
       conversationId: CONVERSATION_ID,
-      preview: {},
+      preview: { toolName: 'jira_create_issue' },
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     } as ConfirmationRequest
     runtimeMock.runTurn.mockImplementationOnce(async () => {
-      const decision = await runtimeMock.deps?.requestConfirmation(request)
+      const decision = await runtimeMock.deps?.requestConfirmation(request, 'request-1')
       if (decision !== 'cancelled') throw new NexaError(ERROR_CODES.INTERNAL_ERROR)
       return { text: 'Đã huỷ', truncatedContextCount: 0 }
     })
@@ -359,5 +370,207 @@ describe('ChatController', () => {
       )
     })
     expect(h.mocks.guardCancel).toHaveBeenCalledWith(OPERATION_ID)
+  })
+
+  it('ghi activity cho tool preview, confirmation và tool result mà không lưu preview nhạy cảm', async () => {
+    const h = makeHarness()
+    const sensitiveText = 'SECRET-DO-NOT-STORE'
+    runtimeMock.runTurn.mockImplementationOnce(async (rawInput: RuntimeInput) => {
+      const recordId = rawInput.toolCalls.begin({
+        toolName: 'jira_create_issue',
+        riskLevel: 'WRITE_HIGH',
+        approvalStatus: 'pending',
+        operationStatus: 'pending',
+        operationId: OPERATION_ID,
+        payloadHash: 'b'.repeat(64),
+        preview: {
+          toolName: 'jira_create_issue',
+          targetSystem: 'jira',
+          targetSystemUrl: 'https://jira.example.com',
+          action: 'Tạo issue',
+          actingAccount: 'alice',
+          payloadFields: [{ label: 'Summary', value: sensitiveText, fullValue: sensitiveText }],
+          changes: [],
+          impactWarning: sensitiveText,
+          reversible: false,
+          riskLevel: 'WRITE_HIGH',
+        },
+      })
+      const request = {
+        operationId: OPERATION_ID,
+        payloadHash: 'b'.repeat(64),
+        conversationId: CONVERSATION_ID,
+        preview: { toolName: 'jira_create_issue' },
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      } as ConfirmationRequest
+      const decision = await runtimeMock.deps?.requestConfirmation(request, 'request-1')
+      expect(decision).toBe('approved')
+      rawInput.toolCalls.update(recordId, {
+        operationStatus: 'success',
+        resultSummary: sensitiveText,
+      })
+      return { text: 'Đã làm', truncatedContextCount: 0 }
+    })
+
+    const result = await h.controller.send(input())
+    await vi.waitFor(() => {
+      expect(h.mocks.sendToRenderer).toHaveBeenCalledWith(
+        NEXA_EVENTS.toolConfirmation,
+        expect.objectContaining({ operationId: OPERATION_ID }),
+      )
+    })
+    const confirmationPayload = h.mocks.sendToRenderer.mock.calls.find(
+      ([channel]) => channel === NEXA_EVENTS.toolConfirmation,
+    )?.[1] as ConfirmationRequest
+    h.controller.approve(OPERATION_ID, confirmationPayload.payloadHash)
+
+    await vi.waitFor(() => {
+      expect(h.mocks.activityRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'tool_result',
+          action: 'completed',
+          status: 'success',
+          subjectId: 'jira_create_issue',
+          requestId: result.requestId,
+          operationId: OPERATION_ID,
+        }),
+      )
+    })
+
+    expect(h.mocks.activityRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'tool_preview',
+        action: 'created',
+        status: 'pending',
+        subjectId: 'jira_create_issue',
+        requestId: result.requestId,
+        operationId: OPERATION_ID,
+      }),
+    )
+    expect(h.mocks.activityRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'confirmation',
+        action: 'requested',
+        status: 'pending',
+        subjectId: 'jira_create_issue',
+        requestId: result.requestId,
+        operationId: OPERATION_ID,
+      }),
+    )
+    expect(h.mocks.activityRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'confirmation',
+        action: 'approved',
+        status: 'success',
+        subjectId: 'jira_create_issue',
+        requestId: result.requestId,
+        operationId: OPERATION_ID,
+      }),
+    )
+
+    for (const [payload] of h.mocks.activityRecord.mock.calls) {
+      expect(payload).not.toHaveProperty('preview')
+      expect(payload).not.toHaveProperty('resultSummary')
+      expect(JSON.stringify(payload)).not.toContain(sensitiveText)
+    }
+  })
+
+  it('bỏ qua tool_result failed nếu tool chưa chạy vì confirmation bị huỷ hoặc hết hạn', async () => {
+    const h = makeHarness()
+    runtimeMock.runTurn.mockImplementationOnce(async (rawInput: RuntimeInput) => {
+      const recordId = rawInput.toolCalls.begin({
+        toolName: 'jira_create_issue',
+        riskLevel: 'WRITE_HIGH',
+        approvalStatus: 'pending',
+        operationStatus: 'pending',
+        operationId: OPERATION_ID,
+        payloadHash: 'c'.repeat(64),
+        preview: { toolName: 'jira_create_issue' } as never,
+      })
+      rawInput.toolCalls.update(recordId, {
+        approvalStatus: 'cancelled',
+        operationStatus: 'failed',
+      })
+      rawInput.toolCalls.update(recordId, {
+        approvalStatus: 'expired',
+        operationStatus: 'failed',
+      })
+      return { text: 'Bỏ qua', truncatedContextCount: 0 }
+    })
+
+    await h.controller.send(input())
+    await vi.waitFor(() => expect(h.mocks.finalizeMessage).toHaveBeenCalled())
+
+    expect(
+      h.mocks.activityRecord.mock.calls.some(
+        ([payload]) => payload.type === 'tool_result' && payload.status === 'failed',
+      ),
+    ).toBe(false)
+  })
+
+  it('ghi uncertain operation với requestId và operationId', async () => {
+    const h = makeHarness()
+    runtimeMock.runTurn.mockImplementationOnce(async (rawInput: RuntimeInput) => {
+      const recordId = rawInput.toolCalls.begin({
+        toolName: 'jira_create_issue',
+        riskLevel: 'WRITE_HIGH',
+        approvalStatus: 'approved',
+        operationStatus: 'running',
+        operationId: OPERATION_ID,
+        payloadHash: 'd'.repeat(64),
+        preview: { toolName: 'jira_create_issue' } as never,
+      })
+      rawInput.toolCalls.update(recordId, { operationStatus: 'uncertain' })
+      return { text: 'Kiểm tra lại', truncatedContextCount: 0 }
+    })
+
+    const result = await h.controller.send(input())
+    await vi.waitFor(() => {
+      expect(h.mocks.activityRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'uncertain_operation',
+          action: 'became_uncertain',
+          status: 'uncertain',
+          subjectId: 'jira_create_issue',
+          requestId: result.requestId,
+          operationId: OPERATION_ID,
+        }),
+      )
+    })
+  })
+
+  it('ghi confirmation cancelled khi người dùng huỷ', async () => {
+    const h = makeHarness()
+    const request = {
+      operationId: OPERATION_ID,
+      payloadHash: 'e'.repeat(64),
+      conversationId: CONVERSATION_ID,
+      preview: { toolName: 'jira_create_issue' },
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    } as ConfirmationRequest
+    runtimeMock.runTurn.mockImplementationOnce(async () => {
+      const decision = await runtimeMock.deps?.requestConfirmation(request, 'request-1')
+      expect(decision).toBe('cancelled')
+      return { text: 'Đã huỷ', truncatedContextCount: 0 }
+    })
+
+    const result = await h.controller.send(input())
+    await vi.waitFor(() => {
+      expect(h.mocks.sendToRenderer).toHaveBeenCalledWith(NEXA_EVENTS.toolConfirmation, request)
+    })
+    h.controller.cancelTool(OPERATION_ID)
+
+    await vi.waitFor(() => {
+      expect(h.mocks.activityRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'confirmation',
+          action: 'cancelled',
+          status: 'cancelled',
+          subjectId: 'jira_create_issue',
+          requestId: result.requestId,
+          operationId: OPERATION_ID,
+        }),
+      )
+    })
   })
 })

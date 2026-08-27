@@ -38,6 +38,11 @@ export const IPC_CHANNEL_NAMES = [
   'commitment:create',
   'commitment:update',
   'commitment:delete',
+  'checkin:list',
+  'checkin:setEnabled',
+  'checkin:respond',
+  'checkin:unmute',
+  'activity:list',
 
   'chat:send',
   'chat:cancel',
@@ -72,6 +77,7 @@ export const NEXA_EVENTS = {
   toolConfirmation: 'nexa:tool-confirmation',
   toolStatus: 'nexa:tool-status',
   mcpStatus: 'nexa:mcp-status',
+  checkInsChanged: 'nexa:checkins-changed',
   /** Có bản cập nhật không bắt buộc. Trường hợp bắt buộc/thu hồi do main chặn thẳng. */
   updateAvailable: 'nexa:update-available',
 } as const

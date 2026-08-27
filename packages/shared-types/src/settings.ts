@@ -94,6 +94,8 @@ export const featureFlagsSchema = z.object({
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>
 
 export const appSettingsSchema = z.object({
+  /** Opt-in hoàn toàn cho proactive check-ins; mặc định không chạy nền. */
+  proactiveCheckInsEnabled: z.boolean().default(false),
   /** §14: giới hạn MVP 20–30 MB/file. Phụ lục A chốt 30. */
   maxFileSizeMb: z.number().int().min(1).max(100).default(30),
   maxFilesPerRequest: z.number().int().min(1).max(20).default(5),

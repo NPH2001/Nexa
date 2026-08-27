@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { IPC_CHANNEL_NAMES, type IpcChannelName } from './channels.js'
 import {
+  ACTIVITY_STATUSES,
+  ACTIVITY_TYPES,
+  ACTIVITY_SUBJECT_TYPES,
+  ACTIVITY_ACTIONS,
+  CHECK_IN_STATES,
+  CHECK_IN_TRIGGER_KINDS,
   LLM_PROVIDERS,
   commitmentStatusSchema,
   connectionTypeSchema,
@@ -165,6 +171,8 @@ export const memoryRefSchema = z.object({ id: z.string().uuid() })
 
 const commitmentTitleSchema = z.string().trim().min(1).max(200)
 const commitmentNextActionSchema = z.string().trim().min(1).max(500)
+const checkInActionSchema = z.enum(['acted', 'snoozed', 'dismissed', 'muted'])
+const snoozeMinutesSchema = z.union([z.literal(60), z.literal(1440), z.literal(10080)])
 
 export const commitmentListSchema = z.object({
   includeCompleted: z.boolean().default(false),
@@ -208,6 +216,53 @@ export const commitmentUpdateSchema = z
   })
 
 export const commitmentRefSchema = z.object({ id: z.string().uuid() })
+
+export const checkInListSchema = z.object({})
+
+export const checkInSetEnabledSchema = z.object({
+  enabled: z.boolean(),
+})
+
+export const checkInRespondSchema = z
+  .object({
+    id: z.string().uuid(),
+    action: checkInActionSchema,
+    snoozeMinutes: snoozeMinutesSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === 'snoozed' && value.snoozeMinutes === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['snoozeMinutes'],
+        message: 'snoozeMinutes is required when action is snoozed.',
+      })
+    }
+    if (value.action !== 'snoozed' && value.snoozeMinutes !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['snoozeMinutes'],
+        message: 'snoozeMinutes is only allowed when action is snoozed.',
+      })
+    }
+  })
+
+export const checkInUnmuteSchema = z.object({
+  commitmentId: z.string().uuid(),
+})
+
+export const activityTypeSchema = z.enum(ACTIVITY_TYPES)
+export const activityStatusSchema = z.enum(ACTIVITY_STATUSES)
+export const activitySubjectTypeSchema = z.enum(ACTIVITY_SUBJECT_TYPES)
+export const activityActionSchema = z.enum(ACTIVITY_ACTIONS)
+export const checkInTriggerKindSchema = z.enum(CHECK_IN_TRIGGER_KINDS)
+export const checkInStateSchema = z.enum(CHECK_IN_STATES)
+
+export const activityListSchema = z.object({
+  type: activityTypeSchema.optional(),
+  status: activityStatusSchema.optional(),
+  limit: z.number().int().min(1).max(500).default(200),
+  offset: z.number().int().min(0).default(0),
+})
 
 export const chatSendSchema = z.object({
   conversationId: z.string().uuid(),
@@ -296,6 +351,11 @@ export const IPC_SCHEMAS = {
   'commitment:create': commitmentCreateSchema,
   'commitment:update': commitmentUpdateSchema,
   'commitment:delete': commitmentRefSchema,
+  'checkin:list': checkInListSchema,
+  'checkin:setEnabled': checkInSetEnabledSchema,
+  'checkin:respond': checkInRespondSchema,
+  'checkin:unmute': checkInUnmuteSchema,
+  'activity:list': activityListSchema,
 
   'chat:send': chatSendSchema,
   'chat:cancel': chatCancelSchema,
@@ -379,4 +439,8 @@ export interface McpStatusEvent {
   readonly state: 'stopped' | 'starting' | 'ready' | 'error'
   readonly errorCode?: string
   readonly toolCount?: number
+}
+
+export interface CheckInsChangedEvent {
+  readonly changedAt: string
 }

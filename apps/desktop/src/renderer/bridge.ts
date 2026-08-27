@@ -1,9 +1,14 @@
 import type {
   ChatErrorEvent,
+  ActivityEvent,
+  ActivityStatus,
+  ActivityType,
   AppSettings,
   ChatDeltaEvent,
   ChatDoneEvent,
   ConfirmationRequest,
+  CheckInSuggestion,
+  CheckInsChangedEvent,
   Commitment,
   Connection,
   ConnectionTestResult,
@@ -171,8 +176,7 @@ export const api = {
   },
 
   commitments: {
-    list: (includeCompleted = false) =>
-      call<Commitment[]>('commitment:list', { includeCompleted }),
+    list: (includeCompleted = false) => call<Commitment[]>('commitment:list', { includeCompleted }),
     create: (input: {
       title: string
       nextAction?: string | null
@@ -193,6 +197,40 @@ export const api = {
       },
     ) => call<Commitment>('commitment:update', { id, ...patch }),
     remove: (id: string) => call<{ ok: boolean }>('commitment:delete', { id }),
+  },
+
+  checkIns: {
+    list: () => call<{ enabled: boolean; suggestions: CheckInSuggestion[] }>('checkin:list'),
+    setEnabled: (enabled: boolean) =>
+      call<{ enabled: boolean; suggestions: CheckInSuggestion[] }>('checkin:setEnabled', {
+        enabled,
+      }),
+    respond: (
+      id: string,
+      action: 'acted' | 'snoozed' | 'dismissed' | 'muted',
+      snoozeMinutes?: 60 | 1440 | 10080,
+    ) =>
+      call<CheckInSuggestion>('checkin:respond', {
+        id,
+        action,
+        ...(snoozeMinutes === undefined ? {} : { snoozeMinutes }),
+      }),
+    unmute: (commitmentId: string) =>
+      call<{ suggestion: CheckInSuggestion | null }>('checkin:unmute', { commitmentId }),
+  },
+
+  activity: {
+    list: (filters: {
+      type?: ActivityType
+      status?: ActivityStatus
+      limit?: number
+      offset?: number
+    }) =>
+      call<ActivityEvent[]>('activity:list', {
+        ...filters,
+        limit: filters.limit ?? 200,
+        offset: filters.offset ?? 0,
+      }),
   },
 
   chat: {
@@ -277,6 +315,8 @@ export const events = {
     bridge().on('nexa:tool-status', (p) => fn(p as ToolStatusEvent)),
   onMcpStatus: (fn: (e: McpStatusEvent) => void) =>
     bridge().on('nexa:mcp-status', (p) => fn(p as McpStatusEvent)),
+  onCheckInsChanged: (fn: (e: CheckInsChangedEvent) => void) =>
+    bridge().on('nexa:checkins-changed', (p) => fn(p as CheckInsChangedEvent)),
   onUpdateAvailable: (fn: (e: { version: string; message: string; notes?: string }) => void) =>
     bridge().on('nexa:update-available', (p) => fn(p as Parameters<typeof fn>[0])),
 }

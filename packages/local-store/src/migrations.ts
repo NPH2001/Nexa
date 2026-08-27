@@ -452,6 +452,58 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS commitments;
     `,
   },
+  {
+    version: 7,
+    name: 'proactive-checkins-and-activity-timeline',
+    /**
+     * Proactive check-ins lưu trạng thái nhắc việc theo profile + commitment, không nhân bản
+     * nội dung nhạy cảm. Activity timeline tái sử dụng `local_audit`, chỉ thêm các cột enum/id
+     * để hiển thị UI mà vẫn giữ nguyên nguyên tắc "không free text".
+     */
+    up: `
+      CREATE TABLE commitment_check_ins (
+        id             TEXT PRIMARY KEY,
+        profile_id     TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        commitment_id  TEXT NOT NULL REFERENCES commitments(id) ON DELETE CASCADE,
+        trigger_kind   TEXT NOT NULL CHECK (trigger_kind IN ('due','check_in')),
+        trigger_at     TEXT NOT NULL,
+        state          TEXT NOT NULL CHECK (state IN ('pending','acted','snoozed','dismissed','muted')),
+        snoozed_until  TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL,
+        UNIQUE (profile_id, commitment_id)
+      );
+      CREATE INDEX idx_commitment_check_ins_profile_state_trigger
+        ON commitment_check_ins(profile_id, state, trigger_at, updated_at DESC);
+      CREATE INDEX idx_commitment_check_ins_commitment
+        ON commitment_check_ins(commitment_id);
+
+      ALTER TABLE local_audit ADD COLUMN activity_type TEXT;
+      ALTER TABLE local_audit ADD COLUMN activity_action TEXT;
+      ALTER TABLE local_audit ADD COLUMN subject_type TEXT;
+      ALTER TABLE local_audit ADD COLUMN subject_id TEXT;
+
+      CREATE INDEX idx_local_audit_profile_created
+        ON local_audit(profile_id, created_at DESC);
+      CREATE INDEX idx_local_audit_profile_type_created
+        ON local_audit(profile_id, activity_type, created_at DESC);
+      CREATE INDEX idx_local_audit_profile_status_created
+        ON local_audit(profile_id, status, created_at DESC);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_local_audit_profile_status_created;
+      DROP INDEX IF EXISTS idx_local_audit_profile_type_created;
+      DROP INDEX IF EXISTS idx_local_audit_profile_created;
+      ALTER TABLE local_audit DROP COLUMN subject_id;
+      ALTER TABLE local_audit DROP COLUMN subject_type;
+      ALTER TABLE local_audit DROP COLUMN activity_action;
+      ALTER TABLE local_audit DROP COLUMN activity_type;
+
+      DROP INDEX IF EXISTS idx_commitment_check_ins_commitment;
+      DROP INDEX IF EXISTS idx_commitment_check_ins_profile_state_trigger;
+      DROP TABLE IF EXISTS commitment_check_ins;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

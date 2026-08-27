@@ -26,6 +26,14 @@ interface InFlight {
 interface PendingConfirmation {
   resolve(decision: ApprovalDecision): void
   readonly timer: NodeJS.Timeout
+  readonly requestId: string
+  readonly toolName: string
+}
+
+interface ToolCallActivityMeta {
+  readonly toolName: string
+  readonly operationId?: string
+  readonly requestId: string
 }
 
 /**
@@ -37,6 +45,7 @@ interface PendingConfirmation {
 export class ChatController {
   private readonly inFlight = new Map<string, InFlight>()
   private readonly pendingConfirmations = new Map<string, PendingConfirmation>()
+  private readonly toolCallActivity = new Map<string, ToolCallActivityMeta>()
   private readonly log: Logger
   private activeConversationId: string | null = null
 
@@ -178,6 +187,19 @@ export class ChatController {
       status: 'ok',
       operationId,
     })
+    const pending = this.pendingConfirmations.get(operationId)
+    if (pending !== undefined) {
+      this.recordActivity({
+        profileId: this.services.profileId,
+        type: 'confirmation',
+        action: 'approved',
+        status: 'success',
+        subjectType: 'tool',
+        subjectId: pending.toolName,
+        requestId: pending.requestId,
+        operationId,
+      })
+    }
     this.settleConfirmation(operationId, 'approved')
   }
 
@@ -190,6 +212,19 @@ export class ChatController {
       status: 'cancelled',
       operationId,
     })
+    const pending = this.pendingConfirmations.get(operationId)
+    if (pending !== undefined) {
+      this.recordActivity({
+        profileId: this.services.profileId,
+        type: 'confirmation',
+        action: 'cancelled',
+        status: 'cancelled',
+        subjectType: 'tool',
+        subjectId: pending.toolName,
+        requestId: pending.requestId,
+        operationId,
+      })
+    }
     this.settleConfirmation(operationId, 'cancelled')
   }
 
@@ -241,12 +276,79 @@ export class ChatController {
     let text = ''
 
     const sink: ToolCallSink = {
-      begin: (info) =>
-        this.services.conversations.recordToolCall({
+      begin: (info) => {
+        const record = this.services.conversations.recordToolCall({
           messageId: assistantMessageId,
           ...info,
-        }).id,
-      update: (recordId, patch) => this.services.conversations.updateToolCall(recordId, patch),
+        })
+        this.toolCallActivity.set(record.id, {
+          toolName: info.toolName,
+          operationId: info.operationId,
+          requestId,
+        })
+        if (info.preview !== undefined) {
+          this.recordActivity({
+            profileId: this.services.profileId,
+            type: 'tool_preview',
+            action: 'created',
+            status: 'pending',
+            subjectType: 'tool',
+            subjectId: info.toolName,
+            requestId,
+            ...(info.operationId !== undefined ? { operationId: info.operationId } : {}),
+          })
+        }
+        return record.id
+      },
+      update: (recordId, patch) => {
+        this.services.conversations.updateToolCall(recordId, patch)
+        const meta = this.toolCallActivity.get(recordId)
+        if (meta === undefined || patch.operationStatus === undefined) return
+        if (
+          patch.operationStatus === 'failed' &&
+          (patch.approvalStatus === 'cancelled' || patch.approvalStatus === 'expired')
+        ) {
+          return
+        }
+        if (patch.operationStatus === 'success') {
+          this.recordActivity({
+            profileId: this.services.profileId,
+            type: 'tool_result',
+            action: 'completed',
+            status: 'success',
+            subjectType: 'tool',
+            subjectId: meta.toolName,
+            requestId: meta.requestId,
+            ...(meta.operationId !== undefined ? { operationId: meta.operationId } : {}),
+          })
+          return
+        }
+        if (patch.operationStatus === 'failed') {
+          this.recordActivity({
+            profileId: this.services.profileId,
+            type: 'tool_result',
+            action: 'failed',
+            status: 'failed',
+            subjectType: 'tool',
+            subjectId: meta.toolName,
+            requestId: meta.requestId,
+            ...(meta.operationId !== undefined ? { operationId: meta.operationId } : {}),
+          })
+          return
+        }
+        if (patch.operationStatus === 'uncertain') {
+          this.recordActivity({
+            profileId: this.services.profileId,
+            type: 'uncertain_operation',
+            action: 'became_uncertain',
+            status: 'uncertain',
+            subjectType: 'tool',
+            subjectId: meta.toolName,
+            requestId: meta.requestId,
+            ...(meta.operationId !== undefined ? { operationId: meta.operationId } : {}),
+          })
+        }
+      },
     }
 
     try {
@@ -263,7 +365,7 @@ export class ChatController {
         actingAccount: () => this.services.connections.get('jira')?.username ?? 'unknown',
         jiraBaseUrl: () => this.services.connections.get('jira')?.baseUrl ?? '',
         confluenceBaseUrl: () => this.services.connections.get('confluence')?.baseUrl ?? '',
-        requestConfirmation: (request) => this.askUser(request),
+        requestConfirmation: (request) => this.askUser(request, requestId),
       })
 
       // Nạp lịch sử SAU khi user message đã ghi, để lượt hiện tại nằm trong context.
@@ -385,6 +487,9 @@ export class ChatController {
       })
     } finally {
       this.inFlight.delete(requestId)
+      for (const [recordId, meta] of this.toolCallActivity) {
+        if (meta.requestId === requestId) this.toolCallActivity.delete(recordId)
+      }
       this.activeConversationId = null
     }
   }
@@ -395,19 +500,44 @@ export class ChatController {
    * Có timeout riêng dài hơn TTL của approval một chút: nếu renderer chết hoặc người dùng bỏ đi,
    * lời hứa này phải được giải phóng, nếu không cả lượt chat treo vĩnh viễn.
    */
-  private askUser(request: ConfirmationRequest): Promise<ApprovalDecision> {
+  private askUser(request: ConfirmationRequest, requestId: string): Promise<ApprovalDecision> {
     return new Promise<ApprovalDecision>((resolve) => {
       const ttlMs = new Date(request.expiresAt).getTime() - Date.now()
       const timer = setTimeout(
         () => {
           this.pendingConfirmations.delete(request.operationId)
           this.services.guard.cancel(request.operationId)
+          this.recordActivity({
+            profileId: this.services.profileId,
+            type: 'confirmation',
+            action: 'expired',
+            status: 'cancelled',
+            subjectType: 'tool',
+            subjectId: request.preview.toolName,
+            requestId,
+            operationId: request.operationId,
+          })
           resolve('cancelled')
         },
         Math.max(5_000, ttlMs + 5_000),
       )
 
-      this.pendingConfirmations.set(request.operationId, { resolve, timer })
+      this.pendingConfirmations.set(request.operationId, {
+        resolve,
+        timer,
+        requestId,
+        toolName: request.preview.toolName,
+      })
+      this.recordActivity({
+        profileId: this.services.profileId,
+        type: 'confirmation',
+        action: 'requested',
+        status: 'pending',
+        subjectType: 'tool',
+        subjectId: request.preview.toolName,
+        requestId,
+        operationId: request.operationId,
+      })
       this.emit(NEXA_EVENTS.toolConfirmation, request)
     })
   }
@@ -418,6 +548,10 @@ export class ChatController {
     clearTimeout(pending.timer)
     this.pendingConfirmations.delete(operationId)
     pending.resolve(decision)
+  }
+
+  private recordActivity(input: Parameters<NexaServices['activity']['record']>[0]): void {
+    this.services.activity.record(input)
   }
 
   private emit<T>(channel: string, payload: T): void {

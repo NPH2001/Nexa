@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { greetingForHour } from './TodayView.js'
+import { describeCheckInReason, greetingForHour } from './TodayView.js'
 
 describe('TodayView helpers', () => {
   it.each([
@@ -11,5 +11,10 @@ describe('TodayView helpers', () => {
     [23, 'Chào buổi tối'],
   ] as const)('chọn lời chào phù hợp lúc %i giờ', (hour, expected) => {
     expect(greetingForHour(hour)).toBe(expected)
+  })
+
+  it('giải thích lý do check-in theo trigger kind', () => {
+    expect(describeCheckInReason('due', '2026-08-27T09:00:00.000Z')).toContain('Đến hạn')
+    expect(describeCheckInReason('check_in', '2026-08-27T09:00:00.000Z')).toContain('check-in')
   })
 })

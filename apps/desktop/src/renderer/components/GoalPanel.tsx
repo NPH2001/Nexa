@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  CheckInSuggestion,
   Commitment,
   CommitmentStatus,
   Conversation,
@@ -48,6 +49,7 @@ export function GoalPanel(props: {
 }): React.JSX.Element {
   const { onError } = props
   const [commitments, setCommitments] = useState<Commitment[]>([])
+  const [checkIns, setCheckIns] = useState<CheckInSuggestion[]>([])
   const [draft, setDraft] = useState<CommitmentDraft>(() => emptyDraft())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Commitment | null>(null)
@@ -61,9 +63,17 @@ export function GoalPanel(props: {
   const completedCommitments = commitments.filter((item) => item.status === 'completed')
   const conversationMap = new Map(props.conversations.map((item) => [item.id, item]))
   const validationMessage = validateDraft(draft)
+  const mutedCommitmentIds = new Set(
+    checkIns.filter((item) => item.state === 'muted').map((item) => item.commitmentId),
+  )
 
   const refreshCommitments = useCallback(async (): Promise<void> => {
-    setCommitments(await api.commitments.list(true))
+    const [nextCommitments, nextCheckIns] = await Promise.all([
+      api.commitments.list(true),
+      api.checkIns.list(),
+    ])
+    setCommitments(nextCommitments)
+    setCheckIns(nextCheckIns.suggestions)
     setLoadError(false)
   }, [])
 
@@ -163,8 +173,7 @@ export function GoalPanel(props: {
           onCommitted: () =>
             props.onToast({
               kind: 'success',
-              title:
-                status === 'completed' ? 'Đã hoàn thành cam kết.' : 'Đã mở lại cam kết.',
+              title: status === 'completed' ? 'Đã hoàn thành cam kết.' : 'Đã mở lại cam kết.',
             }),
           refresh: refreshCommitments,
           onRefreshError: () =>
@@ -210,6 +219,33 @@ export function GoalPanel(props: {
     })()
   }
 
+  const unmuteCommitment = (commitment: Commitment): void => {
+    void (async () => {
+      const actionKey = `unmute:${commitment.id}`
+      setBusyAction(actionKey)
+      try {
+        await commitThenRefresh({
+          commit: () => api.checkIns.unmute(commitment.id),
+          onCommitted: () =>
+            props.onToast({
+              kind: 'success',
+              title: 'Đã bật lại nhắc việc cho cam kết.',
+            }),
+          refresh: refreshCommitments,
+          onRefreshError: () =>
+            props.onToast({
+              kind: 'warning',
+              title: 'Đã bật lại nhắc việc nhưng chưa làm mới được danh sách.',
+            }),
+        })
+      } catch (error) {
+        props.onError(error, 'Không bật lại được nhắc việc cho cam kết.')
+      } finally {
+        setBusyAction(null)
+      }
+    })()
+  }
+
   return (
     <div className="goals-page">
       <header className="goals-header">
@@ -217,8 +253,7 @@ export function GoalPanel(props: {
           <p className="today-eyebrow">Continuity có chủ đích</p>
           <h1>Mục tiêu &amp; cam kết</h1>
           <p className="muted">
-            Nexa chỉ theo dõi những cam kết bạn tự tạo. Chat và memory không tự biến thành nghĩa
-            vụ.
+            Nexa chỉ theo dõi những cam kết bạn tự tạo. Chat và memory không tự biến thành nghĩa vụ.
           </p>
         </div>
         <div className="goal-stats" aria-label="Thống kê cam kết">
@@ -228,9 +263,7 @@ export function GoalPanel(props: {
       </header>
 
       <section className="panel goal-editor" aria-labelledby="goal-editor-title">
-        <h2 id="goal-editor-title">
-          {editingId === null ? 'Tạo cam kết mới' : 'Sửa cam kết'}
-        </h2>
+        <h2 id="goal-editor-title">{editingId === null ? 'Tạo cam kết mới' : 'Sửa cam kết'}</h2>
         <div className="goal-form">
           <label className="field goal-form-full">
             <span>Kết quả muốn đạt ({String(draft.title.length)}/200)</span>
@@ -346,7 +379,12 @@ export function GoalPanel(props: {
                     : 'Lưu thay đổi'}
             </button>
             {editingId !== null && (
-              <button type="button" className="btn" onClick={resetForm} disabled={busyAction !== null}>
+              <button
+                type="button"
+                className="btn"
+                onClick={resetForm}
+                disabled={busyAction !== null}
+              >
                 Huỷ sửa
               </button>
             )}
@@ -363,7 +401,11 @@ export function GoalPanel(props: {
       ) : loadError ? (
         <section className="panel danger-zone">
           <h2>Không tải được cam kết</h2>
-          <button type="button" className="btn" onClick={() => void reload().catch(() => undefined)}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void reload().catch(() => undefined)}
+          >
             Thử lại
           </button>
         </section>
@@ -373,22 +415,26 @@ export function GoalPanel(props: {
             title="Đang theo dõi"
             empty="Chưa có cam kết nào. Hãy bắt đầu bằng một kết quả bạn thật sự muốn tiếp tục qua nhiều phiên làm việc."
             items={activeCommitments}
+            mutedCommitmentIds={mutedCommitmentIds}
             conversations={conversationMap}
             busyAction={busyAction}
             onEdit={startEditing}
             onStatus={setStatus}
             onDelete={setDeleteTarget}
+            onUnmute={unmuteCommitment}
             onOpenConversation={props.onOpenConversation}
           />
           <CommitmentSection
             title="Đã hoàn thành"
             empty="Chưa có cam kết hoàn thành."
             items={completedCommitments}
+            mutedCommitmentIds={mutedCommitmentIds}
             conversations={conversationMap}
             busyAction={busyAction}
             onEdit={startEditing}
             onStatus={setStatus}
             onDelete={setDeleteTarget}
+            onUnmute={unmuteCommitment}
             onOpenConversation={props.onOpenConversation}
           />
         </>
@@ -412,11 +458,13 @@ function CommitmentSection(props: {
   title: string
   empty: string
   items: readonly Commitment[]
+  mutedCommitmentIds: ReadonlySet<string>
   conversations: ReadonlyMap<string, Conversation>
   busyAction: string | null
   onEdit: (commitment: Commitment) => void
   onStatus: (commitment: Commitment, status: CommitmentStatus) => void
   onDelete: (commitment: Commitment) => void
+  onUnmute: (commitment: Commitment) => void
   onOpenConversation: (id: string) => void
 }): React.JSX.Element {
   return (
@@ -432,6 +480,7 @@ function CommitmentSection(props: {
               commitment.sourceConversationId === null
                 ? null
                 : (props.conversations.get(commitment.sourceConversationId) ?? null)
+            const muted = props.mutedCommitmentIds.has(commitment.id)
             return (
               <li key={commitment.id} className="goal-card">
                 <div className="goal-card-head">
@@ -442,6 +491,7 @@ function CommitmentSection(props: {
                           ? STATUS_LABELS.completed
                           : attention.label}
                       </span>
+                      {muted && <span className="tag">Đã tắt nhắc</span>}
                     </div>
                     <h3>{commitment.title}</h3>
                   </div>
@@ -479,11 +529,25 @@ function CommitmentSection(props: {
                     >
                       Xoá
                     </button>
+                    {muted && (
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        onClick={() => props.onUnmute(commitment)}
+                        disabled={props.busyAction !== null}
+                      >
+                        {props.busyAction === `unmute:${commitment.id}`
+                          ? 'Đang bật lại…'
+                          : 'Bật lại nhắc'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {commitment.nextAction !== null && (
-                  <p className="goal-next"><strong>Bước tiếp:</strong> {commitment.nextAction}</p>
+                  <p className="goal-next">
+                    <strong>Bước tiếp:</strong> {commitment.nextAction}
+                  </p>
                 )}
 
                 <dl className="goal-meta">

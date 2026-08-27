@@ -15,6 +15,7 @@ import { Sidebar } from './components/Sidebar.js'
 import { ChatView } from './components/ChatView.js'
 import { TodayView } from './components/TodayView.js'
 import { GoalPanel } from './components/GoalPanel.js'
+import { ActivityTimelineView } from './components/ActivityTimelineView.js'
 import { SettingsView } from './components/SettingsView.js'
 import { ConfirmationDialog } from './components/ConfirmationDialog.js'
 import { DestructiveActionDialog } from './components/DestructiveActionDialog.js'
@@ -28,7 +29,7 @@ import {
 } from './chat-activity.js'
 import { commitThenRefresh } from './committed-mutation.js'
 
-export type View = 'today' | 'goals' | 'chat' | 'settings'
+export type View = 'today' | 'goals' | 'activity' | 'chat' | 'settings'
 
 const TITLE_LIMIT = 60
 
@@ -522,6 +523,8 @@ export function App(): React.JSX.Element {
             onError={reportError}
             onToast={pushToast}
           />
+        ) : view === 'activity' ? (
+          <ActivityTimelineView onError={reportError} />
         ) : view === 'chat' ? (
           <ChatView
             conversation={conversations.find((c) => c.id === activeId) ?? null}

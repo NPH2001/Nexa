@@ -17,7 +17,9 @@ import {
   type SecureStorageBackend,
 } from '@nexa/security'
 import {
+  ActivityRepository,
   AuditRepository,
+  CheckInRepository,
   CommitmentRepository,
   ConfigRepository,
   ConversationRepository,
@@ -47,6 +49,7 @@ import {
   type ExtractionRunner,
 } from '@nexa/document-processor'
 import { FileBroker } from './file-broker.js'
+import { ProactiveCheckInService } from './proactive-check-in-service.js'
 
 /**
  * Composition root.
@@ -68,6 +71,9 @@ export interface NexaServices {
   readonly models: ModelService
   readonly conversations: ConversationRepository
   readonly commitments: CommitmentRepository
+  readonly checkInState: CheckInRepository
+  readonly activity: ActivityRepository
+  readonly checkIns: ProactiveCheckInService
   readonly memory: MemoryRepository
   readonly config: ConfigRepository
   readonly audit: AuditRepository
@@ -85,6 +91,7 @@ export interface NexaServices {
 
 export interface BootstrapOptions {
   readonly onMcpStatus: (event: McpStatusEvent) => void
+  readonly onCheckInsChanged?: (changedAt: string) => void
   readonly isDevelopment: boolean
 }
 
@@ -145,8 +152,10 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
 
   const config = new ConfigRepository(store)
   const audit = new AuditRepository(store)
+  const activity = new ActivityRepository(store)
   const conversations = new ConversationRepository(store)
   const commitments = new CommitmentRepository(store)
+  const checkInState = new CheckInRepository(store)
   const memory = new MemoryRepository(store)
   const search = new ConversationSearch(store, conversations)
   const retention = new RetentionService(store, audit)
@@ -154,6 +163,16 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   const policy = loadOrgPolicy(readPolicyFile(logger), logger)
   const settings = new SettingsService(config, profile.id, policy, logger)
   const models = new ModelService(config, profile.id, logger, policy)
+  const checkIns = new ProactiveCheckInService({
+    profileId: profile.id,
+    store,
+    repository: checkInState,
+    commitments,
+    activity,
+    settings,
+    logger,
+    onChanged: opts.onCheckInsChanged,
+  })
 
   const tempWorkspace = new TempWorkspace(join(userData, 'temp'), logger)
   // §8.3: dọn tàn dư của phiên trước nếu nó bị crash.
@@ -229,6 +248,9 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     models,
     conversations,
     commitments,
+    checkInState,
+    activity,
+    checkIns,
     memory,
     config,
     audit,
@@ -242,6 +264,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     files,
     mcp: null,
     dispose: async () => {
+      checkIns.stop()
       await services.mcp?.stop()
       await extractionRunner.dispose()
       tempWorkspace.releaseAll()

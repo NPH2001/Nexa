@@ -32,7 +32,7 @@
 - Primary navigation target: Today, Conversations, Goals, Memory, Activity and Settings. Ship incrementally; do not expose an empty destination before its core flow works.
 - Core routes/screens: Home/Today resume surface; conversation workspace; goal/commitment detail; memory ledger; agent activity timeline; connections/models/data settings.
 - Content hierarchy: current focus and next action first, supporting context second, technical model/tool details on demand, diagnostics last.
-- Current implementation note: the app exposes Today, Chat and Settings. Memory v1 lives inside Settings. Commitment Engine v1 adds Goals as a first-class destination; Today resumes active commitments and keeps the transparent memory/privacy summary without pretending that background proactivity already exists.
+- Current implementation note: the app exposes Today, Chat and Settings. Memory v1 lives inside Settings. Commitment Engine v1 adds Goals as a first-class destination. Proactive Check-in + Agent Activity add an opt-in, in-app-only suggestion loop and the first-class Activity destination; neither surface may imply that Nexa remains active after its process exits.
 
 ## Design principles
 
@@ -55,10 +55,12 @@
 ## Components
 
 - Existing components to reuse: Sidebar, ChatView, Settings tabs/panels, ConfirmationDialog, DestructiveActionDialog, UncertainBanner, Toasts and semantic form/button styles.
-- New/changed components: MemoryPanel, TodayView and GoalPanel are implemented; WorkingMemoryStrip and AgentActivityTimeline remain later phases.
+- New/changed components: MemoryPanel, TodayView and GoalPanel are implemented. ProactiveCheckInService, TodayCheckInCard and AgentActivityTimeline are the next implementation slice; WorkingMemoryStrip remains a later phase.
 - GoalPanel contract: commitments are user-created records with a concise outcome, one next action, lifecycle status, optional due/check-in time and optional source conversation. Nexa never promotes a memory fact or chat statement into a commitment without explicit confirmation.
 - Commitment lifecycle: `active`, `blocked`, `paused` and `completed`. Completing is reversible; permanent deletion remains a separate destructive action with confirmation.
 - Today ordering: overdue check-ins and due dates first, then active work by recency. Every surfaced commitment explains urgency through its status/date instead of an opaque score.
+- Proactive check-in contract: global opt-in is off by default. While the app process is alive, due/check-in timestamps may create one idempotent suggestion per commitment. Do/Later/Dismiss/Do not remind again only mutate local suggestion state; Do opens the source conversation or Goals and never sends a message, edits a commitment or runs a tool.
+- Activity timeline contract: user-visible events are append-only structured metadata for suggestion, memory mutation, commitment mutation, tool preview, confirmation, tool result and uncertain operation. Timeline rows contain enums, timestamps and identifiers only; no raw payload, memory content, commitment next action, target URL or secret is stored for the timeline.
 - Variants and states: every data component covers loading, empty, error, success, disabled and policy-locked states; commitments additionally cover active, blocked, paused, completed, overdue and due-soon; memory additionally covers active, archived, internal-only, external-allowed and expired.
 - Token/component ownership: CSS variables in `apps/desktop/src/renderer/styles.css` own visual tokens; shared domain/IPC types own state vocabulary; renderer components must not invent parallel status strings.
 
@@ -84,6 +86,7 @@
 - Success: confirm the resulting state or object, not merely that a request completed.
 - Disabled: explain the prerequisite or policy owner; do not silently disable.
 - Offline/slow network: distinguish local availability from provider/MCP availability; memory management and local history remain usable.
+- Background boundary: check-in scheduling only runs while the Nexa process is alive and opt-in is enabled. Closing the app on Windows/Linux stops it; notification OS/background delivery is future work and must not be implied in copy.
 
 ## Content voice
 
@@ -98,6 +101,7 @@
 - Performance constraints: preserve the existing startup and memory budgets; local memory retrieval is bounded and must not trigger an additional LLM call.
 - Compatibility constraints: renderer remains untrusted, has no direct network/filesystem/secret access, and all inputs cross validated IPC.
 - Privacy constraints: memory is encrypted at rest, manually confirmed, bounded in context, scoped to a conversation or globally, and internal-only by default. External-provider sharing is explicit per fact and filtered again immediately before model invocation.
+- Activity/check-in constraints: global preference stays in encrypted profile settings; check-in operational rows contain no duplicated sensitive content; all timeline/check-in IPC is bound to the current profile in main. Existing confirmation, payload binding, tool authorization and uncertain-operation recovery remain unchanged.
 - Test/screenshot expectations: targeted unit/integration tests, full `pnpm verify`, Electron E2E for critical memory flows, and Playwright screenshots at default and narrow desktop widths for major new surfaces.
 
 ## Open questions

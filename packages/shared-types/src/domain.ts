@@ -87,6 +87,88 @@ export interface Commitment {
   readonly updatedAt: string
 }
 
+export const CHECK_IN_TRIGGER_KINDS = ['due', 'check_in'] as const
+export type CheckInTriggerKind = (typeof CHECK_IN_TRIGGER_KINDS)[number]
+
+export const CHECK_IN_STATES = ['pending', 'acted', 'snoozed', 'dismissed', 'muted'] as const
+export type CheckInState = (typeof CHECK_IN_STATES)[number]
+
+export interface CheckInSuggestion {
+  readonly id: string
+  readonly commitmentId: string
+  readonly title: string
+  readonly nextAction: string | null
+  readonly sourceConversationId: string | null
+  readonly triggerKind: CheckInTriggerKind
+  readonly triggerAt: string
+  readonly state: CheckInState
+  readonly snoozedUntil: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export const ACTIVITY_TYPES = [
+  'suggestion',
+  'memory_mutation',
+  'commitment_mutation',
+  'tool_preview',
+  'confirmation',
+  'tool_result',
+  'uncertain_operation',
+] as const
+export type ActivityType = (typeof ACTIVITY_TYPES)[number]
+
+export const ACTIVITY_STATUSES = [
+  'pending',
+  'success',
+  'failed',
+  'cancelled',
+  'uncertain',
+  'snoozed',
+  'dismissed',
+  'muted',
+] as const
+export type ActivityStatus = (typeof ACTIVITY_STATUSES)[number]
+
+export const ACTIVITY_SUBJECT_TYPES = ['memory', 'commitment', 'tool'] as const
+export type ActivitySubjectType = (typeof ACTIVITY_SUBJECT_TYPES)[number]
+
+export const ACTIVITY_ACTIONS = [
+  'generated',
+  'acted',
+  'snoozed',
+  'dismissed',
+  'muted',
+  'unmuted',
+  'created',
+  'updated',
+  'archived',
+  'restored',
+  'deleted',
+  'requested',
+  'approved',
+  'cancelled',
+  'expired',
+  'completed',
+  'failed',
+  'became_uncertain',
+  'resolved',
+] as const
+export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number]
+
+export interface ActivityEvent {
+  readonly id: string
+  readonly type: ActivityType
+  readonly action: ActivityAction
+  readonly status: ActivityStatus
+  readonly subjectType: ActivitySubjectType | null
+  readonly subjectId: string | null
+  readonly subjectLabel: string | null
+  readonly requestId: string | null
+  readonly operationId: string | null
+  readonly createdAt: string
+}
+
 export interface Message {
   readonly id: string
   readonly conversationId: string

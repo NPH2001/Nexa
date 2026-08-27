@@ -245,9 +245,7 @@ test.describe('E2E — cấu hình và chat', () => {
       await h.page
         .getByLabel(/Kết quả muốn đạt/)
         .fill('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành')
-      await h.page
-        .getByLabel(/Bước tiếp theo/)
-        .fill('Chốt danh sách năm người dùng thử nghiệm')
+      await h.page.getByLabel(/Bước tiếp theo/).fill('Chốt danh sách năm người dùng thử nghiệm')
       await h.page.getByRole('button', { name: 'Tạo cam kết' }).click()
 
       await expect(h.page.getByText('Đã tạo cam kết.')).toBeVisible()
@@ -286,9 +284,7 @@ test.describe('E2E — cấu hình và chat', () => {
         })
         await h.page.setViewportSize({ width: 1280, height: 860 })
       }
-      await todayCommitments
-        .getByRole('button', { name: /Hoàn tất kế hoạch pilot Nexa/ })
-        .click()
+      await todayCommitments.getByRole('button', { name: /Hoàn tất kế hoạch pilot Nexa/ }).click()
 
       await expect(h.page.getByRole('heading', { name: 'Mục tiêu & cam kết' })).toBeVisible()
       await h.page
@@ -312,9 +308,123 @@ test.describe('E2E — cấu hình và chat', () => {
       await expect(dialog).toContainText('Nếu chỉ chưa muốn theo dõi')
       await dialog.getByRole('button', { name: 'Xoá cam kết' }).click()
       await expect(h.page.getByText('Đã xoá vĩnh viễn cam kết.')).toBeVisible()
-      await expect(
-        h.page.getByText('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành'),
-      ).toHaveCount(0)
+      await expect(h.page.getByText('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành')).toHaveCount(
+        0,
+      )
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('proactive check-in là opt-in, bốn action chỉ đổi state local và Activity filter được', async () => {
+    const h = await launch()
+    try {
+      const closeToasts = async (): Promise<void> => {
+        const closeButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await closeButtons.count()) > 0) await closeButtons.first().click()
+      }
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
+
+      const titles = {
+        snooze: 'Check-in E2E — nhắc lại sau',
+        dismiss: 'Check-in E2E — bỏ qua',
+        mute: 'Check-in E2E — không nhắc nữa',
+        act: 'Check-in E2E — thực hiện',
+      } as const
+      for (const title of Object.values(titles)) {
+        await h.page.getByLabel(/Kết quả muốn đạt/).fill(title)
+        await h.page.getByLabel(/Bước tiếp theo/).fill('Mở cam kết và tự quyết định bước tiếp theo')
+        await h.page.getByLabel('Hạn hoàn thành').fill('2020-01-01T09:00')
+        await h.page.getByRole('button', { name: 'Tạo cam kết' }).click()
+        await expect(
+          h.page.getByRole('list', { name: 'Đang theo dõi' }).getByText(title),
+        ).toBeVisible()
+      }
+
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      await expect(h.page.getByRole('heading', { name: 'Cần check-in' })).toBeVisible()
+      await expect(h.page.getByRole('button', { name: 'Bật nhắc việc' })).toBeVisible()
+      await expect(h.page.getByRole('list', { name: 'Check-in cần chú ý' })).toHaveCount(0)
+
+      await h.page.getByRole('button', { name: 'Bật nhắc việc' }).click()
+      const checkIns = h.page.getByRole('list', { name: 'Check-in cần chú ý' })
+      for (const title of Object.values(titles)) {
+        await expect(checkIns.getByText(title)).toBeVisible()
+      }
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        await closeToasts()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({
+          path: join(captureDir, 'check-ins-today-default.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({
+          path: join(captureDir, 'check-ins-today-narrow.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      const itemFor = (title: string) => checkIns.locator('li').filter({ hasText: title })
+      await itemFor(titles.snooze).getByRole('button', { name: 'Nhắc lại sau' }).click()
+      await expect(itemFor(titles.snooze)).toHaveCount(0)
+      await itemFor(titles.dismiss).getByRole('button', { name: 'Bỏ qua' }).click()
+      await expect(itemFor(titles.dismiss)).toHaveCount(0)
+      await itemFor(titles.mute).getByRole('button', { name: 'Không nhắc việc này nữa' }).click()
+      await expect(itemFor(titles.mute)).toHaveCount(0)
+      await itemFor(titles.act).getByRole('button', { name: 'Thực hiện' }).click()
+
+      await expect(h.page.getByRole('heading', { name: 'Mục tiêu & cam kết' })).toBeVisible()
+      const mutedCard = h.page
+        .getByRole('list', { name: 'Đang theo dõi' })
+        .locator('li')
+        .filter({ hasText: titles.mute })
+      await expect(mutedCard.getByText('Đã tắt nhắc')).toBeVisible()
+      await mutedCard.getByRole('button', { name: 'Bật lại nhắc' }).click()
+      await expect(h.page.getByText('Đã bật lại nhắc việc cho cam kết.')).toBeVisible()
+
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      await expect(checkIns.getByText(titles.mute)).toBeVisible()
+
+      await h.page.getByRole('button', { name: 'Hoạt động' }).click()
+      await expect(h.page.getByRole('heading', { name: 'Hoạt động' })).toBeVisible()
+      await h.page.getByLabel('Loại hoạt động').selectOption('suggestion')
+      await h.page.getByLabel('Trạng thái').selectOption('muted')
+      const activity = h.page.getByRole('list', { name: 'Timeline hoạt động' })
+      await expect(activity.getByText(titles.mute)).toBeVisible()
+      await expect(activity.getByText('Đã tắt nhắc', { exact: true }).first()).toBeVisible()
+      await expect(activity.getByText(titles.snooze)).toHaveCount(0)
+
+      await h.page.getByLabel('Trạng thái').selectOption('all')
+      await expect(activity.getByText('Đã nhắc lại sau', { exact: true }).first()).toBeVisible()
+      await expect(activity.getByText('Đã bỏ qua', { exact: true }).first()).toBeVisible()
+      await expect(activity.getByText('Đã bật lại nhắc', { exact: true }).first()).toBeVisible()
+
+      if (captureDir !== undefined && captureDir !== '') {
+        await closeToasts()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({
+          path: join(captureDir, 'activity-default.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({
+          path: join(captureDir, 'activity-narrow.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      await h.page.getByRole('button', { name: 'Tắt nhắc việc' }).click()
+      await expect(h.page.getByRole('button', { name: 'Bật nhắc việc' })).toBeVisible()
+      await expect(h.page.getByRole('list', { name: 'Check-in cần chú ý' })).toHaveCount(0)
     } finally {
       await h.close()
     }

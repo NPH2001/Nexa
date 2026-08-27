@@ -90,6 +90,14 @@ export function Sidebar(props: {
         >
           Mục tiêu
         </button>
+        <button
+          type="button"
+          className={`btn btn-block ${props.view === 'activity' ? 'btn-active' : ''}`}
+          aria-current={props.view === 'activity' ? 'page' : undefined}
+          onClick={() => props.onChangeView('activity')}
+        >
+          Hoạt động
+        </button>
         <button type="button" className="btn btn-primary btn-block" onClick={props.onCreate}>
           + Hội thoại mới
         </button>

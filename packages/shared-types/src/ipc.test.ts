@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { IPC_CHANNEL_NAMES, NEXA_EVENTS } from './channels.js'
+import { DEFAULT_APP_SETTINGS } from './settings.js'
 import {
+  activityListSchema,
+  checkInRespondSchema,
   commitmentCreateSchema,
   commitmentUpdateSchema,
   memoryCreateSchema,
@@ -74,5 +78,62 @@ describe('commitment IPC schemas', () => {
       status: 'completed',
       dueAt: null,
     })
+  })
+})
+
+describe('check-in IPC schemas', () => {
+  it('keeps proactive check-ins opt-in for every new profile', () => {
+    expect(DEFAULT_APP_SETTINGS.proactiveCheckInsEnabled).toBe(false)
+  })
+
+  it('requires snoozeMinutes only for snoozed actions', () => {
+    expect(
+      checkInRespondSchema.parse({
+        id: '91f4f2a1-46a7-4ab4-b596-c0d53bb8708d',
+        action: 'snoozed',
+        snoozeMinutes: 1440,
+      }),
+    ).toEqual({
+      id: '91f4f2a1-46a7-4ab4-b596-c0d53bb8708d',
+      action: 'snoozed',
+      snoozeMinutes: 1440,
+    })
+
+    expect(() =>
+      checkInRespondSchema.parse({
+        id: '91f4f2a1-46a7-4ab4-b596-c0d53bb8708d',
+        action: 'snoozed',
+      }),
+    ).toThrow(/snoozeMinutes/i)
+
+    expect(() =>
+      checkInRespondSchema.parse({
+        id: '91f4f2a1-46a7-4ab4-b596-c0d53bb8708d',
+        action: 'acted',
+        snoozeMinutes: 60,
+      }),
+    ).toThrow(/snoozeMinutes/i)
+  })
+
+  it('applies safe defaults for activity listing', () => {
+    expect(activityListSchema.parse({})).toEqual({ limit: 200, offset: 0 })
+  })
+})
+
+describe('shared IPC allowlists', () => {
+  it('publishes check-in and activity channels to preload', () => {
+    expect(IPC_CHANNEL_NAMES).toEqual(
+      expect.arrayContaining([
+        'checkin:list',
+        'checkin:setEnabled',
+        'checkin:respond',
+        'checkin:unmute',
+        'activity:list',
+      ]),
+    )
+  })
+
+  it('publishes check-in refresh events to renderer', () => {
+    expect(NEXA_EVENTS.checkInsChanged).toBe('nexa:checkins-changed')
   })
 })
