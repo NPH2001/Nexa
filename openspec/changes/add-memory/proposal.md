@@ -1,38 +1,48 @@
 ## Why
 
-Nexa hiện không nhớ gì giữa các hội thoại: mỗi hội thoại mới bắt đầu từ số 0, và trong một hội thoại dài, message cũ bị âm thầm loại bỏ khỏi context (sliding window trong `context-builder.ts`) khi vượt token budget — không tóm tắt, không lưu lại. Đây là một hạn chế đã được ghi nhận có chủ đích ở `docs/OPEN-QUESTIONS.md` (mục B2) và `docs/architecture/adr/0006-tool-calling-loop.md`, để lại như "scope thêm" cho ai cần. Người dùng phải tự lặp lại thông tin cá nhân/sở thích (ví dụ ngôn ngữ lập trình hay dùng, cách xưng hô) ở mỗi hội thoại mới, và không có cách nào phục hồi ngữ cảnh đã bị cắt trong một hội thoại dài ngoài việc bắt đầu hội thoại mới hoặc đổi model có context window lớn hơn (theo `docs/RUNBOOK.md`).
+Nexa đang lưu lịch sử hội thoại nhưng chưa có trí nhớ dài hạn: hội thoại mới bắt đầu từ số 0,
+còn message cũ bị sliding-window loại khỏi context khi vượt token budget. Người dùng vì thế phải
+lặp lại cách xưng hô, sở thích, mục tiêu và ràng buộc ổn định. Một companion cần continuity, nhưng
+continuity không được đánh đổi bằng việc tự thu thập hoặc gửi dữ liệu cá nhân ra ngoài.
 
-Change này bổ sung một cơ chế memory gồm hai phần: **short-term memory** (formalize hành vi sliding-window hiện có, không đổi cách hoạt động) và **long-term memory** (mới — lưu các fact/preference do người dùng xác nhận rõ ràng, tồn tại xuyên suốt mọi hội thoại).
+Change này bổ sung long-term memory được người dùng quản lý rõ ràng, mã hoá local-first và lọc
+theo phạm vi/provider. Short-term memory vẫn là sliding window hiện tại, không thêm một lượt LLM,
+embedding hoặc auto-summary.
 
 ## What Changes
 
-- Thêm bảng `memory_facts` mới trong `local-store` (migration v5) để lưu fact/preference dạng văn bản ngắn, mã hoá field-level như các bảng khác, gắn theo `profile_id`.
-- Thêm `MemoryRepository` (hoặc mở rộng `local-store`) với các thao tác: tạo, liệt kê (theo profile, chỉ fact còn hiệu lực), lưu trữ (archive), xoá fact.
-- Thêm `MemoryService` trong `apps/desktop/src/main/services.ts`, wired vào `NexaServices` giống các service hiện có.
-- Thêm IPC channel mới: `memory:list`, `memory:create`, `memory:archive`, `memory:delete` — cặp đôi trong `shared-types/channels.ts` và `shared-types/ipc.ts` theo đúng convention hiện có (bắt buộc khớp key giữa hai file).
-- Thêm `MemoryFact` type vào `shared-types/domain.ts`.
-- Sửa `ChatController.runTurn` để load toàn bộ fact còn hiệu lực của profile hiện tại (qua `MemoryService`) trước khi gọi `AgentRuntime.runTurn`, và truyền vào như một input mới.
-- Sửa `context-builder.ts` (`buildContext`/`BuildContextInput`) để nhận thêm danh sách memory facts, luôn giữ chúng trong context (ưu tiên như system prompt, không tính vào phần bị cắt bởi sliding window), và format thành một đoạn ngắn chèn ngay sau system prompt.
-- Formalize hành vi hiện có của `context-builder.ts` (sliding window, giữ N message gần nhất theo token budget, bỏ message cũ không tóm tắt) như "short-term memory" trong spec — **không đổi hành vi**, chỉ đặc tả rõ ràng và đảm bảo nó phối hợp đúng với budget của long-term memory facts.
-- Thêm UI trong `apps/desktop/src/renderer`: một khu vực (Settings hoặc màn hình riêng) để người dùng xem, thêm, sửa, xoá các fact đã lưu; và một luồng xác nhận khi agent đề xuất một fact mới phát hiện được trong hội thoại (agent không tự lưu ngầm — người dùng luôn phải xác nhận qua UI hoặc qua phản hồi tường minh trong chat).
-- Đưa bảng `memory_facts` vào `RetentionService` (loại trừ khỏi xoá tự động theo `historyRetentionDays`, vì fact là long-term theo thiết kế) và vào cascade của `data:purge` IPC handler (bắt buộc bị xoá khi người dùng xoá toàn bộ dữ liệu).
-- Không dùng embedding/vector store, không dùng tóm tắt tự động bằng LLM — cả hai bị loại khỏi scope này (xem `design.md`).
+- Thêm migration v5 và `MemoryRepository` cho fact đã mã hoá, gắn `profile_id`.
+- Mỗi fact có `kind`, `scope`, `sharingPolicy`, `status`, provenance, thời điểm xác nhận và expiry.
+- Thêm IPC `memory:list/create/update/archive/restore/delete`; renderer không được chọn profile.
+- Thêm tab **Nexa nhớ** để người dùng tự thêm/sửa/archive/khôi phục/xoá và quyết định fact nào có
+  thể đi tới provider ngoài tổ chức.
+- Trước mỗi lượt chat, main process lấy các fact active, chưa hết hạn, đúng profile/scope/provider;
+  runtime lọc lại một lần nữa ngay trước model invocation.
+- Context builder chèn tối đa 50 fact mới nhất, dùng tối đa 10% budget, sau base system prompt và
+  ghi rõ fact là dữ liệu cá nhân hoá chứ không phải instruction.
+- Retention history không tự xoá memory; purge profile vẫn xoá toàn bộ bằng foreign-key cascade.
+- Không tự động trích xuất hoặc lưu memory từ hội thoại. Tạo/sửa trong UI là consent rõ ràng.
 
-Không có thay đổi **BREAKING** — đây là bổ sung thuần tuý, không đổi API/schema hiện có (chỉ thêm bảng, thêm channel, thêm field mới trong `RunTurnInput`/`BuildContextInput` dạng optional).
+Không có thay đổi breaking: các input runtime mới là optional và migration chỉ thêm bảng.
 
 ## Capabilities
 
 ### New Capabilities
-- `long-term-memory`: lưu trữ, quản lý (CRUD + xác nhận), và nạp các fact/preference do người dùng khai báo vào context của mọi hội thoại mới.
-- `short-term-memory`: đặc tả chính thức hành vi sliding-window context hiện có của một hội thoại (giữ N message gần nhất theo token budget, không tóm tắt), và quy tắc phối hợp budget với long-term memory facts.
+
+- `long-term-memory`: CRUD, archive/restore, scoping, expiry, provider-aware sharing và context
+  injection cho fact do người dùng xác nhận.
+- `short-term-memory`: đặc tả sliding-window hiện có và cách nó chia budget với long-term memory.
 
 ### Modified Capabilities
-(không có — chưa có spec nào tồn tại trong `openspec/specs/` trước change này; hành vi sliding-window hiện tại chưa từng được đặc tả thành capability, nên đây là spec mới chứ không phải sửa spec cũ)
+
+Không có capability cũ nào bị đổi contract.
 
 ## Impact
 
-- **Code**: `packages/local-store` (migration mới, repository mới), `packages/shared-types` (domain/channels/ipc), `packages/agent-runtime` (`context-builder.ts`, có thể `agent-runtime.ts` nếu `RunTurnInput` cần mở rộng), `apps/desktop/src/main` (`services.ts`, `ipc.ts`, `chat-controller.ts`), `apps/desktop/src/renderer` (UI mới).
-- **Dữ liệu**: bảng SQLite mới (`memory_facts`), context string mã hoá mới (vĩnh viễn, không tái sử dụng context string cũ).
-- **Retention/Purge**: `packages/local-store/src/retention.ts` và `data:purge` handler cần cập nhật để bao gồm bảng mới.
-- **Không** ảnh hưởng `packages/llm-client` (client vẫn chỉ nói HTTP, không biết gì về memory).
-- **Không** thêm dependency mới (không embedding model, không vector DB).
+- **Code:** `packages/local-store`, `packages/shared-types`, `packages/agent-runtime`, Electron main,
+  preload/bridge và renderer Settings.
+- **Dữ liệu:** bảng SQLite `memory_facts`; nội dung dùng encryption context bất biến
+  `memory_facts.content`.
+- **Privacy:** mặc định `internal_only`; external provider chỉ nhận fact `allow_external`.
+- **Operations:** diagnostics chỉ log provider và số lượng fact, không log plaintext.
+- **Dependencies:** không thêm package, vector DB, embedding model hoặc LLM call phụ.

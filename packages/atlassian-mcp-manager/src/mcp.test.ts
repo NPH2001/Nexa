@@ -8,6 +8,7 @@ import {
   SECRET_ENV_KEYS,
 } from './index.js'
 import { DEFAULT_ATLASSIAN_MCP_SPEC } from './server-spec.js'
+import { MAX_RESULT_CHARS_FOR_MODEL, summarizeGeneric } from './tool-registry/shared.js'
 import { testLogger } from '../../../tests/support/factories.js'
 
 const MOCK_SERVER = join(process.cwd(), 'tests/fixtures/mock-mcp-server.mjs')
@@ -263,6 +264,22 @@ describe('input validation (§9.1, §11.3)', () => {
 })
 
 describe('result handling', () => {
+  it('keeps facts that previously fell after the old 4,000-character cutoff', () => {
+    const fact = 'FACT-QUAN-TRONG: deadline 2026-09-30'
+    const summary = summarizeGeneric(`${'x'.repeat(5_000)}${fact}`)
+
+    expect(summary.forModel).toContain(fact)
+    expect(summary.incomplete).not.toBe(true)
+  })
+
+  it('marks very long generic results as incomplete instead of silently presenting them as full', () => {
+    const summary = summarizeGeneric('x'.repeat(MAX_RESULT_CHARS_FOR_MODEL + 2_000))
+
+    expect(summary.incomplete).toBe(true)
+    expect(summary.completenessNote).toContain('chưa được đưa vào ngữ cảnh')
+    expect(summary.forModel.length).toBeLessThanOrEqual(MAX_RESULT_CHARS_FOR_MODEL)
+  })
+
   it('summarises a Jira issue and keeps the target link', async () => {
     const { manager } = makeManager()
     await manager.start()
@@ -271,6 +288,9 @@ describe('result handling', () => {
     expect(outcome.summary.targetKey).toBe('PRJ-42')
     expect(outcome.summary.targetUrl).toBe(`${JIRA_URL}/browse/PRJ-42`)
     expect(outcome.summary.forModel).toContain('Tiêu đề của PRJ-42')
+    expect(outcome.summary.forModel).toContain('"priority":"High"')
+    expect(outcome.summary.forModel).toContain('"labels":["backend","pilot"]')
+    expect(outcome.summary.forModel).toContain('"reporter":"tran.thi.b"')
   })
 
   it('summarises a flat Confluence page payload', async () => {

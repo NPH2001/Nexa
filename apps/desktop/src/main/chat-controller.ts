@@ -3,8 +3,10 @@ import {
   ERROR_CODES,
   NEXA_EVENTS,
   NexaError,
+  isExternalProvider,
   type ChatDeltaEvent,
   type ChatDoneEvent,
+  type ChatErrorEvent,
   type ChatSendInput,
   type ConfirmationRequest,
   type LlmProvider,
@@ -270,6 +272,20 @@ export class ChatController {
         // Bỏ message assistant rỗng vừa tạo làm chỗ giữ chỗ.
         .filter((m) => m.content !== '')
 
+      // Memory được chọn trong main process để renderer không thể tự gắn fact của profile khác.
+      // Repository lọc scope/expiry/chính sách chia sẻ; runtime lọc lại theo provider như một
+      // lớp phòng thủ thứ hai trước khi dựng prompt.
+      const memoryFacts = this.services.memory
+        .listForContext(this.services.profileId, {
+          conversationId,
+          externalProvider: isExternalProvider(params.modelProvider),
+        })
+        .map((fact) => ({
+          content: fact.content,
+          kind: fact.kind,
+          sharingPolicy: fact.sharingPolicy,
+        }))
+
       const result = await runtime.runTurn({
         requestId,
         conversationId,
@@ -277,6 +293,7 @@ export class ChatController {
         modelProvider: params.modelProvider,
         contextWindowTokens: params.contextWindowTokens,
         history,
+        ...(memoryFacts.length > 0 ? { memoryFacts } : {}),
         ...(params.documents.length > 0 ? { documents: params.documents } : {}),
         signal: params.controller.signal,
         toolCalls: sink,
@@ -330,11 +347,19 @@ export class ChatController {
     } catch (error) {
       const nexa = NexaError.wrap(error)
       const cancelled = nexa.code === ERROR_CODES.LLM_CANCELLED
+      const persistedText =
+        text.trim() !== ''
+          ? text
+          : cancelled
+            ? 'Đã dừng theo yêu cầu.'
+            : `Mình chưa thể hoàn tất yêu cầu này. ${nexa.message}${
+                nexa.hint === undefined ? '' : ` ${nexa.hint}`
+              }`
 
       // Giữ lại phần text đã stream: người dùng đã đọc nó, xoá đi là mất thông tin.
       this.services.conversations.finalizeMessage(
         assistantMessageId,
-        text,
+        persistedText,
         cancelled ? 'cancelled' : 'error',
         { errorCode: nexa.code },
       )
@@ -347,11 +372,16 @@ export class ChatController {
       })
 
       this.log.warn('chat-turn-failed', { requestId, errorCode: nexa.code })
-      this.emit(NEXA_EVENTS.chatError, {
+      this.emit<ChatErrorEvent>(NEXA_EVENTS.chatError, {
         request_id: requestId,
         conversationId,
         messageId: assistantMessageId,
-        error: { code: nexa.code, message: nexa.message, retryable: nexa.retryable },
+        error: {
+          code: nexa.code,
+          message: nexa.message,
+          retryable: nexa.retryable,
+          ...(nexa.hint !== undefined ? { hint: nexa.hint } : {}),
+        },
       })
     } finally {
       this.inFlight.delete(requestId)

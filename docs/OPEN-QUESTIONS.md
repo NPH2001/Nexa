@@ -247,6 +247,13 @@ KDF (Argon2id) bọc ngoài. Không nhỏ.
 **Giả định đã dùng:** sliding window — luôn giữ system prompt + N message gần nhất vừa trong budget
 token, message cũ bị **bỏ** (không tóm tắt). UI hiện chỉ báo "đã lược bỏ X tin nhắn cũ".
 
+**Cập nhật 2026-08-26:** đã có long-term memory do người dùng tự xác nhận. Memory không thay thế
+sliding window và không tóm tắt hội thoại: tối đa 50 fact mới nhất, dùng tối đa 10% budget context,
+được chèn sau system prompt. Fact có scope `conversation` chỉ đi vào đúng hội thoại; fact hết hạn
+hoặc archived không được dùng. Mặc định fact là `internal_only`; chỉ fact được đánh dấu
+`allow_external` mới được gửi khi dùng provider ngoài tổ chức. Người dùng quản lý toàn bộ tại
+**Cài đặt → Nexa nhớ**; Nexa không tự động lưu fact từ hội thoại.
+
 Không tóm tắt vì tóm tắt = thêm một lần gọi LLM ⇒ thêm chi phí, thêm độ trễ, thêm rủi ro rò rỉ nội
 dung sang model. Nếu bạn muốn có tóm tắt, đó là scope thêm.
 
@@ -764,11 +771,11 @@ nhật số 6 trong `tool-preset.test.ts`.
 
 **Bối cảnh:** bộ chọn bỏ dấu trước khi khớp từ khoá, và việc đó sinh ra trùng lặp thật:
 
-| Cụm | Bỏ dấu thành | Trùng với | Đã xử lý |
-| --- | --- | --- | --- |
-| "trạng thái" | `trang thai` | `trang` (dấu hiệu Confluence) | gỡ cụm trước khi khớp |
-| "hoạt động" | `hoat dong` | `dong` ("đóng" — động từ write) | **bỏ** `dong` khỏi danh sách |
-| "gần đây" | `gan day` | `gan` ("gán" — động từ write) | **bỏ** `gan` khỏi danh sách |
+| Cụm          | Bỏ dấu thành | Trùng với                       | Đã xử lý                     |
+| ------------ | ------------ | ------------------------------- | ---------------------------- |
+| "trạng thái" | `trang thai` | `trang` (dấu hiệu Confluence)   | gỡ cụm trước khi khớp        |
+| "hoạt động"  | `hoat dong`  | `dong` ("đóng" — động từ write) | **bỏ** `dong` khỏi danh sách |
+| "gần đây"    | `gan day`    | `gan` ("gán" — động từ write)   | **bỏ** `gan` khỏi danh sách  |
 
 **Câu hỏi:** còn cụm nào tương tự trong câu hỏi thật của người dùng? Danh sách này được xây từ suy
 luận, không từ dữ liệu.

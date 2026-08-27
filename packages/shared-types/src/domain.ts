@@ -36,6 +36,57 @@ export interface Conversation {
   readonly messageCount: number
 }
 
+export const MEMORY_FACT_KINDS = ['identity', 'preference', 'goal', 'constraint', 'note'] as const
+export type MemoryFactKind = (typeof MEMORY_FACT_KINDS)[number]
+
+export const MEMORY_FACT_SCOPES = ['global', 'conversation'] as const
+export type MemoryFactScope = (typeof MEMORY_FACT_SCOPES)[number]
+
+export const MEMORY_SHARING_POLICIES = ['internal_only', 'allow_external'] as const
+export type MemorySharingPolicy = (typeof MEMORY_SHARING_POLICIES)[number]
+
+export const MEMORY_FACT_STATUSES = ['active', 'archived'] as const
+export type MemoryFactStatus = (typeof MEMORY_FACT_STATUSES)[number]
+
+export interface MemoryFact {
+  readonly id: string
+  readonly profileId: string
+  readonly content: string
+  readonly kind: MemoryFactKind
+  readonly scope: MemoryFactScope
+  readonly sharingPolicy: MemorySharingPolicy
+  readonly status: MemoryFactStatus
+  readonly sourceConversationId: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly lastConfirmedAt: string | null
+  readonly expiresAt: string | null
+}
+
+export const COMMITMENT_STATUSES = ['active', 'blocked', 'paused', 'completed'] as const
+export type CommitmentStatus = (typeof COMMITMENT_STATUSES)[number]
+
+/**
+ * Một kết quả người dùng chủ động yêu cầu Nexa theo dõi xuyên nhiều phiên làm việc.
+ *
+ * Khác với memory `kind=goal`, commitment là state công việc thay đổi thường xuyên: có bước tiếp
+ * theo, thời điểm cần quay lại và lifecycle rõ ràng. Các trường nội dung đã giải mã ở biên domain;
+ * trong SQLite chúng luôn là ciphertext.
+ */
+export interface Commitment {
+  readonly id: string
+  readonly profileId: string
+  readonly title: string
+  readonly nextAction: string | null
+  readonly status: CommitmentStatus
+  readonly dueAt: string | null
+  readonly checkInAt: string | null
+  readonly completedAt: string | null
+  readonly sourceConversationId: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
 export interface Message {
   readonly id: string
   readonly conversationId: string
@@ -243,3 +294,8 @@ export interface ModelConfig {
 
 /** Chỉ giữ schema thật sự được dùng ở biên IPC. */
 export const connectionTypeSchema = z.enum(CONNECTION_TYPES)
+export const memoryFactKindSchema = z.enum(MEMORY_FACT_KINDS)
+export const memoryFactScopeSchema = z.enum(MEMORY_FACT_SCOPES)
+export const memorySharingPolicySchema = z.enum(MEMORY_SHARING_POLICIES)
+export const memoryFactStatusSchema = z.enum(MEMORY_FACT_STATUSES)
+export const commitmentStatusSchema = z.enum(COMMITMENT_STATUSES)

@@ -74,6 +74,22 @@ export function Sidebar(props: {
     <aside className="sidebar">
       <div className="sidebar-top">
         <div className="brand">Nexa</div>
+        <button
+          type="button"
+          className={`btn btn-block ${props.view === 'today' ? 'btn-active' : ''}`}
+          aria-current={props.view === 'today' ? 'page' : undefined}
+          onClick={() => props.onChangeView('today')}
+        >
+          Hôm nay
+        </button>
+        <button
+          type="button"
+          className={`btn btn-block ${props.view === 'goals' ? 'btn-active' : ''}`}
+          aria-current={props.view === 'goals' ? 'page' : undefined}
+          onClick={() => props.onChangeView('goals')}
+        >
+          Mục tiêu
+        </button>
         <button type="button" className="btn btn-primary btn-block" onClick={props.onCreate}>
           + Hội thoại mới
         </button>

@@ -1,55 +1,55 @@
 ## 1. Local-store: schema & repository
 
-- [ ] 1.1 Thêm migration v5 trong `packages/local-store/src/migrations.ts`: tạo bảng `memory_facts` (id, profile_id, content_ciphertext, status, source_conversation_id, created_at, updated_at) + index trên `profile_id`; cập nhật `LATEST_SCHEMA_VERSION`.
-- [ ] 1.2 Thêm context string mã hoá mới `memory_facts.content` vào `CTX` constants (theo pattern trong `conversation-repository.ts`), không tái sử dụng context cũ.
-- [ ] 1.3 Tạo `MemoryRepository` mới trong `packages/local-store/src/repositories/` với: `create(profileId, content, sourceConversationId?)`, `listActive(profileId)`, `update(id, content)`, `archive(id)`, `delete(id)`.
-- [ ] 1.4 Wire `MemoryRepository` vào `LocalStore` (cipher callbacks giống các repository khác).
-- [ ] 1.5 Viết test cho migration v5 (schema đúng, cột đúng) và test CRUD của `MemoryRepository` (create/listActive/update/archive/delete, mã hoá/giải mã round-trip).
+- [x] 1.1 Thêm migration v5 tạo `memory_facts` với kind, scope, sharing policy, status, provenance, expiry và index theo profile/status.
+- [x] 1.2 Dùng context mã hoá bất biến `memory_facts.content`; xác nhận plaintext không xuất hiện trong SQLite hoặc log.
+- [x] 1.3 Tạo `MemoryRepository` với CRUD, archive/restore và retrieval theo profile, conversation, expiry và provider.
+- [x] 1.4 Giữ fact khi xoá hội thoại nguồn bằng `ON DELETE SET NULL`; cascade khi purge profile.
+- [x] 1.5 Test migration, encryption round-trip, CRUD, scoping, provider filtering, expiry, source deletion và purge.
 
 ## 2. Shared types & IPC contract
 
-- [ ] 2.1 Thêm type `MemoryFact` vào `packages/shared-types/src/domain.ts` (id, profileId, content, status, sourceConversationId, createdAt, updatedAt).
-- [ ] 2.2 Thêm channel `memory:list`, `memory:create`, `memory:update`, `memory:archive`, `memory:delete` vào `IPC_CHANNEL_NAMES` trong `packages/shared-types/src/channels.ts`.
-- [ ] 2.3 Thêm zod schema tương ứng cho từng channel trong `IPC_SCHEMAS` (`packages/shared-types/src/ipc.ts`); đảm bảo compile-time check (channels ↔ schemas khớp key) pass.
-- [ ] 2.4 Chạy typecheck để xác nhận không còn channel nào thiếu schema hoặc thiếu tên.
+- [x] 2.1 Thêm `MemoryFact` và vocabulary: kind, scope, sharing policy, status.
+- [x] 2.2 Thêm `memory:list/create/update/archive/restore/delete` vào channel registry.
+- [x] 2.3 Thêm Zod schema: content 1–500, UUID/datetime, default internal-only, conversation scope cần source, update không rỗng.
+- [x] 2.4 Không nhận `profileId` từ renderer; typecheck channels ↔ schemas và wiring pass.
 
-## 3. Main process: service & IPC wiring
+## 3. Main process & renderer bridge
 
-- [ ] 3.1 Tạo `MemoryService` trong `apps/desktop/src/main` (hoặc trong package phù hợp) bọc `MemoryRepository`, expose các method tương ứng IPC.
-- [ ] 3.2 Thêm `memory` vào `NexaServices` interface và wiring trong `bootstrapServices()` (`apps/desktop/src/main/services.ts`).
-- [ ] 3.3 Thêm handler cho 5 channel `memory:*` trong `buildHandlers()` (`apps/desktop/src/main/ipc.ts`), theo đúng pattern validate + `Envelope` hiện có.
-- [ ] 3.4 Cập nhật preload/`bridge.ts` để expose các API `memory.*` mới cho renderer.
+- [x] 3.1 Wire `MemoryRepository` vào `NexaServices` và bootstrap.
+- [x] 3.2 Thêm handler IPC bind cứng vào profile hiện tại; mutation kiểm tra ownership trước khi chạy.
+- [x] 3.3 Đóng dấu `lastConfirmedAt` trong main process khi người dùng tạo/sửa.
+- [x] 3.4 Expose typed `api.memory.*` qua renderer bridge/preload allowlist.
 
-## 4. Agent runtime: nạp memory fact vào context
+## 4. Agent runtime & privacy boundary
 
-- [ ] 4.1 Thêm field optional `memoryFacts?: string[]` vào `RunTurnInput` (`packages/agent-runtime/src/agent-runtime.ts`) và `BuildContextInput` (`packages/agent-runtime/src/context-builder.ts`).
-- [ ] 4.2 Cập nhật `buildContext()`: format `memoryFacts` thành một đoạn ngắn chèn ngay sau `DEFAULT_SYSTEM_PROMPT`; tính token của đoạn này bằng `estimateTokens()` (tái dùng heuristic có sẵn từ `document-processor`, không viết heuristic mới); trừ vào `available` budget trước khi fit documents/history.
-- [ ] 4.3 Áp trần số lượng/token cho `memoryFacts` (ví dụ tối đa 50 fact hoặc X% budget); nếu vượt, chỉ giữ các fact mới nhất theo thứ tự đầu vào (caller đã sort theo `updated_at` giảm dần).
-- [ ] 4.4 Đảm bảo khi `memoryFacts` rỗng hoặc không truyền, hành vi `buildContext()` không đổi so với hiện tại (kiểm tra bằng test hồi quy).
-- [ ] 4.5 Viết test cho `context-builder.ts`: có fact + history dài vượt budget → fact được giữ, history bị cắt trước; fact vượt trần → chỉ giữ N fact mới nhất.
+- [x] 4.1 Mở rộng `RunTurnInput`/`BuildContextInput` bằng memory facts có kind và sharing policy.
+- [x] 4.2 Chèn memory sau base system prompt, ghi rõ đây là dữ liệu cá nhân hoá chứ không phải instruction.
+- [x] 4.3 Giới hạn 50 fact mới nhất và 10% available token budget; history/documents hiện tại tiếp tục dùng budget còn lại.
+- [x] 4.4 Lọc `internal_only` khỏi external provider tại repository và lặp lại ngay trước model invocation.
+- [x] 4.5 Log chỉ provider/count; test cap, budget, ordering và provider filtering.
 
-## 5. Chat controller: load fact trước khi gọi runtime
+## 5. Chat controller
 
-- [ ] 5.1 Trong `ChatController.runTurn` (`apps/desktop/src/main/chat-controller.ts`), gọi `services.memory.listActive(profileId)` trước khi gọi `AgentRuntime.runTurn`, decrypt và map thành `string[]` nội dung, sort theo `updated_at` giảm dần.
-- [ ] 5.2 Truyền kết quả vào `RunTurnInput.memoryFacts`.
-- [ ] 5.3 Viết/cập nhật test cho `chat-controller` xác nhận memory fact được load và truyền đúng vào runtime khi có, và không ảnh hưởng khi không có.
+- [x] 5.1 Load memory theo profile + conversation + provider trước mỗi lượt.
+- [x] 5.2 Truyền fact đủ điều kiện vào runtime, không truyền khi rỗng.
+- [x] 5.3 Test controller xác nhận query scope/provider và payload truyền vào runtime.
 
 ## 6. Retention & purge
 
-- [ ] 6.1 Xác nhận `RetentionService` (`packages/local-store/src/retention.ts`) KHÔNG đưa `memory_facts` vào sweep theo `historyRetentionDays`; thêm comment giải thích lý do (fact là long-term, khác `messages`/`conversations`).
-- [ ] 6.2 Cập nhật cascade xoá của `data:purge` handler / `LocalStore.purgeProfile` để xoá toàn bộ `memory_facts` của profile khi purge toàn bộ dữ liệu.
-- [ ] 6.3 Viết test: purge profile xoá hết fact; retention sweep theo tuổi hội thoại không xoá fact; xoá một hội thoại nguồn không xoá fact liên quan (chỉ gỡ `source_conversation_id`).
+- [x] 6.1 Ghi rõ retention history không sweep long-term memory.
+- [x] 6.2 Dựa vào profile cascade để `data:purge` xoá toàn bộ memory.
+- [x] 6.3 Test retention, purge và xoá hội thoại nguồn.
 
 ## 7. Renderer UI
 
-- [ ] 7.1 Thêm màn hình/mục quản lý memory trong `apps/desktop/src/renderer` (ví dụ trong `SettingsView.tsx` hoặc component mới): danh sách fact active, form thêm fact mới, sửa, archive, xoá.
-- [ ] 7.2 Hiển thị cảnh báo khi tạo/sửa fact: nội dung sẽ được gửi kèm trong mọi hội thoại mới.
-- [ ] 7.3 Hiển thị cảnh báo/trạng thái khi số fact gần hoặc vượt trần đã định nghĩa ở task 4.3.
-- [ ] 7.4 Nối UI với API `memory.*` qua `bridge.ts`.
+- [x] 7.1 Thêm tab **Nexa nhớ** với loading/error/empty states và danh sách active/archived.
+- [x] 7.2 Cho phép thêm, sửa, archive, khôi phục và xoá có xác nhận.
+- [x] 7.3 Cho chọn kind, global/conversation scope, provenance và external sharing rõ ràng; mặc định internal-only.
+- [x] 7.4 Hiển thị last-confirmed/provenance/expiry và cảnh báo gần ngưỡng 50 fact; nói rõ không auto-save.
 
 ## 8. Kiểm thử tổng hợp & tài liệu
 
-- [ ] 8.1 Chạy `pnpm verify` (lint + typecheck + test) toàn repo, đảm bảo không phá vỡ test hiện có.
-- [ ] 8.2 Thêm/cập nhật test e2e (`tests/e2e/app.e2e.ts`) cho luồng: thêm fact → mở hội thoại mới → xác nhận fact xuất hiện trong context gửi đi (qua mock LLM server nếu có thể quan sát request).
-- [ ] 8.3 Cập nhật `docs/RUNBOOK.md` và/hoặc `docs/OPEN-QUESTIONS.md` (đánh dấu B2 đã có giải pháp long-term memory, ghi rõ short-term vẫn giữ nguyên sliding-window không tóm tắt).
-- [ ] 8.4 Sau khi merge và deploy ổn định, archive change này qua quy trình `openspec-archive-change`.
+- [x] 8.1 Chạy `pnpm verify` toàn repo và xử lý mọi regression liên quan.
+- [x] 8.2 E2E tạo memory trong Settings rồi kiểm chứng mock LLM nhận fact; integration test runtime xác nhận external provider không nhận `internal_only`.
+- [x] 8.3 Cập nhật `DESIGN.md`, `docs/RUNBOOK.md` và `docs/OPEN-QUESTIONS.md` với contract privacy/scoping thực tế.
+- [ ] 8.4 Sau khi merge/deploy ổn định, archive change qua `openspec-archive-change`.

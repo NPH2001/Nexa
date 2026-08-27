@@ -384,7 +384,74 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE messages DROP COLUMN deleted_at;
     `,
   },
+
+  {
+    version: 5,
+    name: 'memory-facts',
+    /**
+     * Scoped long-term memory.
+     *
+     * `source_conversation_id` vừa có thể là provenance của fact global, vừa có thể là anchor
+     * cho fact scope='conversation'. Vì fact phải sống tiếp khi hội thoại nguồn bị xoá, FK dùng
+     * ON DELETE SET NULL thay vì CASCADE.
+     */
+    up: `
+      CREATE TABLE memory_facts (
+        id                     TEXT PRIMARY KEY,
+        profile_id             TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        content_ciphertext     TEXT NOT NULL,
+        kind                   TEXT NOT NULL CHECK (kind IN ('identity','preference','goal','constraint','note')),
+        scope                  TEXT NOT NULL CHECK (scope IN ('global','conversation')),
+        sharing_policy         TEXT NOT NULL CHECK (sharing_policy IN ('internal_only','allow_external')),
+        status                 TEXT NOT NULL CHECK (status IN ('active','archived')),
+        source_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL,
+        last_confirmed_at      TEXT,
+        expires_at             TEXT
+      );
+      CREATE INDEX idx_memory_facts_profile_status_updated
+        ON memory_facts(profile_id, status, updated_at DESC);
+      CREATE INDEX idx_memory_facts_source_conversation
+        ON memory_facts(source_conversation_id);
+    `,
+    down: `
+      DROP TABLE IF EXISTS memory_facts;
+    `,
+  },
+  {
+    version: 6,
+    name: 'commitment-engine',
+    /**
+     * Commitments là state công việc bền vững, tách khỏi memory facts. Outcome và next action có
+     * thể lộ kế hoạch nội bộ nên đều mã hoá. Hội thoại nguồn chỉ là provenance; xoá hội thoại
+     * không được làm mất commitment, còn purge profile phải cascade toàn bộ.
+     */
+    up: `
+      CREATE TABLE commitments (
+        id                       TEXT PRIMARY KEY,
+        profile_id               TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        title_ciphertext         TEXT NOT NULL,
+        next_action_ciphertext   TEXT,
+        status                   TEXT NOT NULL CHECK (status IN ('active','blocked','paused','completed')),
+        due_at                   TEXT,
+        check_in_at              TEXT,
+        completed_at             TEXT,
+        source_conversation_id   TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+        created_at               TEXT NOT NULL,
+        updated_at               TEXT NOT NULL
+      );
+      CREATE INDEX idx_commitments_profile_status_updated
+        ON commitments(profile_id, status, updated_at DESC);
+      CREATE INDEX idx_commitments_profile_attention
+        ON commitments(profile_id, status, check_in_at, due_at);
+      CREATE INDEX idx_commitments_source_conversation
+        ON commitments(source_conversation_id);
+    `,
+    down: `
+      DROP TABLE IF EXISTS commitments;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0
-

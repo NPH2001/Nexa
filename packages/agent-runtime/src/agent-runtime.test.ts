@@ -458,8 +458,14 @@ describe('AgentRuntime — vòng lặp tool', () => {
       script: [
         {
           toolCalls: [
-            { name: 'jira_create_issue', args: { project_key: 'PRJ', summary: 'A', issue_type: 'Task' } },
-            { name: 'jira_create_issue', args: { project_key: 'PRJ', summary: 'B', issue_type: 'Task' } },
+            {
+              name: 'jira_create_issue',
+              args: { project_key: 'PRJ', summary: 'A', issue_type: 'Task' },
+            },
+            {
+              name: 'jira_create_issue',
+              args: { project_key: 'PRJ', summary: 'B', issue_type: 'Task' },
+            },
           ],
         },
         { text: 'Đã tạo một task.' },
@@ -520,14 +526,81 @@ describe('AgentRuntime — vòng lặp tool', () => {
       scenario: 'auth-failed',
     })
 
-    await h.run()
+    const result = await h.run()
     expect(h.llm.turnsConsumed).toBe(1)
+    expect(result.text).toContain('chưa thể hoàn tất')
+    expect(result.text).toContain('Kiểm tra lại PAT')
+  })
+
+  it('nói rõ khi câu trả lời bị cắt bởi giới hạn output của model', async () => {
+    const h = await makeHarness({
+      script: [{ text: 'Đây là phần đầu câu trả lời.', finishReason: 'length' }],
+    })
+
+    const result = await h.run()
+
+    expect(result.text).toContain('Đây là phần đầu câu trả lời.')
+    expect(result.text).toContain('chưa đầy đủ')
+    expect(result.text).toContain('tiếp tục')
+    expect(h.emitted).toContainEqual(
+      expect.objectContaining({
+        type: 'text-delta',
+        delta: expect.stringContaining('chưa đầy đủ'),
+      }),
+    )
+  })
+
+  it('không hoàn tất bằng câu trả lời rỗng khi model dừng mà không trả text', async () => {
+    const h = await makeHarness({ script: [{ text: '' }] })
+
+    const result = await h.run()
+
+    expect(result.text).toContain('không nhận được nội dung trả lời')
+    expect(result.text).toContain('thử lại')
+    expect(h.emitted).toContainEqual(
+      expect.objectContaining({
+        type: 'text-delta',
+        delta: expect.stringContaining('không nhận được nội dung trả lời'),
+      }),
+    )
+  })
+
+  it('gắn cảnh báo có cấu trúc vào tool result bị rút gọn trước khi gọi model lần hai', async () => {
+    const h = await makeHarness({
+      script: [
+        { toolCalls: [{ name: 'jira_get_issue', args: { issue_key: 'PRJ-1' } }] },
+        { text: 'Tôi chỉ kết luận trên phần dữ liệu đã nhận.' },
+      ],
+    })
+    const callTool = vi.spyOn(AtlassianMcpManager.prototype, 'callTool').mockResolvedValueOnce({
+      rawText: 'raw-result',
+      summary: {
+        forModel: 'phần dữ liệu còn giữ lại',
+        forUser: 'Đã đọc issue PRJ-1',
+        incomplete: true,
+        completenessNote: '2.000 ký tự chưa được đưa vào ngữ cảnh.',
+      },
+    })
+
+    try {
+      await h.run()
+    } finally {
+      callTool.mockRestore()
+    }
+
+    const messages = h.llm.requests[1]?.messages ?? []
+    const toolResult = messages.find((message) => message.role === 'tool')
+    expect(toolResult?.content).toContain('[KẾT QUẢ CÔNG CỤ CHƯA ĐẦY ĐỦ]')
+    expect(toolResult?.content).toContain('2.000 ký tự chưa được đưa vào ngữ cảnh')
+    expect(h.sink.byTool('jira_get_issue')[0]?.resultSummary).toContain('chưa đầy đủ')
   })
 
   it('chỉ gửi cho model những tool đang thực sự bật', async () => {
     const h = await makeHarness({
       script: [{ text: 'Xin chào' }],
-      settings: { features: { ...DEFAULT_APP_SETTINGS.features, jiraCreate: false, jiraUpdate: false } },
+      settings: {
+        features: { ...DEFAULT_APP_SETTINGS.features, jiraCreate: false, jiraUpdate: false },
+      },
     })
 
     await h.run()
@@ -783,6 +856,37 @@ describe('chính sách tài liệu theo provider', () => {
       toolCalls: h.sink,
     })
     expect(result.text).toBe('Xin chào từ model ngoài.')
+  })
+
+  it('provider ngoài chỉ nhận memory đã được người dùng cho phép', async () => {
+    const h = await makeHarness({ script: [{ text: 'Đã cá nhân hoá an toàn.' }] })
+
+    await h.runtime.runTurn({
+      requestId: 'req_external_memory',
+      conversationId: '00000000-0000-4000-8000-00000000000f',
+      modelId: 'gpt-4o',
+      modelProvider: 'openai',
+      contextWindowTokens: 128_000,
+      history: [{ role: 'user', content: 'hãy lập kế hoạch' }],
+      memoryFacts: [
+        {
+          kind: 'constraint',
+          content: 'Mã dự án tuyệt mật nội bộ',
+          sharingPolicy: 'internal_only',
+        },
+        {
+          kind: 'preference',
+          content: 'Ưu tiên câu trả lời dạng checklist',
+          sharingPolicy: 'allow_external',
+        },
+      ],
+      emit: () => undefined,
+      toolCalls: h.sink,
+    })
+
+    const sent = JSON.stringify(h.llm.requests[0]?.messages ?? [])
+    expect(sent).toContain('Ưu tiên câu trả lời dạng checklist')
+    expect(sent).not.toContain('Mã dự án tuyệt mật nội bộ')
   })
 })
 
@@ -1112,7 +1216,9 @@ describe('ADR 0009 — mở rộng khi chưa kết nối được MCP', () => {
 
     expect(result.text).toBe('Chưa kết nối được Jira/Confluence')
     const messages = llm.requests[1]?.messages ?? []
-    expect(String(messages[messages.length - 1]?.content)).toContain('không có công cụ nào khả dụng')
+    expect(String(messages[messages.length - 1]?.content)).toContain(
+      'không có công cụ nào khả dụng',
+    )
     expect(sink.records).toHaveLength(0)
     expect(confirmations).toHaveLength(0)
   })

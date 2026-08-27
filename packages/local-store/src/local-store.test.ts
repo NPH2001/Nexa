@@ -12,7 +12,9 @@ import {
   ConversationSearch,
   LATEST_SCHEMA_VERSION,
   LocalStore,
+  MemoryRepository,
   MIGRATIONS,
+  ProfileRepository,
   RetentionService,
   openDatabase,
 } from './index.js'
@@ -36,12 +38,50 @@ describe('migration', () => {
     expect(ctx.store.schemaVersion).toBe(LATEST_SCHEMA_VERSION)
   })
 
+  it('creates memory_facts schema in v5 with the expected indexes and FK behavior', () => {
+    ctx = makeTempStore()
+
+    const columns = ctx.store.handle.prepare('PRAGMA table_info(memory_facts)').all()
+    expect(columns.map((column) => String(column['name']))).toEqual([
+      'id',
+      'profile_id',
+      'content_ciphertext',
+      'kind',
+      'scope',
+      'sharing_policy',
+      'status',
+      'source_conversation_id',
+      'created_at',
+      'updated_at',
+      'last_confirmed_at',
+      'expires_at',
+    ])
+
+    const indexes = ctx.store.handle.prepare('PRAGMA index_list(memory_facts)').all()
+    expect(indexes.map((index) => String(index['name']))).toEqual(
+      expect.arrayContaining([
+        'idx_memory_facts_profile_status_updated',
+        'idx_memory_facts_source_conversation',
+        'sqlite_autoindex_memory_facts_1',
+      ]),
+    )
+
+    const foreignKeys = ctx.store.handle.prepare('PRAGMA foreign_key_list(memory_facts)').all()
+    const sourceConversationFk = foreignKeys.find(
+      (fk) => String(fk['from']) === 'source_conversation_id',
+    )
+    expect(sourceConversationFk).toMatchObject({
+      table: 'conversations',
+      on_delete: 'SET NULL',
+    })
+  })
+
   it('is idempotent — reopening the same file does not reapply', async () => {
     ctx = makeTempStore()
     const before = ctx.store.schemaVersion
-    const applied = ctx.store.handle
-      .prepare('SELECT COUNT(*) AS c FROM schema_migrations')
-      .get()?.['c']
+    const applied = ctx.store.handle.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get()?.[
+      'c'
+    ]
     expect(Number(applied)).toBe(LATEST_SCHEMA_VERSION)
     expect(before).toBe(LATEST_SCHEMA_VERSION)
   })
@@ -137,7 +177,10 @@ describe('encryption at rest (§21: "không đọc được bằng công cụ SQ
     const secretTitle = 'Kế hoạch sáp nhập Q4'
     const secretBody = 'Số liệu doanh thu bí mật: 1.234.567.890 VND'
 
-    const conv = repo.create(ctx.profileId, secretTitle, { modelId: 'model-a', provider: 'litellm' })
+    const conv = repo.create(ctx.profileId, secretTitle, {
+      modelId: 'model-a',
+      provider: 'litellm',
+    })
     repo.appendMessage({ conversationId: conv.id, role: 'user', content: secretBody })
     ctx.store.close()
 
@@ -160,6 +203,223 @@ describe('encryption at rest (§21: "không đọc được bằng công cụ SQ
     // Ciphertext của conversations.title bị đem sang messages.content.
     expect(() => repo.decryptContent(titleCipher)).toThrow()
   })
+
+  it('never writes memory fact content in cleartext', async () => {
+    ctx = makeTempStore()
+    const repo = new MemoryRepository(ctx.store)
+    const secret = 'Tôi dị ứng với việc log plaintext ra đĩa'
+
+    repo.create({
+      profileId: ctx.profileId,
+      content: secret,
+      kind: 'constraint',
+      scope: 'global',
+      sharingPolicy: 'internal_only',
+    })
+    ctx.store.close()
+
+    const raw = readFileSync(ctx.dbPath).toString('latin1')
+    expect(raw).not.toContain(secret)
+    expect(raw).not.toContain('log plaintext')
+  })
+})
+
+describe('memory facts', () => {
+  it('creates, updates, archives and deletes facts', () => {
+    ctx = makeTempStore()
+    const repo = new MemoryRepository(ctx.store)
+
+    const created = repo.create({
+      profileId: ctx.profileId,
+      content: 'Gọi tôi là Nhi',
+      kind: 'identity',
+      scope: 'global',
+      sharingPolicy: 'internal_only',
+    })
+    const updated = repo.update(created.id, {
+      content: 'Gọi tôi là Chị Nhi',
+      kind: 'preference',
+      expiresAt: '2026-12-31T00:00:00.000Z',
+    })
+    expect(updated.content).toBe('Gọi tôi là Chị Nhi')
+    expect(updated.kind).toBe('preference')
+    expect(updated.expiresAt).toBe('2026-12-31T00:00:00.000Z')
+
+    expect(repo.listActive(ctx.profileId)).toHaveLength(1)
+    expect(repo.archive(created.id).status).toBe('archived')
+    expect(repo.listActive(ctx.profileId)).toHaveLength(0)
+    expect(repo.list(ctx.profileId)).toHaveLength(1)
+    expect(repo.restore(created.id).status).toBe('active')
+    expect(repo.listActive(ctx.profileId)).toHaveLength(1)
+
+    repo.delete(created.id)
+    expect(repo.list(ctx.profileId)).toHaveLength(0)
+  })
+
+  it('scopes conversation facts to the anchored conversation and keeps global provenance global', () => {
+    ctx = makeTempStore()
+    const conversations = new ConversationRepository(ctx.store)
+    const repo = new MemoryRepository(ctx.store)
+    const convA = conversations.create(ctx.profileId, 'A', null)
+    const convB = conversations.create(ctx.profileId, 'B', null)
+
+    repo.create({
+      profileId: ctx.profileId,
+      content: 'Luôn trả lời bằng tiếng Việt',
+      kind: 'preference',
+      scope: 'global',
+      sharingPolicy: 'internal_only',
+      sourceConversationId: convA.id,
+    })
+    repo.create({
+      profileId: ctx.profileId,
+      content: 'Sprint này chỉ áp dụng cho hội thoại A',
+      kind: 'goal',
+      scope: 'conversation',
+      sharingPolicy: 'internal_only',
+      sourceConversationId: convA.id,
+    })
+
+    expect(
+      repo
+        .listForContext(ctx.profileId, {
+          conversationId: convA.id,
+          externalProvider: false,
+        })
+        .map((fact) => fact.content),
+    ).toEqual(['Sprint này chỉ áp dụng cho hội thoại A', 'Luôn trả lời bằng tiếng Việt'])
+
+    expect(
+      repo
+        .listForContext(ctx.profileId, {
+          conversationId: convB.id,
+          externalProvider: false,
+        })
+        .map((fact) => fact.content),
+    ).toEqual(['Luôn trả lời bằng tiếng Việt'])
+  })
+
+  it('rejects conversation-scoped facts without a same-profile conversation anchor', () => {
+    ctx = makeTempStore()
+    const temp = ctx
+    const repo = new MemoryRepository(temp.store)
+    const otherProfile = new ProfileRepository(temp.store).ensure('other:account', 'Other')
+    const otherConversation = new ConversationRepository(temp.store).create(
+      otherProfile.id,
+      'Khác',
+      null,
+    )
+
+    expect(() =>
+      repo.create({
+        profileId: temp.profileId,
+        content: 'Thiếu anchor',
+        kind: 'note',
+        scope: 'conversation',
+        sharingPolicy: 'internal_only',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      repo.create({
+        profileId: temp.profileId,
+        content: 'Sai profile',
+        kind: 'constraint',
+        scope: 'conversation',
+        sharingPolicy: 'internal_only',
+        sourceConversationId: otherConversation.id,
+      }),
+    ).toThrow()
+  })
+
+  it('filters internal-only facts out for external providers', () => {
+    ctx = makeTempStore()
+    const repo = new MemoryRepository(ctx.store)
+    repo.create({
+      profileId: ctx.profileId,
+      content: 'Dự án nội bộ codename Sông Trăng',
+      kind: 'constraint',
+      scope: 'global',
+      sharingPolicy: 'internal_only',
+    })
+    repo.create({
+      profileId: ctx.profileId,
+      content: 'Tôi thích câu trả lời ngắn',
+      kind: 'preference',
+      scope: 'global',
+      sharingPolicy: 'allow_external',
+    })
+
+    expect(
+      repo
+        .listForContext(ctx.profileId, {
+          externalProvider: true,
+        })
+        .map((fact) => fact.content),
+    ).toEqual(['Tôi thích câu trả lời ngắn'])
+
+    expect(
+      repo
+        .listForContext(ctx.profileId, {
+          externalProvider: false,
+        })
+        .map((fact) => fact.content),
+    ).toEqual(['Tôi thích câu trả lời ngắn', 'Dự án nội bộ codename Sông Trăng'])
+  })
+
+  it('excludes expired facts from eligible context', () => {
+    const clock = fakeClock('2026-08-01T00:00:00.000Z')
+    ctx = makeTempStore({ now: clock.now })
+    const repo = new MemoryRepository(ctx.store)
+
+    repo.create({
+      profileId: ctx.profileId,
+      content: 'Còn hiệu lực',
+      kind: 'note',
+      scope: 'global',
+      sharingPolicy: 'allow_external',
+      expiresAt: '2026-08-02T00:00:00.000Z',
+    })
+    repo.create({
+      profileId: ctx.profileId,
+      content: 'Đã hết hạn',
+      kind: 'note',
+      scope: 'global',
+      sharingPolicy: 'allow_external',
+      expiresAt: '2026-07-31T23:59:59.999Z',
+    })
+
+    expect(
+      repo
+        .listForContext(ctx.profileId, {
+          externalProvider: false,
+        })
+        .map((fact) => fact.content),
+    ).toEqual(['Còn hiệu lực'])
+  })
+
+  it('keeps a fact when the source conversation is deleted and clears the source reference', () => {
+    ctx = makeTempStore()
+    const conversations = new ConversationRepository(ctx.store)
+    const repo = new MemoryRepository(ctx.store)
+    const conv = conversations.create(ctx.profileId, 'Nguồn', null)
+
+    const fact = repo.create({
+      profileId: ctx.profileId,
+      content: 'Đây là provenance toàn cục',
+      kind: 'note',
+      scope: 'global',
+      sharingPolicy: 'internal_only',
+      sourceConversationId: conv.id,
+    })
+
+    conversations.delete(conv.id)
+
+    expect(repo.get(fact.id)).toMatchObject({
+      content: 'Đây là provenance toàn cục',
+      sourceConversationId: null,
+    })
+  })
 })
 
 describe('conversation CRUD', () => {
@@ -172,8 +432,12 @@ describe('conversation CRUD', () => {
     expect(repo.get(conv.id)?.title).toBe('Đã đổi tên')
 
     repo.archive(conv.id)
-    expect(repo.list(ctx.profileId, { includeArchived: false, limit: 10, offset: 0 })).toHaveLength(0)
-    expect(repo.list(ctx.profileId, { includeArchived: true, limit: 10, offset: 0 })).toHaveLength(1)
+    expect(repo.list(ctx.profileId, { includeArchived: false, limit: 10, offset: 0 })).toHaveLength(
+      0,
+    )
+    expect(repo.list(ctx.profileId, { includeArchived: true, limit: 10, offset: 0 })).toHaveLength(
+      1,
+    )
 
     repo.delete(conv.id)
     expect(repo.get(conv.id)).toBeNull()
@@ -204,8 +468,12 @@ describe('conversation CRUD', () => {
     repo.delete(conv.id)
 
     expect(Number(ctx.store.handle.prepare('SELECT COUNT(*) c FROM messages').get()?.['c'])).toBe(0)
-    expect(Number(ctx.store.handle.prepare('SELECT COUNT(*) c FROM attachments').get()?.['c'])).toBe(0)
-    expect(Number(ctx.store.handle.prepare('SELECT COUNT(*) c FROM tool_calls').get()?.['c'])).toBe(0)
+    expect(
+      Number(ctx.store.handle.prepare('SELECT COUNT(*) c FROM attachments').get()?.['c']),
+    ).toBe(0)
+    expect(Number(ctx.store.handle.prepare('SELECT COUNT(*) c FROM tool_calls').get()?.['c'])).toBe(
+      0,
+    )
   })
 
   it('orders messages by seq, not by timestamp collisions', async () => {
@@ -288,7 +556,11 @@ describe('edit/delete a single message (OPEN-QUESTIONS D4)', () => {
     const repo = new ConversationRepository(ctx.store)
     const conv = repo.create(ctx.profileId, 'Ngữ cảnh', null)
     repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'giữ lại' })
-    const removed = repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'sẽ bị xoá' })
+    const removed = repo.appendMessage({
+      conversationId: conv.id,
+      role: 'user',
+      content: 'sẽ bị xoá',
+    })
     repo.deleteMessage(removed.id)
 
     const context = repo.loadForContext(conv.id)
@@ -485,16 +757,22 @@ describe('purge (§11.1)', () => {
     ctx = makeTempStore()
     const repo = new ConversationRepository(ctx.store)
     const audit = new AuditRepository(ctx.store)
+    const memory = new MemoryRepository(ctx.store)
     const conv = repo.create(ctx.profileId, 'Sẽ bị xoá', null)
     repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'dữ liệu' })
     audit.record({ profileId: ctx.profileId, eventType: AUDIT_EVENTS.chatRequested, status: 'ok' })
+    memory.create({
+      profileId: ctx.profileId,
+      content: 'Fact sẽ bị purge',
+      kind: 'note',
+      scope: 'global',
+      sharingPolicy: 'internal_only',
+    })
 
     ctx.store.purgeProfile(ctx.profileId)
 
-    for (const table of ['conversations', 'messages', 'local_audit', 'profiles']) {
-      const count = Number(
-        ctx.store.handle.prepare(`SELECT COUNT(*) c FROM ${table}`).get()?.['c'],
-      )
+    for (const table of ['conversations', 'messages', 'memory_facts', 'local_audit', 'profiles']) {
+      const count = Number(ctx.store.handle.prepare(`SELECT COUNT(*) c FROM ${table}`).get()?.['c'])
       expect(count, `${table} should be empty`).toBe(0)
     }
   })

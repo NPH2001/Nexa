@@ -18,10 +18,12 @@ import {
 } from '@nexa/security'
 import {
   AuditRepository,
+  CommitmentRepository,
   ConfigRepository,
   ConversationRepository,
   ConversationSearch,
   LocalStore,
+  MemoryRepository,
   ProfileRepository,
   RetentionService,
 } from '@nexa/local-store'
@@ -65,6 +67,8 @@ export interface NexaServices {
   readonly connections: ConnectionService
   readonly models: ModelService
   readonly conversations: ConversationRepository
+  readonly commitments: CommitmentRepository
+  readonly memory: MemoryRepository
   readonly config: ConfigRepository
   readonly audit: AuditRepository
   readonly search: ConversationSearch
@@ -142,6 +146,8 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   const config = new ConfigRepository(store)
   const audit = new AuditRepository(store)
   const conversations = new ConversationRepository(store)
+  const commitments = new CommitmentRepository(store)
+  const memory = new MemoryRepository(store)
   const search = new ConversationSearch(store, conversations)
   const retention = new RetentionService(store, audit)
 
@@ -222,6 +228,8 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     }),
     models,
     conversations,
+    commitments,
+    memory,
     config,
     audit,
     search,

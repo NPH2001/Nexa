@@ -1,8 +1,10 @@
 import type {
+  ChatErrorEvent,
   AppSettings,
   ChatDeltaEvent,
   ChatDoneEvent,
   ConfirmationRequest,
+  Commitment,
   Connection,
   ConnectionTestResult,
   ConnectionType,
@@ -10,6 +12,7 @@ import type {
   LlmProvider,
   Envelope,
   ErrorEnvelope,
+  MemoryFact,
   McpStatusEvent,
   Message,
   ModelConfig,
@@ -139,6 +142,59 @@ export const api = {
     remove: (id: string) => call<{ ok: boolean }>('message:delete', { id }),
   },
 
+  memory: {
+    list: (includeArchived = false) => call<MemoryFact[]>('memory:list', { includeArchived }),
+    create: (input: {
+      content: string
+      kind?: MemoryFact['kind']
+      scope?: MemoryFact['scope']
+      sharingPolicy?: MemoryFact['sharingPolicy']
+      sourceConversationId?: string | null
+      lastConfirmedAt?: string | null
+      expiresAt?: string | null
+    }) => call<MemoryFact>('memory:create', input),
+    update: (
+      id: string,
+      patch: {
+        content?: string
+        kind?: MemoryFact['kind']
+        scope?: MemoryFact['scope']
+        sharingPolicy?: MemoryFact['sharingPolicy']
+        sourceConversationId?: string | null
+        lastConfirmedAt?: string | null
+        expiresAt?: string | null
+      },
+    ) => call<MemoryFact>('memory:update', { id, ...patch }),
+    archive: (id: string) => call<{ ok: boolean }>('memory:archive', { id }),
+    restore: (id: string) => call<{ ok: boolean }>('memory:restore', { id }),
+    remove: (id: string) => call<{ ok: boolean }>('memory:delete', { id }),
+  },
+
+  commitments: {
+    list: (includeCompleted = false) =>
+      call<Commitment[]>('commitment:list', { includeCompleted }),
+    create: (input: {
+      title: string
+      nextAction?: string | null
+      status?: Commitment['status']
+      dueAt?: string | null
+      checkInAt?: string | null
+      sourceConversationId?: string | null
+    }) => call<Commitment>('commitment:create', input),
+    update: (
+      id: string,
+      patch: {
+        title?: string
+        nextAction?: string | null
+        status?: Commitment['status']
+        dueAt?: string | null
+        checkInAt?: string | null
+        sourceConversationId?: string | null
+      },
+    ) => call<Commitment>('commitment:update', { id, ...patch }),
+    remove: (id: string) => call<{ ok: boolean }>('commitment:delete', { id }),
+  },
+
   chat: {
     send: (input: {
       conversationId: string
@@ -213,14 +269,8 @@ export const events = {
     bridge().on('nexa:chat-delta', (p) => fn(p as ChatDeltaEvent)),
   onChatDone: (fn: (e: ChatDoneEvent) => void) =>
     bridge().on('nexa:chat-done', (p) => fn(p as ChatDoneEvent)),
-  onChatError: (
-    fn: (e: {
-      request_id: string
-      conversationId: string
-      messageId: string
-      error: { code: string; message: string; retryable: boolean }
-    }) => void,
-  ) => bridge().on('nexa:chat-error', (p) => fn(p as Parameters<typeof fn>[0])),
+  onChatError: (fn: (e: ChatErrorEvent) => void) =>
+    bridge().on('nexa:chat-error', (p) => fn(p as ChatErrorEvent)),
   onToolConfirmation: (fn: (e: ConfirmationRequest) => void) =>
     bridge().on('nexa:tool-confirmation', (p) => fn(p as ConfirmationRequest)),
   onToolStatus: (fn: (e: ToolStatusEvent) => void) =>

@@ -27,6 +27,18 @@ export const IPC_CHANNEL_NAMES = [
   'message:edit',
   'message:delete',
 
+  'memory:list',
+  'memory:create',
+  'memory:update',
+  'memory:archive',
+  'memory:restore',
+  'memory:delete',
+
+  'commitment:list',
+  'commitment:create',
+  'commitment:update',
+  'commitment:delete',
+
   'chat:send',
   'chat:cancel',
 

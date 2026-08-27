@@ -11,7 +11,12 @@ export type {
   Connection,
   ConnectionTestResult,
   ConnectionType,
+  Commitment,
+  CommitmentStatus,
   Conversation,
+  MemoryFact,
+  MemoryFactKind,
+  MemoryFactScope,
   Message,
   ModelConfig,
   RiskLevel,
@@ -20,5 +25,11 @@ export type {
 export type { LlmProvider } from './provider.js'
 export type { AppSettings, OrgPolicy } from './settings.js'
 export type { ConfirmationRequest } from './tools.js'
-export type { ChatDeltaEvent, ChatDoneEvent, McpStatusEvent, ToolStatusEvent } from './ipc.js'
+export type {
+  ChatDeltaEvent,
+  ChatDoneEvent,
+  ChatErrorEvent,
+  McpStatusEvent,
+  ToolStatusEvent,
+} from './ipc.js'
 export type { Envelope, ErrorEnvelope } from './result.js'

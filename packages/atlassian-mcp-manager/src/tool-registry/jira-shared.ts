@@ -4,8 +4,8 @@ import {
   MAX_RESULT_CHARS_FOR_MODEL,
   asRecord,
   parseJsonish,
+  summarizeModelText,
   summarizeGeneric,
-  truncate,
 } from './shared.js'
 
 /**
@@ -40,8 +40,16 @@ export function summarizeJiraIssue(raw: unknown, baseUrl: string): ToolResultSum
   // Hình dạng payload lạ ⇒ trả nguyên văn, không trả rỗng (model cần đọc được thứ gì đó).
   if (lines.length === 0) return summarizeGeneric(raw)
 
+  const safeIssue = { ...issue }
+  delete safeIssue['url']
+  if (url !== null) safeIssue['url'] = url
+  const modelText = summarizeModelText(
+    `${lines.join('\n')}\n\nDữ liệu có cấu trúc:\n${JSON.stringify(safeIssue)}`,
+    MAX_RESULT_CHARS_FOR_MODEL,
+  )
+
   return {
-    forModel: truncate(lines.join('\n'), MAX_RESULT_CHARS_FOR_MODEL),
+    ...modelText,
     forUser: key === '' ? 'Đã đọc issue' : `${key}${summary === '' ? '' : ` — ${summary}`}`,
     ...(key !== '' ? { targetKey: key } : {}),
     ...(url !== null ? { targetUrl: url } : {}),
@@ -56,17 +64,33 @@ export function summarizeJiraSearch(raw: unknown, baseUrl: string): ToolResultSu
   if (!Array.isArray(result['issues'])) return summarizeGeneric(raw)
 
   const issues = result['issues']
-  const lines = issues.slice(0, 20).map((entry) => {
+  const lines = issues.map((entry) => {
     const issue = asRecord(entry)
     if (issue === null) return '- (không đọc được)'
     const url = sanitizeExternalUrl(issue['url'], baseUrl)
-    return `- ${String(issue['key'] ?? '?')}: ${String(issue['summary'] ?? '')}${url === null ? '' : ` (${url})`}`
+    const safeIssue = { ...issue }
+    delete safeIssue['url']
+    if (url !== null) safeIssue['url'] = url
+    return `- ${JSON.stringify(safeIssue)}`
   })
 
   const total = Number(result['total'] ?? issues.length)
-  const header = `Tìm thấy ${String(total)} kết quả${total > lines.length ? `, hiển thị ${String(lines.length)} kết quả đầu` : ''}.`
+  const header = `Tìm thấy ${String(total)} kết quả; tool trả về ${String(issues.length)} kết quả trong trang hiện tại.`
+  const modelText = summarizeModelText([header, ...lines].join('\n'), MAX_RESULT_CHARS_FOR_MODEL)
+  const pageIncomplete = total > issues.length
+  const completenessNote = [
+    modelText.completenessNote,
+    pageIncomplete
+      ? `Tool mới trả về ${String(issues.length)}/${String(total)} kết quả; cần lấy trang tiếp theo để kết luận đầy đủ.`
+      : undefined,
+  ]
+    .filter((note): note is string => note !== undefined)
+    .join(' ')
   return {
-    forModel: truncate([header, ...lines].join('\n'), MAX_RESULT_CHARS_FOR_MODEL),
+    ...modelText,
+    ...(pageIncomplete || modelText.incomplete === true
+      ? { incomplete: true, completenessNote }
+      : {}),
     forUser: header,
   }
 }
@@ -84,8 +108,12 @@ export function summarizeJiraList(
   if (!Array.isArray(list)) return summarizeGeneric(raw)
 
   const header = `${label}: ${String(list.length)} kết quả.`
+  const modelText = summarizeModelText(
+    [header, JSON.stringify(list)].join('\n'),
+    MAX_RESULT_CHARS_FOR_MODEL,
+  )
   return {
-    forModel: truncate([header, JSON.stringify(list)].join('\n'), MAX_RESULT_CHARS_FOR_MODEL),
+    ...modelText,
     forUser: header,
   }
 }

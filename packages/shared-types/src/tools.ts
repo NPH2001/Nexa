@@ -59,6 +59,14 @@ export interface ToolResultSummary {
   readonly forModel: string
   /** Text ngắn hiển thị trong UI và lưu `result_summary_ciphertext`. */
   readonly forUser: string
+  /**
+   * `true` khi `forModel` không đại diện cho toàn bộ kết quả tool (bị giới hạn ký tự,
+   * phân trang, hoặc chỉ lấy một phần danh sách). Runtime phải chuyển cờ này tới model/UI;
+   * không được để model trình bày phần dữ liệu còn lại như một kết quả đầy đủ.
+   */
+  readonly incomplete?: boolean
+  /** Mô tả an toàn, không chứa raw payload, cho biết phần nào chưa được đưa vào context. */
+  readonly completenessNote?: string
   readonly targetKey?: string
   readonly targetUrl?: string
 }
@@ -108,12 +116,7 @@ export function isWriteRisk(level: RiskLevel): boolean {
  * ĐỪNG biến cái này thành động. Xem `docs/architecture/adr/0009-tool-preset-scoping.md`.
  */
 export type ToolPreset =
-  | 'jira-read'
-  | 'jira-full'
-  | 'confluence-read'
-  | 'confluence-full'
-  | 'all-read'
-  | 'all'
+  'jira-read' | 'jira-full' | 'confluence-read' | 'confluence-full' | 'all-read' | 'all'
 
 const JIRA_READ_FLAGS = ['jiraRead', 'jiraSearch'] as const
 const JIRA_WRITE_FLAGS = [

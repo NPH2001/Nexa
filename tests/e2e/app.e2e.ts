@@ -6,7 +6,7 @@ import {
   type Page,
 } from '@playwright/test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -163,6 +163,176 @@ test.describe('E2E — cấu hình và chat', () => {
       await expect(h.page.getByText('Xin chào, đây là câu trả lời từ mock LiteLLM.')).toBeVisible({
         timeout: 20_000,
       })
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('memory do người dùng xác nhận được đưa vào prompt của hội thoại mới', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+
+      await h.page.getByRole('tab', { name: 'Nexa nhớ' }).click()
+      await h.page.getByLabel(/Nội dung nhớ/).fill('Ưu tiên câu trả lời ngắn và có checklist.')
+      await h.page.getByLabel('Loại memory').selectOption('preference')
+      await h.page.getByRole('button', { name: 'Lưu memory' }).click()
+      await expect(h.page.getByText('Đã lưu memory cho Nexa.')).toBeVisible()
+      await expect(h.page.getByText('Ưu tiên câu trả lời ngắn và có checklist.')).toBeVisible()
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({ path: join(captureDir, 'memory-default.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({ path: join(captureDir, 'memory-narrow.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      await expect(
+        h.page.getByRole('heading', { name: 'Mình tiếp tục việc gì hôm nay?' }),
+      ).toBeVisible()
+      await expect(h.page.getByRole('heading', { name: 'Nexa đang nhớ' })).toBeVisible()
+
+      if (captureDir !== undefined && captureDir !== '') {
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({ path: join(captureDir, 'today-default.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({ path: join(captureDir, 'today-narrow.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Lập kế hoạch hôm nay')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+      await expect(h.page.getByText('Xin chào, đây là câu trả lời từ mock LiteLLM.')).toBeVisible({
+        timeout: 20_000,
+      })
+
+      const received = (await (
+        await fetch(`http://127.0.0.1:${String(h.litellmPort)}/__received`)
+      ).json()) as { url: string; body: string }[]
+      const chatRequest = received.find((entry) => entry.url === '/v1/chat/completions')
+      expect(chatRequest).toBeDefined()
+      const chatBody = JSON.parse(chatRequest?.body ?? '{}') as {
+        messages?: { role: string; content: string }[]
+      }
+      expect(chatBody.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining('Ưu tiên câu trả lời ngắn và có checklist.'),
+          }),
+        ]),
+      )
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('commitment đi từ Goals tới Today, hoàn thành, mở lại và xoá an toàn', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
+
+      await expect(h.page.getByRole('heading', { name: 'Mục tiêu & cam kết' })).toBeVisible()
+      await h.page
+        .getByLabel(/Kết quả muốn đạt/)
+        .fill('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành')
+      await h.page
+        .getByLabel(/Bước tiếp theo/)
+        .fill('Chốt danh sách năm người dùng thử nghiệm')
+      await h.page.getByRole('button', { name: 'Tạo cam kết' }).click()
+
+      await expect(h.page.getByText('Đã tạo cam kết.')).toBeVisible()
+      const activeList = h.page.getByRole('list', { name: 'Đang theo dõi' })
+      await expect(
+        activeList.getByText('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành'),
+      ).toBeVisible()
+      await expect(activeList.getByText(/Chốt danh sách năm người dùng/)).toBeVisible()
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({ path: join(captureDir, 'goals-default.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({ path: join(captureDir, 'goals-narrow.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      const todayCommitments = h.page.getByRole('list', { name: 'Cam kết cần chú ý' })
+      await expect(
+        todayCommitments.getByText('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành'),
+      ).toBeVisible()
+      if (captureDir !== undefined && captureDir !== '') {
+        await h.page.screenshot({
+          path: join(captureDir, 'today-with-commitment-default.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({
+          path: join(captureDir, 'today-with-commitment-narrow.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+      await todayCommitments
+        .getByRole('button', { name: /Hoàn tất kế hoạch pilot Nexa/ })
+        .click()
+
+      await expect(h.page.getByRole('heading', { name: 'Mục tiêu & cam kết' })).toBeVisible()
+      await h.page
+        .getByRole('list', { name: 'Đang theo dõi' })
+        .getByRole('button', { name: 'Hoàn thành' })
+        .click()
+      await expect(h.page.getByText('Đã hoàn thành cam kết.')).toBeVisible()
+      const completedList = h.page.getByRole('list', { name: 'Đã hoàn thành' })
+      await expect(
+        completedList.getByText('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành'),
+      ).toBeVisible()
+
+      await completedList.getByRole('button', { name: 'Mở lại' }).click()
+      await expect(h.page.getByText('Đã mở lại cam kết.')).toBeVisible()
+      await h.page
+        .getByRole('list', { name: 'Đang theo dõi' })
+        .getByRole('button', { name: 'Xoá' })
+        .click()
+
+      const dialog = h.page.getByRole('alertdialog', { name: 'Xoá vĩnh viễn cam kết?' })
+      await expect(dialog).toContainText('Nếu chỉ chưa muốn theo dõi')
+      await dialog.getByRole('button', { name: 'Xoá cam kết' }).click()
+      await expect(h.page.getByText('Đã xoá vĩnh viễn cam kết.')).toBeVisible()
+      await expect(
+        h.page.getByText('Hoàn tất kế hoạch pilot Nexa cho phòng Vận hành'),
+      ).toHaveCount(0)
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('phản hồi chạm giới hạn độ dài được báo là chưa đầy đủ và có hướng tiếp tục', async () => {
+    const h = await launch({ litellmScenario: 'length' })
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Cho tôi một báo cáo dài')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+
+      await expect(h.page.getByText(/Phần đầu câu trả lời/)).toBeVisible({ timeout: 20_000 })
+      await expect(h.page.getByText(/Câu trả lời này chưa đầy đủ/)).toBeVisible()
+      await expect(h.page.getByText(/nhắn “tiếp tục”/)).toBeVisible()
     } finally {
       await h.close()
     }
@@ -402,9 +572,11 @@ test.describe('E2E — thu hẹp danh mục tool theo ngữ cảnh (ADR 0009)', 
 
       const chat = received.filter((r) => r.url === '/v1/chat/completions')
       expect(chat.length).toBeGreaterThan(0)
-      const tools = (JSON.parse(chat[chat.length - 1]?.body ?? '{}') as {
-        tools?: { function: { name: string } }[]
-      }).tools
+      const tools = (
+        JSON.parse(chat[chat.length - 1]?.body ?? '{}') as {
+          tools?: { function: { name: string } }[]
+        }
+      ).tools
       const names = (tools ?? []).map((t) => t.function.name)
 
       expect(names).toContain('confluence_get_page')
@@ -449,7 +621,10 @@ test.describe('E2E — lịch sử tồn tại qua các lần khởi động', (
     try {
       const page = await second.firstWindow()
       await page.waitForLoadState('domcontentloaded')
-      // Nội dung được giải mã lại từ SQLite bằng master key trong secure storage.
+      // Today là home surface sau khi mở lại app. Hội thoại đã lưu phải xuất hiện trong phần tiếp
+      // tục công việc; mở nó rồi mới kiểm chứng nội dung được giải mã từ SQLite.
+      const recentConversations = page.getByRole('region', { name: 'Hội thoại gần đây' })
+      await recentConversations.getByRole('button', { name: /Câu hỏi cần nhớ/ }).click()
       await expect(page.locator('.message-user').getByText('Câu hỏi cần nhớ')).toBeVisible({
         timeout: 20_000,
       })

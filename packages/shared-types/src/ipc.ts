@@ -1,6 +1,13 @@
 import { z } from 'zod'
 import { IPC_CHANNEL_NAMES, type IpcChannelName } from './channels.js'
-import { LLM_PROVIDERS, connectionTypeSchema } from './domain.js'
+import {
+  LLM_PROVIDERS,
+  commitmentStatusSchema,
+  connectionTypeSchema,
+  memoryFactKindSchema,
+  memoryFactScopeSchema,
+  memorySharingPolicySchema,
+} from './domain.js'
 import { appSettingsSchema } from './settings.js'
 
 /**
@@ -81,6 +88,127 @@ export const messageEditSchema = z.object({
   content: z.string().min(1).max(200_000),
 })
 
+const memoryContentSchema = z.string().min(1).max(500)
+const memoryDateTimeSchema = z.string().datetime()
+
+export const memoryListSchema = z.object({
+  includeArchived: z.boolean().default(false),
+})
+
+export const memoryCreateSchema = z
+  .object({
+    content: memoryContentSchema,
+    kind: memoryFactKindSchema.default('preference'),
+    scope: memoryFactScopeSchema.default('global'),
+    sharingPolicy: memorySharingPolicySchema.default('internal_only'),
+    sourceConversationId: z.string().uuid().nullable().optional(),
+    lastConfirmedAt: memoryDateTimeSchema.nullable().optional(),
+    expiresAt: memoryDateTimeSchema.nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.scope === 'conversation' &&
+      (value.sourceConversationId === null || value.sourceConversationId === undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceConversationId'],
+        message: 'Conversation-scoped memory requires sourceConversationId.',
+      })
+    }
+  })
+
+export const memoryUpdateSchema = z
+  .object({
+    id: z.string().uuid(),
+    content: memoryContentSchema.optional(),
+    kind: memoryFactKindSchema.optional(),
+    scope: memoryFactScopeSchema.optional(),
+    sharingPolicy: memorySharingPolicySchema.optional(),
+    sourceConversationId: z.string().uuid().nullable().optional(),
+    lastConfirmedAt: memoryDateTimeSchema.nullable().optional(),
+    expiresAt: memoryDateTimeSchema.nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasChange = [
+      value.content,
+      value.kind,
+      value.scope,
+      value.sharingPolicy,
+      value.sourceConversationId,
+      value.lastConfirmedAt,
+      value.expiresAt,
+    ].some((field) => field !== undefined)
+
+    if (!hasChange) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At least one editable memory field must be provided.',
+      })
+    }
+
+    if (
+      value.scope === 'conversation' &&
+      (value.sourceConversationId === null || value.sourceConversationId === undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceConversationId'],
+        message: 'Conversation-scoped memory requires sourceConversationId.',
+      })
+    }
+  })
+
+export const memoryRefSchema = z.object({ id: z.string().uuid() })
+
+// ── Commitments / goals ──────────────────────────────────────────────────
+
+const commitmentTitleSchema = z.string().trim().min(1).max(200)
+const commitmentNextActionSchema = z.string().trim().min(1).max(500)
+
+export const commitmentListSchema = z.object({
+  includeCompleted: z.boolean().default(false),
+})
+
+export const commitmentCreateSchema = z.object({
+  title: commitmentTitleSchema,
+  nextAction: commitmentNextActionSchema.nullable().default(null),
+  status: commitmentStatusSchema.default('active'),
+  dueAt: memoryDateTimeSchema.nullable().default(null),
+  checkInAt: memoryDateTimeSchema.nullable().default(null),
+  sourceConversationId: z.string().uuid().nullable().default(null),
+})
+
+export const commitmentUpdateSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: commitmentTitleSchema.optional(),
+    nextAction: commitmentNextActionSchema.nullable().optional(),
+    status: commitmentStatusSchema.optional(),
+    dueAt: memoryDateTimeSchema.nullable().optional(),
+    checkInAt: memoryDateTimeSchema.nullable().optional(),
+    sourceConversationId: z.string().uuid().nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasChange = [
+      value.title,
+      value.nextAction,
+      value.status,
+      value.dueAt,
+      value.checkInAt,
+      value.sourceConversationId,
+    ].some((field) => field !== undefined)
+
+    if (!hasChange) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At least one editable commitment field must be provided.',
+      })
+    }
+  })
+
+export const commitmentRefSchema = z.object({ id: z.string().uuid() })
+
 export const chatSendSchema = z.object({
   conversationId: z.string().uuid(),
   content: z.string().min(1).max(200_000),
@@ -157,6 +285,18 @@ export const IPC_SCHEMAS = {
   'message:edit': messageEditSchema,
   'message:delete': messageRefSchema,
 
+  'memory:list': memoryListSchema,
+  'memory:create': memoryCreateSchema,
+  'memory:update': memoryUpdateSchema,
+  'memory:archive': memoryRefSchema,
+  'memory:restore': memoryRefSchema,
+  'memory:delete': memoryRefSchema,
+
+  'commitment:list': commitmentListSchema,
+  'commitment:create': commitmentCreateSchema,
+  'commitment:update': commitmentUpdateSchema,
+  'commitment:delete': commitmentRefSchema,
+
   'chat:send': chatSendSchema,
   'chat:cancel': chatCancelSchema,
 
@@ -198,7 +338,6 @@ export const IPC_CHANNELS_VERIFIED = channelListsMatch && IPC_CHANNEL_NAMES.leng
 
 // ── Sự kiện main → renderer ───────────────────────────────────────────────
 
-
 export interface ChatDeltaEvent {
   readonly requestId: string
   readonly conversationId: string
@@ -212,6 +351,18 @@ export interface ChatDoneEvent {
   readonly messageId: string
   readonly usage?: { promptTokens: number; completionTokens: number }
   readonly truncatedContextCount: number
+}
+
+export interface ChatErrorEvent {
+  readonly request_id: string
+  readonly conversationId: string
+  readonly messageId: string
+  readonly error: {
+    readonly code: string
+    readonly message: string
+    readonly retryable: boolean
+    readonly hint?: string
+  }
 }
 
 export interface ToolStatusEvent {

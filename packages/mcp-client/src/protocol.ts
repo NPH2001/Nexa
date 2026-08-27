@@ -9,6 +9,7 @@
  */
 
 export const MCP_PROTOCOL_VERSION = '2024-11-05'
+export const INCOMPLETE_TOOL_RESULT_MARKER = '[KẾT QUẢ CÔNG CỤ CHƯA ĐẦY ĐỦ]'
 
 export interface JsonRpcRequest {
   readonly jsonrpc: '2.0'
@@ -97,11 +98,26 @@ export function parseToolResult(result: unknown): McpToolResult {
   return { content, isError: r['isError'] === true }
 }
 
-/** Gộp các khối text thành một chuỗi — dạng duy nhất mà LLM tiêu thụ được. */
+/**
+ * Gộp kết quả thành text cho LLM. Block chưa được hỗ trợ phải có placeholder rõ ràng; bỏ chúng
+ * âm thầm khiến model tưởng đã đọc đủ dữ liệu và đưa ra kết luận sai.
+ */
 export function contentToText(result: McpToolResult): string {
-  return result.content
-    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-    .map((c) => c.text)
+  const hasUnreadContent = result.content.some((content) => content.type !== 'text')
+  const lines = result.content.map((content) => {
+    switch (content.type) {
+      case 'text':
+        return content.text
+      case 'image':
+        return `[Công cụ còn trả về hình ảnh ${content.mimeType}; nội dung hình ảnh chưa được đọc.]`
+      case 'resource':
+        return `[Công cụ còn trả về tài nguyên ${content.uri}; nội dung tài nguyên chưa được đọc.]`
+      case 'unknown':
+        return '[Công cụ còn trả về một loại nội dung chưa được hỗ trợ.]'
+    }
+  })
+  return [hasUnreadContent ? INCOMPLETE_TOOL_RESULT_MARKER : undefined, ...lines]
+    .filter((line): line is string => line !== undefined && line !== '')
     .join('\n')
     .trim()
 }

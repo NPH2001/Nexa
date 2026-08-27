@@ -8,6 +8,8 @@ import type { LocalStore } from './store.js'
  *  - `historyRetentionDays = 0` nghĩa là KHÔNG tự xoá (theo §8.3 "Lưu cục bộ cho đến khi
  *    người dùng xóa" là mặc định).
  *  - Hội thoại đã archive vẫn tính theo cùng mốc — archive không phải cách giữ vĩnh viễn.
+ *  - `memory_facts` cố ý không nằm trong sweep này. Đó là dữ liệu dài hạn do người dùng xác
+ *    nhận, chỉ biến mất khi archive/delete rõ ràng hoặc khi purge toàn bộ profile.
  */
 export interface RetentionPolicy {
   readonly historyRetentionDays: number

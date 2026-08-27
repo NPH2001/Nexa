@@ -1,6 +1,7 @@
 import {
   ERROR_CODES,
   EXPAND_TOOLS_TOOL_NAME,
+  isExternalProvider,
   NexaError,
   TOOL_PRESET_FLAGS,
   type ApprovalStatus,
@@ -13,18 +14,25 @@ import {
   type ToolDefinition,
   type ToolPreset,
   type ToolPreview,
+  type ToolResultSummary,
 } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
 import type {
   ChatMessage,
   ChatToolCall,
   ChatToolSpec,
+  FinishReason,
   OpenAiCompatibleClient,
   TokenUsage,
 } from '@nexa/llm-client'
 import type { ProcessedDocument } from '@nexa/document-processor'
 import type { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
-import { buildContext, toolResultMessage, type ContextBudget } from './context-builder.js'
+import {
+  buildContext,
+  toolResultMessage,
+  type ContextBudget,
+  type MemoryContextFact,
+} from './context-builder.js'
 import { ConfirmationGuard, type ApprovalDecision } from './confirmation-guard.js'
 import { OperationTracker, isUncertainOutcome } from './operation-tracker.js'
 import { assertModelMayReceiveDocuments } from './document-policy.js'
@@ -90,9 +98,14 @@ export interface RunTurnInput {
   readonly contextWindowTokens: number
   readonly history: readonly { role: MessageRole; content: string }[]
   readonly documents?: readonly ProcessedDocument[]
+  readonly memoryFacts?: readonly RuntimeMemoryFact[]
   readonly signal?: AbortSignal
   readonly emit: (event: RuntimeEvent) => void
   readonly toolCalls: ToolCallSink
+}
+
+export interface RuntimeMemoryFact extends MemoryContextFact {
+  readonly sharingPolicy: 'internal_only' | 'allow_external'
 }
 
 export interface RunTurnResult {
@@ -133,10 +146,19 @@ export class AgentRuntime {
     }
 
     const budget: ContextBudget = { contextWindowTokens: input.contextWindowTokens }
+    const memoryFacts = selectMemoryForProvider(input.memoryFacts ?? [], input.modelProvider)
     const context = buildContext({
       history: input.history,
       ...(input.documents !== undefined ? { documents: input.documents } : {}),
+      ...(memoryFacts.length > 0 ? { memoryFacts } : {}),
       budget,
+    })
+    this.log.info('memory-context', {
+      requestId: input.requestId,
+      provider: input.modelProvider,
+      eligibleCount: memoryFacts.length,
+      includedCount: context.memoryFactsIncluded,
+      truncatedCount: context.memoryFactsTruncated,
     })
     if (context.truncatedCount > 0) {
       input.emit({ type: 'context-truncated', droppedMessages: context.truncatedCount })
@@ -165,8 +187,39 @@ export class AgentRuntime {
       const turn = await this.streamOnce(messages, tools, input)
       if (turn.usage !== undefined) usage = turn.usage
 
+      if (turn.finishReason === 'length') {
+        const notice =
+          '\n\nCâu trả lời này chưa đầy đủ vì model đã chạm giới hạn độ dài. Bạn có thể nhắn “tiếp tục” hoặc thu hẹp phạm vi để mình trả lời phần còn lại.'
+        input.emit({ type: 'text-delta', delta: notice })
+        return {
+          text: `${turn.text}${notice}`,
+          truncatedContextCount: context.truncatedCount,
+          ...(usage !== undefined ? { usage } : {}),
+          toolCallCount,
+          uncertainOperationIds,
+        }
+      }
+
+      if (turn.finishReason === 'content_filter') {
+        const notice =
+          '\n\nModel chưa thể hoàn thành câu trả lời vì bộ lọc nội dung đã dừng phản hồi. Hãy diễn đạt lại yêu cầu hoặc chia nhỏ phần cần hỗ trợ.'
+        input.emit({ type: 'text-delta', delta: notice })
+        return {
+          text: `${turn.text}${notice}`,
+          truncatedContextCount: context.truncatedCount,
+          ...(usage !== undefined ? { usage } : {}),
+          toolCallCount,
+          uncertainOperationIds,
+        }
+      }
+
       if (turn.toolCalls.length === 0) {
         finalText = turn.text
+        if (finalText.trim() === '') {
+          finalText =
+            'Mình không nhận được nội dung trả lời từ model. Bạn hãy thử lại; nếu lỗi lặp lại, hãy kiểm tra cấu hình model hoặc kết nối LiteLLM.'
+          input.emit({ type: 'text-delta', delta: finalText })
+        }
         return {
           text: finalText,
           truncatedContextCount: context.truncatedCount,
@@ -217,8 +270,13 @@ export class AgentRuntime {
         messages.push(toolResultMessage(call.id, outcome.resultForModel))
 
         if (outcome.fatal) {
+          const terminalText =
+            outcome.terminalText ??
+            'Mình chưa thể hoàn tất yêu cầu này. Hãy kiểm tra kết nối và thử lại.'
+          const separator = finalText.trim() === '' ? '' : '\n\n'
+          input.emit({ type: 'text-delta', delta: `${separator}${terminalText}` })
           return {
-            text: finalText,
+            text: `${finalText}${separator}${terminalText}`,
             truncatedContextCount: context.truncatedCount,
             ...(usage !== undefined ? { usage } : {}),
             toolCallCount,
@@ -238,10 +296,16 @@ export class AgentRuntime {
     messages: readonly ChatMessage[],
     tools: readonly ChatToolSpec[],
     input: RunTurnInput,
-  ): Promise<{ text: string; toolCalls: ChatToolCall[]; usage?: TokenUsage }> {
+  ): Promise<{
+    text: string
+    toolCalls: ChatToolCall[]
+    finishReason: FinishReason
+    usage?: TokenUsage
+  }> {
     let text = ''
     let toolCalls: ChatToolCall[] = []
     let usage: TokenUsage | undefined
+    let finishReason: FinishReason = 'unknown'
 
     const stream = this.deps.llm.streamChat(
       {
@@ -268,11 +332,12 @@ export class AgentRuntime {
           usage = event.usage
           break
         case 'finish':
+          finishReason = event.reason
           break
       }
     }
 
-    return { text, toolCalls, ...(usage !== undefined ? { usage } : {}) }
+    return { text, toolCalls, finishReason, ...(usage !== undefined ? { usage } : {}) }
   }
 
   // ── Thực thi một tool call ──────────────────────────────────────────────
@@ -285,14 +350,18 @@ export class AgentRuntime {
     resultForModel: string
     wasWrite: boolean
     fatal: boolean
+    terminalText?: string
     uncertainOperationId?: string
   }> {
     const mcp = this.deps.mcp
     if (mcp === null || !mcp.isReady) {
       return {
-        resultForModel: 'Lỗi: chưa kết nối được Jira/Confluence. Hãy yêu cầu người dùng kiểm tra cấu hình.',
+        resultForModel:
+          'Lỗi: chưa kết nối được Jira/Confluence. Hãy yêu cầu người dùng kiểm tra cấu hình.',
         wasWrite: false,
         fatal: true,
+        terminalText:
+          'Mình chưa thể hoàn tất yêu cầu vì chưa kết nối được Jira/Confluence. Hãy mở Cài đặt, kiểm tra kết nối Atlassian rồi thử lại.',
       }
     }
 
@@ -339,7 +408,12 @@ export class AgentRuntime {
     definition: ToolDefinition,
     payload: Record<string, unknown>,
     input: RunTurnInput,
-  ): Promise<{ resultForModel: string; wasWrite: false; fatal: boolean }> {
+  ): Promise<{
+    resultForModel: string
+    wasWrite: false
+    fatal: boolean
+    terminalText?: string
+  }> {
     const recordId = input.toolCalls.begin({
       toolName: definition.name,
       riskLevel: definition.riskLevel,
@@ -354,21 +428,33 @@ export class AgentRuntime {
     })
 
     try {
-      const outcome = await (this.deps.mcp as AtlassianMcpManager).callTool(definition.name, payload)
+      const outcome = await (this.deps.mcp as AtlassianMcpManager).callTool(
+        definition.name,
+        payload,
+      )
+      const resultForUser = formatToolResultForUser(outcome.summary)
       input.toolCalls.update(recordId, {
         operationStatus: 'success',
-        resultSummary: outcome.summary.forUser,
-        ...(outcome.summary.targetKey !== undefined ? { targetKey: outcome.summary.targetKey } : {}),
-        ...(outcome.summary.targetUrl !== undefined ? { targetUrl: outcome.summary.targetUrl } : {}),
+        resultSummary: resultForUser,
+        ...(outcome.summary.targetKey !== undefined
+          ? { targetKey: outcome.summary.targetKey }
+          : {}),
+        ...(outcome.summary.targetUrl !== undefined
+          ? { targetUrl: outcome.summary.targetUrl }
+          : {}),
       })
       input.emit({
         type: 'tool-status',
         toolCallRecordId: recordId,
         toolName: definition.name,
         phase: 'done',
-        detail: outcome.summary.forUser,
+        detail: resultForUser,
       })
-      return { resultForModel: outcome.summary.forModel, wasWrite: false, fatal: false }
+      return {
+        resultForModel: formatToolResultForModel(outcome.summary),
+        wasWrite: false,
+        fatal: false,
+      }
     } catch (error) {
       const nexa = NexaError.wrap(error)
       input.toolCalls.update(recordId, { operationStatus: 'failed', errorCode: nexa.code })
@@ -385,7 +471,12 @@ export class AgentRuntime {
         nexa.code === ERROR_CODES.ATLASSIAN_AUTH_FAILED ||
         nexa.code === ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED ||
         nexa.code === ERROR_CODES.MCP_SERVER_UNAVAILABLE
-      return { resultForModel: `Lỗi: ${nexa.message}`, wasWrite: false, fatal }
+      return {
+        resultForModel: `Lỗi: ${nexa.message}`,
+        wasWrite: false,
+        fatal,
+        ...(fatal ? { terminalText: formatTerminalError(nexa) } : {}),
+      }
     }
   }
 
@@ -398,6 +489,7 @@ export class AgentRuntime {
     resultForModel: string
     wasWrite: true
     fatal: boolean
+    terminalText?: string
     uncertainOperationId?: string
   }> {
     const mcp = this.deps.mcp as AtlassianMcpManager
@@ -408,7 +500,11 @@ export class AgentRuntime {
       preview = await this.buildPreview(definition, payload)
     } catch (error) {
       const nexa = NexaError.wrap(error)
-      return { resultForModel: `Lỗi khi dựng bản xem trước: ${nexa.message}`, wasWrite: true, fatal: false }
+      return {
+        resultForModel: `Lỗi khi dựng bản xem trước: ${nexa.message}`,
+        wasWrite: true,
+        fatal: false,
+      }
     }
 
     const request = this.deps.guard.open({
@@ -500,20 +596,29 @@ export class AgentRuntime {
       })
       this.deps.guard.finishExecution(request.operationId, 'success')
 
+      const resultForUser = formatToolResultForUser(outcome.summary)
       input.toolCalls.update(recordId, {
         operationStatus: 'success',
-        resultSummary: outcome.summary.forUser,
-        ...(outcome.summary.targetKey !== undefined ? { targetKey: outcome.summary.targetKey } : {}),
-        ...(outcome.summary.targetUrl !== undefined ? { targetUrl: outcome.summary.targetUrl } : {}),
+        resultSummary: resultForUser,
+        ...(outcome.summary.targetKey !== undefined
+          ? { targetKey: outcome.summary.targetKey }
+          : {}),
+        ...(outcome.summary.targetUrl !== undefined
+          ? { targetUrl: outcome.summary.targetUrl }
+          : {}),
       })
       input.emit({
         type: 'tool-status',
         toolCallRecordId: recordId,
         toolName: definition.name,
         phase: 'done',
-        detail: outcome.summary.forUser,
+        detail: resultForUser,
       })
-      return { resultForModel: outcome.summary.forModel, wasWrite: true, fatal: false }
+      return {
+        resultForModel: formatToolResultForModel(outcome.summary),
+        wasWrite: true,
+        fatal: false,
+      }
     } catch (error) {
       const nexa = NexaError.wrap(error)
       const uncertain = isUncertainOutcome(nexa)
@@ -536,6 +641,8 @@ export class AgentRuntime {
             'Không xác định được thao tác đã hoàn tất hay chưa. KHÔNG được thử lại. Hãy báo người dùng kiểm tra kết quả tại hệ thống đích.',
           wasWrite: true,
           fatal: true,
+          terminalText:
+            'Mình chưa thể xác nhận thao tác đã hoàn tất hay chưa. Để tránh tạo hoặc cập nhật trùng, hãy bấm “Kiểm tra kết quả” trước khi thử lại.',
           uncertainOperationId: request.operationId,
         }
       }
@@ -644,6 +751,36 @@ export class AgentRuntime {
 
     return `Danh mục đầy đủ gồm ${String(lines.length)} công cụ khả dụng. Từ vòng này bạn gọi được mọi công cụ trong danh sách:\n${lines.join('\n')}`
   }
+}
+
+export function selectMemoryForProvider(
+  facts: readonly RuntimeMemoryFact[],
+  provider: LlmProvider,
+): readonly RuntimeMemoryFact[] {
+  if (!isExternalProvider(provider)) return facts
+  return facts.filter((fact) => fact.sharingPolicy === 'allow_external')
+}
+
+function formatToolResultForModel(summary: ToolResultSummary): string {
+  if (summary.incomplete !== true) return summary.forModel
+
+  return [
+    '[KẾT QUẢ CÔNG CỤ CHƯA ĐẦY ĐỦ]',
+    summary.completenessNote ?? 'Một phần kết quả chưa được đưa vào ngữ cảnh.',
+    'Không được trình bày dữ liệu bên dưới như kết quả đầy đủ. Nếu câu hỏi cần phần còn thiếu, hãy gọi công cụ với phạm vi hẹp hơn hoặc nói rõ giới hạn với người dùng.',
+    '',
+    summary.forModel,
+  ].join('\n')
+}
+
+function formatToolResultForUser(summary: ToolResultSummary): string {
+  return summary.incomplete === true ? `${summary.forUser} · kết quả chưa đầy đủ` : summary.forUser
+}
+
+function formatTerminalError(error: NexaError): string {
+  return `Mình chưa thể hoàn tất yêu cầu này. ${error.message}${
+    error.hint === undefined ? '' : ` ${error.hint}`
+  }`
 }
 
 /**

@@ -2,6 +2,7 @@ import type {
   ChatRequest,
   ChatStreamEvent,
   ChatToolCall,
+  FinishReason,
   OpenAiCompatibleClient,
 } from '@nexa/llm-client'
 
@@ -9,6 +10,8 @@ import type {
 export interface ScriptedTurn {
   readonly text?: string
   readonly toolCalls?: readonly { name: string; args: unknown }[]
+  /** Lý do kết thúc để test các phản hồi bị cắt hoặc bị content filter. */
+  readonly finishReason?: FinishReason
   /** Ném lỗi thay vì trả lời — để test đường lỗi của runtime. */
   readonly throws?: unknown
 }
@@ -51,12 +54,12 @@ export class FakeLlmClient {
         function: { name: c.name, arguments: JSON.stringify(c.args) },
       }))
       yield { type: 'tool-calls', toolCalls }
-      yield { type: 'finish', reason: 'tool_calls' }
+      yield { type: 'finish', reason: step.finishReason ?? 'tool_calls' }
       return
     }
 
     yield { type: 'usage', usage: { promptTokens: 10, completionTokens: 5 } }
-    yield { type: 'finish', reason: 'stop' }
+    yield { type: 'finish', reason: step.finishReason ?? 'stop' }
   }
 
   asClient(): OpenAiCompatibleClient {

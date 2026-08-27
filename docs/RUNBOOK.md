@@ -3,7 +3,7 @@
 Dành cho đội hỗ trợ và vận hành.
 
 Đây là hiện thực của yêu cầu §15.2 và của tiêu chí nghiệm thu §21:
-*"Có request_id/operation_id cục bộ; có thể đối chiếu với usage log LiteLLM và lịch sử Atlassian."*
+_"Có request_id/operation_id cục bộ; có thể đối chiếu với usage log LiteLLM và lịch sử Atlassian."_
 
 ---
 
@@ -11,11 +11,11 @@ Dành cho đội hỗ trợ và vận hành.
 
 Nexa **không** có kho log tập trung (§4.1). Mọi cuộc điều tra là ghép ba nguồn lại:
 
-| Nguồn | Chứa gì | Ai truy cập |
-|---|---|---|
-| Log cục bộ trên máy người dùng | request_id, operation_id, error_code, thời gian, trạng thái tool | Người dùng tự xuất |
-| Usage log của LiteLLM | model, token, latency, trạng thái, key alias | Quản trị LiteLLM |
-| Activity/audit của Jira/Confluence | ai làm gì, lên đối tượng nào, lúc nào | Quản trị Atlassian |
+| Nguồn                              | Chứa gì                                                          | Ai truy cập        |
+| ---------------------------------- | ---------------------------------------------------------------- | ------------------ |
+| Log cục bộ trên máy người dùng     | request_id, operation_id, error_code, thời gian, trạng thái tool | Người dùng tự xuất |
+| Usage log của LiteLLM              | model, token, latency, trạng thái, key alias                     | Quản trị LiteLLM   |
+| Activity/audit của Jira/Confluence | ai làm gì, lên đối tượng nào, lúc nào                            | Quản trị Atlassian |
 
 Hai mã nối chúng lại:
 
@@ -34,11 +34,11 @@ Hướng dẫn người dùng: **Cài đặt → Chẩn đoán → Xuất gói c
 
 Gói được mở sẵn trong thư mục Downloads, gồm:
 
-| File | Nội dung |
-|---|---|
-| `summary.json` | Phiên bản, nền tảng, driver SQLite, backend kho bảo mật, trạng thái kết nối (chỉ hostname), danh sách model, cấu hình đã lược |
-| `correlation.json` | 200 sự kiện gần nhất: event_type, request_id, operation_id, status, error_code |
-| `nexa*.log` | Log ứng dụng đã redact |
+| File               | Nội dung                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `summary.json`     | Phiên bản, nền tảng, driver SQLite, backend kho bảo mật, trạng thái kết nối (chỉ hostname), danh sách model, cấu hình đã lược |
+| `correlation.json` | 200 sự kiện gần nhất: event_type, request_id, operation_id, status, error_code                                                |
+| `nexa*.log`        | Log ứng dụng đã redact                                                                                                        |
 
 Gói này an toàn để gửi qua email nội bộ. Nếu bạn thấy trong đó một chuỗi trông giống secret,
 **đó là lỗi** — báo ngay, kèm mẫu, để bổ sung vào `Redactor`.
@@ -77,7 +77,7 @@ grep '"category":"security"' nexa.log
 
 Nexa **không** gửi `operation_id` sang Atlassian (API Atlassian không có chỗ nhận), nên việc
 đối chiếu ở đây dựa vào **tài khoản + thời gian + đối tượng**, không phải khớp mã trực tiếp.
-Đây là giới hạn đã biết của §11.2: *"MVP không cam kết audit tập trung end-to-end."*
+Đây là giới hạn đã biết của §11.2: _"MVP không cam kết audit tập trung end-to-end."_
 
 ---
 
@@ -87,10 +87,10 @@ Nexa **không** gửi `operation_id` sang Atlassian (API Atlassian không có ch
 
 Log ghi `app-startup-failed` kèm `errorCode` **trước** khi hiện dialog.
 
-| errorCode | Nguyên nhân | Xử lý |
-|---|---|---|
-| `SECRET_UNAVAILABLE` | Kho bảo mật không giải mã được | Người dùng có đang đăng nhập đúng tài khoản Windows cũ không? Dữ liệu có bị copy từ máy khác không? |
-| `LOCAL_DB_LOCKED` | DB bị giữ, hỏng, hoặc schema mới hơn app | Đóng hết tiến trình Nexa. Nếu là "schema newer than app", người dùng đã cài đè bản cũ — cài lại bản mới. |
+| errorCode            | Nguyên nhân                              | Xử lý                                                                                                    |
+| -------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `SECRET_UNAVAILABLE` | Kho bảo mật không giải mã được           | Người dùng có đang đăng nhập đúng tài khoản Windows cũ không? Dữ liệu có bị copy từ máy khác không?      |
+| `LOCAL_DB_LOCKED`    | DB bị giữ, hỏng, hoặc schema mới hơn app | Đóng hết tiến trình Nexa. Nếu là "schema newer than app", người dùng đã cài đè bản cũ — cài lại bản mới. |
 
 Không có file log nào ⇒ ổ đĩa không ghi được. App vẫn chạy nhưng chỉ log trong RAM; gói chẩn
 đoán khi đó chứa `memory-log.jsonl`.
@@ -101,7 +101,7 @@ Không có file log nào ⇒ ổ đĩa không ghi được. App vẫn chạy nh�
 
 1. Trong Nexa, banner vàng ở đầu màn hình liệt kê các thao tác treo → bấm **Kiểm tra kết quả**.
    Nexa tự tra tại hệ thống đích.
-2. Nếu Nexa báo *"Không tra cứu được"*, phải kiểm tra thủ công tại Jira/Confluence **trước khi**
+2. Nếu Nexa báo _"Không tra cứu được"_, phải kiểm tra thủ công tại Jira/Confluence **trước khi**
    cho người dùng thử lại. Thử lại mù là cách chắc chắn tạo dữ liệu trùng.
 
 ### Không kết nối được Jira/Confluence
@@ -123,7 +123,24 @@ dở (OPEN-QUESTIONS E4).
 Tìm `truncatedContextCount > 0` trên message. Hội thoại đã vượt cửa sổ ngữ cảnh và các message
 cũ bị lược bỏ (ADR 0006 — cửa sổ trượt, không tóm tắt).
 
-Cách xử lý: bắt đầu hội thoại mới, hoặc đổi sang model có cửa sổ lớn hơn trong Cài đặt → Model.
+Cách xử lý: bắt đầu hội thoại mới, đổi sang model có cửa sổ lớn hơn trong Cài đặt → Model, hoặc
+với thông tin ổn định cần dùng lâu dài, yêu cầu người dùng thêm một mục tại **Cài đặt → Nexa nhớ**.
+Không khuyên lưu bí mật, credential hoặc nội dung chỉ có ý nghĩa nhất thời thành memory.
+
+### Memory không được áp dụng như mong đợi
+
+Kiểm tra tại **Cài đặt → Nexa nhớ** theo thứ tự:
+
+1. Mục phải ở trạng thái active và chưa hết hạn.
+2. Memory theo hội thoại chỉ áp dụng cho đúng hội thoại đã chọn. Nếu hội thoại nguồn bị xoá,
+   anchor bị gỡ và mục đó không còn được đưa vào context cho đến khi người dùng sửa lại.
+3. Khi dùng model/provider ngoài tổ chức, chỉ mục có nhãn **Cho phép provider ngoài** được gửi.
+   Đây là hành vi fail-closed; không đổi nhãn để "thử cho chạy" nếu nội dung nhạy cảm.
+4. Context chỉ nhận tối đa 50 mục mới nhất và tối đa 10% token budget. Khi gần 50 mục, UI sẽ cảnh
+   báo để người dùng gộp hoặc archive các mục cũ.
+
+Log `memory-context` chỉ có provider và số lượng eligible/included/truncated; tuyệt đối không có
+nội dung memory. Nếu log có plaintext memory thì coi là sự cố dữ liệu và báo ngay.
 
 ### Người dùng nói "trợ lý bảo là không có công cụ phù hợp"
 
@@ -139,11 +156,11 @@ tool-preset  preset=all        toolCount=98  expanded=true    ← có dòng này
 
 Đọc như sau:
 
-| Thấy gì | Nghĩa là | Làm gì |
-| --- | --- | --- |
-| `expanded=true` rồi vẫn lỗi | Model đã có đủ 98 tool. Vấn đề **không** phải thu hẹp danh mục. | Điều tra như một lỗi tool thường (mục "Không kết nối được Jira/Confluence") |
-| Chỉ có `expanded=false`, preset hẹp | Model **không** gọi `nexa_mo_rong_tool` — đúng rủi ro chính của ADR 0009 | Tắt `toolScoping` cho máy đó (Cài đặt → Tính năng), xác nhận hết lỗi, rồi báo đội phát triển kèm câu hỏi người dùng đã hỏi |
-| `preset=all-read` | Câu hỏi không có tín hiệu Jira/Confluence nào nên bộ chọn không đoán được hệ đích | Hướng dẫn người dùng nhắc rõ "Jira" hoặc "Confluence" trong câu hỏi — vừa là cách khắc phục ngay, vừa là dữ liệu tốt để báo lại |
+| Thấy gì                             | Nghĩa là                                                                          | Làm gì                                                                                                                          |
+| ----------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `expanded=true` rồi vẫn lỗi         | Model đã có đủ 98 tool. Vấn đề **không** phải thu hẹp danh mục.                   | Điều tra như một lỗi tool thường (mục "Không kết nối được Jira/Confluence")                                                     |
+| Chỉ có `expanded=false`, preset hẹp | Model **không** gọi `nexa_mo_rong_tool` — đúng rủi ro chính của ADR 0009          | Tắt `toolScoping` cho máy đó (Cài đặt → Tính năng), xác nhận hết lỗi, rồi báo đội phát triển kèm câu hỏi người dùng đã hỏi      |
+| `preset=all-read`                   | Câu hỏi không có tín hiệu Jira/Confluence nào nên bộ chọn không đoán được hệ đích | Hướng dẫn người dùng nhắc rõ "Jira" hoặc "Confluence" trong câu hỏi — vừa là cách khắc phục ngay, vừa là dữ liệu tốt để báo lại |
 
 Tắt toàn tổ chức: `forcedFeatures: { "toolScoping": false }` trong `policy.json` rồi phân phối
 lại — không cần build lại app.

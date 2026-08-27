@@ -13,6 +13,8 @@ import { isProviderAllowedByPolicy } from '@nexa/shared-types/renderer'
 import { BridgeError, api, events } from './bridge.js'
 import { Sidebar } from './components/Sidebar.js'
 import { ChatView } from './components/ChatView.js'
+import { TodayView } from './components/TodayView.js'
+import { GoalPanel } from './components/GoalPanel.js'
 import { SettingsView } from './components/SettingsView.js'
 import { ConfirmationDialog } from './components/ConfirmationDialog.js'
 import { DestructiveActionDialog } from './components/DestructiveActionDialog.js'
@@ -26,7 +28,7 @@ import {
 } from './chat-activity.js'
 import { commitThenRefresh } from './committed-mutation.js'
 
-export type View = 'chat' | 'settings'
+export type View = 'today' | 'goals' | 'chat' | 'settings'
 
 const TITLE_LIMIT = 60
 
@@ -41,7 +43,8 @@ function deriveTitleFromMessage(content: string): string {
 }
 
 export function App(): React.JSX.Element {
-  const [view, setView] = useState<View>('chat')
+  const [view, setView] = useState<View>('today')
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'litellm' | 'memory'>('litellm')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -215,7 +218,9 @@ export function App(): React.JSX.Element {
         pushToast({
           kind: event.error.code === 'LLM_CANCELLED' ? 'info' : 'error',
           title: event.error.message,
-          detail: `Mã yêu cầu: ${event.request_id}`,
+          detail: [event.error.hint, `Mã yêu cầu: ${event.request_id}`]
+            .filter((part): part is string => part !== undefined)
+            .join(' · '),
         })
       }),
 
@@ -231,6 +236,13 @@ export function App(): React.JSX.Element {
         }
         if (event.phase === 'done' && event.detail !== undefined) {
           pushToast({ kind: 'success', title: event.detail })
+        }
+        if (event.phase === 'failed') {
+          pushToast({
+            kind: 'error',
+            title: event.detail ?? 'Công cụ không hoàn tất được yêu cầu.',
+            detail: `Công cụ: ${event.toolName}`,
+          })
         }
       }),
 
@@ -263,6 +275,7 @@ export function App(): React.JSX.Element {
   )
 
   const selectConversation = async (id: string): Promise<void> => {
+    setView('chat')
     setActiveConversation(id)
     setMessages([])
     await loadMessages(id)
@@ -471,7 +484,10 @@ export function App(): React.JSX.Element {
             }
           })()
         }}
-        onChangeView={setView}
+        onChangeView={(nextView) => {
+          if (nextView === 'settings') setSettingsInitialTab('litellm')
+          setView(nextView)
+        }}
         onError={reportError}
       />
 
@@ -487,7 +503,26 @@ export function App(): React.JSX.Element {
           onError={reportError}
         />
 
-        {view === 'chat' ? (
+        {view === 'today' ? (
+          <TodayView
+            conversations={conversations}
+            onOpenConversation={(id) => void selectConversation(id)}
+            onCreateConversation={() => void createConversation()}
+            onOpenGoals={() => setView('goals')}
+            onOpenSettings={() => {
+              setSettingsInitialTab('memory')
+              setView('settings')
+            }}
+            onError={reportError}
+          />
+        ) : view === 'goals' ? (
+          <GoalPanel
+            conversations={conversations}
+            onOpenConversation={(id) => void selectConversation(id)}
+            onError={reportError}
+            onToast={pushToast}
+          />
+        ) : view === 'chat' ? (
           <ChatView
             conversation={conversations.find((c) => c.id === activeId) ?? null}
             messages={messages}
@@ -506,6 +541,7 @@ export function App(): React.JSX.Element {
           />
         ) : (
           <SettingsView
+            initialTab={settingsInitialTab}
             models={models}
             settings={settings}
             policy={policy}

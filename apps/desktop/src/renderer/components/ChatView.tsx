@@ -462,6 +462,11 @@ function MessageBubble(props: {
                 {describeToolCall(call.operationStatus, call.approvalStatus)}
               </span>
               {call.resultSummary !== undefined && <span> — {call.resultSummary}</span>}
+              {call.operationStatus === 'failed' && call.errorCode !== undefined && (
+                <span className="error-inline">
+                  Không hoàn tất được thao tác · mã lỗi <code>{call.errorCode}</code>
+                </span>
+              )}
               {call.targetUrl !== undefined && (
                 // §7.4 bước 8: hiển thị liên kết hoặc mã đối tượng vừa tạo/cập nhật.
                 <a href={call.targetUrl} target="_blank" rel="noreferrer">

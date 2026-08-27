@@ -82,6 +82,26 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
   const { services, chat } = ctx
   let mcpRebuildInFlight = false
 
+  const requireMemoryFactForCurrentProfile = (id: string) => {
+    const fact = services.memory.get(id)
+    if (fact === null || fact.profileId !== services.profileId) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'memory fact not found for current profile',
+      })
+    }
+    return fact
+  }
+
+  const requireCommitmentForCurrentProfile = (id: string) => {
+    const commitment = services.commitments.get(id)
+    if (commitment === null || commitment.profileId !== services.profileId) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'commitment not found for current profile',
+      })
+    }
+    return commitment
+  }
+
   const changesMcpConnection = (type: string): boolean =>
     type === 'jira' || type === 'confluence' || type === 'mcpGateway'
 
@@ -194,6 +214,82 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     },
     'message:delete': (input) => {
       services.conversations.deleteMessage(input.id)
+      return { ok: true }
+    },
+
+    // ── Memory ────────────────────────────────────────────────────────────
+    'memory:list': (input) =>
+      services.memory.list(services.profileId, { includeArchived: input.includeArchived }),
+    'memory:create': (input) =>
+      services.memory.create({
+        profileId: services.profileId,
+        content: input.content,
+        kind: input.kind,
+        scope: input.scope,
+        sharingPolicy: input.sharingPolicy,
+        sourceConversationId: input.sourceConversationId,
+        // Tạo fact trong UI là một hành động xác nhận rõ ràng của người dùng. Main process
+        // đóng dấu mặc định để renderer không phải là nguồn sự thật cho thời điểm xác nhận.
+        lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
+        expiresAt: input.expiresAt,
+      }),
+    'memory:update': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      return services.memory.update(input.id, {
+        content: input.content,
+        kind: input.kind,
+        scope: input.scope,
+        sharingPolicy: input.sharingPolicy,
+        sourceConversationId: input.sourceConversationId,
+        lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
+        expiresAt: input.expiresAt,
+      })
+    },
+    'memory:archive': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      services.memory.archive(input.id)
+      return { ok: true }
+    },
+    'memory:restore': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      services.memory.restore(input.id)
+      return { ok: true }
+    },
+    'memory:delete': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      services.memory.delete(input.id)
+      return { ok: true }
+    },
+
+    // ── Commitments ───────────────────────────────────────────────────────
+    'commitment:list': (input) =>
+      services.commitments.list(services.profileId, {
+        includeCompleted: input.includeCompleted,
+      }),
+    'commitment:create': (input) =>
+      services.commitments.create({
+        profileId: services.profileId,
+        title: input.title,
+        nextAction: input.nextAction,
+        status: input.status,
+        dueAt: input.dueAt,
+        checkInAt: input.checkInAt,
+        sourceConversationId: input.sourceConversationId,
+      }),
+    'commitment:update': (input) => {
+      requireCommitmentForCurrentProfile(input.id)
+      return services.commitments.update(input.id, {
+        title: input.title,
+        nextAction: input.nextAction,
+        status: input.status,
+        dueAt: input.dueAt,
+        checkInAt: input.checkInAt,
+        sourceConversationId: input.sourceConversationId,
+      })
+    },
+    'commitment:delete': (input) => {
+      requireCommitmentForCurrentProfile(input.id)
+      services.commitments.delete(input.id)
       return { ok: true }
     },
 

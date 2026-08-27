@@ -17,9 +17,19 @@ import type {
 import { api } from '../bridge.js'
 import { commitThenRefresh } from '../committed-mutation.js'
 import { DestructiveActionDialog } from './DestructiveActionDialog.js'
+import { MemoryPanel } from './MemoryPanel.js'
 import type { Toast } from './Toasts.js'
 
-type Tab = 'litellm' | 'openai' | 'models' | 'jira' | 'confluence' | 'mcpGateway' | 'data' | 'about'
+type Tab =
+  | 'litellm'
+  | 'openai'
+  | 'models'
+  | 'jira'
+  | 'confluence'
+  | 'mcpGateway'
+  | 'memory'
+  | 'data'
+  | 'about'
 
 const SETTINGS_TABS: readonly { id: Tab; label: string }[] = [
   { id: 'litellm', label: 'LiteLLM' },
@@ -28,11 +38,13 @@ const SETTINGS_TABS: readonly { id: Tab; label: string }[] = [
   { id: 'jira', label: 'Jira' },
   { id: 'confluence', label: 'Confluence' },
   { id: 'mcpGateway', label: 'MCP Gateway' },
+  { id: 'memory', label: 'Nexa nhớ' },
   { id: 'data', label: 'Dữ liệu & quyền riêng tư' },
   { id: 'about', label: 'Chẩn đoán' },
 ]
 
 export function SettingsView(props: {
+  initialTab?: 'litellm' | 'memory'
   models: readonly ModelConfig[]
   settings: AppSettings | null
   policy: OrgPolicy | null
@@ -42,7 +54,7 @@ export function SettingsView(props: {
   onToast: (toast: Omit<Toast, 'id'>) => void
 }): React.JSX.Element {
   const { onError, onSettingsChanged } = props
-  const [tab, setTab] = useState<Tab>('litellm')
+  const [tab, setTab] = useState<Tab>(props.initialTab ?? 'litellm')
   const [connections, setConnections] = useState<Connection[]>([])
   const [lockedFeatures, setLockedFeatures] = useState<string[]>([])
   const openAiAllowed = props.policy?.allowDirectOpenAi === true
@@ -226,6 +238,8 @@ export function SettingsView(props: {
             onToast={props.onToast}
           />
         )}
+
+        {tab === 'memory' && <MemoryPanel onError={props.onError} onToast={props.onToast} />}
 
         {tab === 'data' && props.settings !== null && (
           <DataPanel

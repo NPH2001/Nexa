@@ -17,6 +17,11 @@ interface RuntimeDependencies {
 interface RuntimeInput {
   readonly signal: AbortSignal
   readonly emit: (event: unknown) => void
+  readonly memoryFacts?: readonly {
+    readonly content: string
+    readonly kind: string
+    readonly sharingPolicy: string
+  }[]
 }
 
 const runtimeMock = vi.hoisted(() => ({
@@ -54,6 +59,7 @@ interface Harness {
     readonly releaseAll: ReturnType<typeof vi.fn>
     readonly guardApprove: ReturnType<typeof vi.fn>
     readonly guardCancel: ReturnType<typeof vi.fn>
+    readonly listMemoryForContext: ReturnType<typeof vi.fn>
     readonly sendToRenderer: ReturnType<typeof vi.fn>
   }
 }
@@ -70,6 +76,7 @@ function makeHarness(): Harness {
   const releaseAll = vi.fn()
   const guardApprove = vi.fn()
   const guardCancel = vi.fn()
+  const listMemoryForContext = vi.fn(() => [])
   const sendToRenderer = vi.fn()
   const sink = new MemorySink()
 
@@ -101,6 +108,7 @@ function makeHarness(): Harness {
       })),
     },
     settings: { get: vi.fn(() => DEFAULT_APP_SETTINGS) },
+    memory: { listForContext: listMemoryForContext },
     documents: { process: processDocuments },
     files: {
       resolve: vi.fn(() => [{ path: '/tmp/document.txt' }]),
@@ -135,6 +143,7 @@ function makeHarness(): Harness {
       releaseAll,
       guardApprove,
       guardCancel,
+      listMemoryForContext,
       sendToRenderer,
     },
   }
@@ -210,6 +219,37 @@ describe('ChatController', () => {
     )
   })
 
+  it('chọn memory theo profile, conversation và provider trước khi gọi runtime', async () => {
+    const h = makeHarness()
+    h.mocks.listMemoryForContext.mockReturnValueOnce([
+      {
+        content: 'Người dùng thích câu trả lời ngắn.',
+        kind: 'preference',
+        sharingPolicy: 'internal_only',
+      },
+    ])
+    runtimeMock.runTurn.mockResolvedValueOnce({ text: 'Đã hiểu', truncatedContextCount: 0 })
+
+    await h.controller.send(input())
+
+    await vi.waitFor(() => expect(runtimeMock.runTurn).toHaveBeenCalledOnce())
+    expect(h.mocks.listMemoryForContext).toHaveBeenCalledWith('profile-1', {
+      conversationId: CONVERSATION_ID,
+      externalProvider: false,
+    })
+    expect(runtimeMock.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memoryFacts: [
+          {
+            content: 'Người dùng thích câu trả lời ngắn.',
+            kind: 'preference',
+            sharingPolicy: 'internal_only',
+          },
+        ],
+      }),
+    )
+  })
+
   it('abort đúng lượt chat và giữ phần text đã stream', async () => {
     const h = makeHarness()
     runtimeMock.runTurn.mockImplementationOnce(
@@ -239,6 +279,32 @@ describe('ChatController', () => {
     expect(h.mocks.sendToRenderer).toHaveBeenCalledWith(
       NEXA_EVENTS.chatError,
       expect.objectContaining({ request_id: requestId, conversationId: CONVERSATION_ID }),
+    )
+  })
+
+  it('không lưu message rỗng khi runtime lỗi trước delta đầu tiên và gửi kèm hướng xử lý', async () => {
+    const h = makeHarness()
+    runtimeMock.runTurn.mockRejectedValueOnce(new NexaError(ERROR_CODES.ATLASSIAN_AUTH_FAILED))
+
+    const result = await h.controller.send(input())
+
+    await vi.waitFor(() => {
+      expect(h.mocks.finalizeMessage).toHaveBeenCalledWith(
+        'message-assistant',
+        expect.stringContaining('Kiểm tra lại PAT'),
+        'error',
+        { errorCode: ERROR_CODES.ATLASSIAN_AUTH_FAILED },
+      )
+    })
+    expect(h.mocks.sendToRenderer).toHaveBeenCalledWith(
+      NEXA_EVENTS.chatError,
+      expect.objectContaining({
+        request_id: result.requestId,
+        error: expect.objectContaining({
+          code: ERROR_CODES.ATLASSIAN_AUTH_FAILED,
+          hint: expect.stringContaining('Kiểm tra lại PAT'),
+        }),
+      }),
     )
   })
 

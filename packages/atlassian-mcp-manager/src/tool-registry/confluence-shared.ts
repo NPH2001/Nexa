@@ -5,8 +5,8 @@ import {
   asRecord,
   parseJsonish,
   pickPath,
+  summarizeModelText,
   summarizeGeneric,
-  truncate,
 } from './shared.js'
 
 /**
@@ -39,11 +39,12 @@ export function summarizeConfluencePage(raw: unknown, baseUrl: string): ToolResu
 
   if (body === '') return summarizeGeneric(raw)
 
+  const modelText = summarizeModelText(
+    [title === '' ? null : `Tiêu đề: ${title}`, body].filter((l) => l !== null).join('\n\n'),
+    MAX_RESULT_CHARS_FOR_MODEL,
+  )
   return {
-    forModel: truncate(
-      [title === '' ? null : `Tiêu đề: ${title}`, body].filter((l) => l !== null).join('\n\n'),
-      MAX_RESULT_CHARS_FOR_MODEL,
-    ),
+    ...modelText,
     forUser: title === '' ? 'Đã đọc trang Confluence' : title,
     ...(id !== undefined ? { targetKey: String(id) } : {}),
     ...(url !== null ? { targetUrl: url } : {}),
@@ -58,8 +59,12 @@ export function summarizeConfluenceList(raw: unknown, label: string): ToolResult
   if (!Array.isArray(list)) return summarizeGeneric(raw)
 
   const header = `${label}: ${String(list.length)} kết quả.`
+  const modelText = summarizeModelText(
+    [header, JSON.stringify(list)].join('\n'),
+    MAX_RESULT_CHARS_FOR_MODEL,
+  )
   return {
-    forModel: truncate([header, JSON.stringify(list)].join('\n'), MAX_RESULT_CHARS_FOR_MODEL),
+    ...modelText,
     forUser: header,
   }
 }

@@ -10,7 +10,7 @@
  *
  * In ra stdout đúng một dòng `LISTENING <port>` để tiến trình cha đọc được cổng.
  *
- * Kịch bản qua env `MOCK_SCENARIO`: ok | no-models-endpoint | auth-failed | tool-call | slow
+ * Kịch bản qua env `MOCK_SCENARIO`: ok | no-models-endpoint | auth-failed | tool-call | slow | length
  */
 
 import { createServer } from 'node:http'
@@ -39,14 +39,14 @@ function sse(res, chunks) {
   tick()
 }
 
-function textStream(text) {
+function textStream(text, finishReason = 'stop') {
   const words = text.split(' ')
   return [
     ...words.map(
       (w, i) =>
         `data: ${JSON.stringify({ choices: [{ delta: { content: i === 0 ? w : ` ${w}` } }] })}\n\n`,
     ),
-    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
     `data: ${JSON.stringify({ usage: { prompt_tokens: 12, completion_tokens: words.length }, choices: [] })}\n\n`,
     'data: [DONE]\n\n',
   ]
@@ -98,6 +98,11 @@ const server = createServer((req, res) => {
         return
       }
 
+      if (scenario === 'length') {
+        sse(res, textStream('Phần đầu câu trả lời', 'length'))
+        return
+      }
+
       if (body?.stream !== true) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(
@@ -122,7 +127,8 @@ const server = createServer((req, res) => {
                       id: 'call_e2e_1',
                       function: {
                         name: 'jira_create_issue',
-                        arguments: '{"project_key":"PRJ","summary":"Task từ E2E","issue_type":"Task"}',
+                        arguments:
+                          '{"project_key":"PRJ","summary":"Task từ E2E","issue_type":"Task"}',
                       },
                     },
                   ],
