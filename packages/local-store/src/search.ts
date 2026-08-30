@@ -13,6 +13,13 @@ import type { LocalStore } from './store.js'
  *   - `budgetMs`: trần thời gian
  * Chạm bất kỳ trần nào ⇒ trả `truncated: true` để UI nói rõ "kết quả chưa đầy đủ" thay vì
  * để người dùng tưởng là không có gì.
+ *
+ * RAM cache (2026-08-30, OPEN-QUESTIONS A9 phương án 3): mỗi lần giải mã một message để search,
+ * kết quả được giữ trong `plaintextCache` khoá theo messageId + ciphertext lúc đó. Lần search
+ * sau gặp lại đúng message chưa đổi thì dùng thẳng plaintext, bỏ qua AES decrypt — giảm chi phí
+ * CPU cho các lần search lặp lại trên cùng lịch sử, không đổi hành vi/độ chính xác. Không giải
+ * quyết tận gốc việc scale >50.000 message (vẫn còn `maxMessagesScanned`/`budgetMs`), chỉ giảm
+ * chi phí giải mã lặp lại trong một phiên làm việc.
  */
 
 export interface SearchOptions {
@@ -42,11 +49,30 @@ export interface SearchResult {
 
 const SNIPPET_RADIUS = 60
 
+/**
+ * Trần số message giữ trong RAM cache (OPEN-QUESTIONS A9, phương án 3). Đây chỉ là cache hiệu
+ * năng — vượt trần thì xoá sạch và dựng lại dần, không mất tính đúng đắn. Ước lượng ~200 byte/
+ * message plaintext trung bình ⇒ 50.000 entry ~10MB, chấp nhận được cho một ứng dụng desktop.
+ */
+const MAX_CACHE_ENTRIES = 50_000
+
 export class ConversationSearch {
+  /**
+   * Cache plaintext đã giải mã, khoá theo messageId, kèm ciphertext lúc giải mã để tự phát hiện
+   * message đã bị sửa/xoá (ciphertext đổi ⇒ cache miss) mà không cần hook vào editMessage/
+   * deleteMessage. Sống trong RAM suốt vòng đời tiến trình — xem `clear()` để dọn khi purge.
+   */
+  private readonly plaintextCache = new Map<string, { ciphertext: string; plaintext: string }>()
+
   constructor(
     private readonly store: LocalStore,
     private readonly conversations: ConversationRepository,
   ) {}
+
+  /** Xoá cache — gọi khi purge dữ liệu hoặc đóng store, để không giữ plaintext trong RAM lâu hơn cần. */
+  clear(): void {
+    this.plaintextCache.clear()
+  }
 
   search(profileId: string, rawQuery: string, opts: SearchOptions = {}): SearchResult {
     const limit = opts.limit ?? 50
@@ -80,11 +106,18 @@ export class ConversationSearch {
       for (const row of batch) {
         scanned++
         let plaintext: string
-        try {
-          plaintext = this.conversations.decryptContent(row.ciphertext)
-        } catch {
-          // Một bản ghi hỏng không được làm chết cả lần tìm kiếm.
-          continue
+        const cached = this.plaintextCache.get(row.messageId)
+        if (cached !== undefined && cached.ciphertext === row.ciphertext) {
+          plaintext = cached.plaintext
+        } else {
+          try {
+            plaintext = this.conversations.decryptContent(row.ciphertext)
+          } catch {
+            // Một bản ghi hỏng không được làm chết cả lần tìm kiếm.
+            continue
+          }
+          if (this.plaintextCache.size >= MAX_CACHE_ENTRIES) this.plaintextCache.clear()
+          this.plaintextCache.set(row.messageId, { ciphertext: row.ciphertext, plaintext })
         }
 
         const haystack = normalize(plaintext, fold)

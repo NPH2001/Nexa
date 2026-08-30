@@ -202,15 +202,35 @@ ciphertext.
 **Đo được:** với 100 hội thoại × ~40 message (~4.000 message) mất ~180 ms trên máy dev.
 Chấp nhận được ở quy mô MVP, **sẽ không scale** nếu người dùng tích luỹ 50.000+ message.
 
-**Ba phương án thay thế nếu bạn muốn scale (cần bạn quyết):**
+**Ba phương án thay thế nếu bạn muốn scale:**
 
 1. Bảng `messages_fts` FTS5 lưu **plaintext** → nhanh nhưng phá vỡ tiêu chí §21
    _"nội dung không đọc được bằng công cụ SQLite thông thường"_. **Tôi không chọn.**
 2. Blind index: lưu `HMAC(master_key, token)` cho từng từ → search exact-word được, không
    search substring/tiếng Việt có dấu tốt. Lộ pattern tần suất từ.
-3. Giữ decrypt-and-scan nhưng cache chỉ mục giải mã trong RAM khi app đang mở.
+3. Giữ decrypt-and-scan nhưng cache chỉ mục giải mã trong RAM khi app đang mở. **✅ Đã làm
+   2026-08-30**, bạn chọn phương án này.
 
-**Khuyến nghị của tôi:** giữ nguyên phương án hiện tại cho MVP, đo lại ở pilot.
+**✅ ĐÃ LÀM 2026-08-30: RAM cache cho decrypt-and-scan (phương án 3).**
+`ConversationSearch` (`packages/local-store/src/search.ts`) giờ giữ một `Map<messageId,
+{ciphertext, plaintext}>` trong bộ nhớ tiến trình. Mỗi lần quét một message: nếu đã có trong
+cache **và** ciphertext trùng khớp với bản ghi hiện tại thì dùng thẳng plaintext, bỏ qua AES
+decrypt; ngược lại giải mã rồi lưu lại. So sánh ciphertext (thay vì hook vào `editMessage`/
+`deleteMessage`) khiến cache **tự phát hiện** message đã sửa/xoá — ciphertext đổi ⇒ cache miss ⇒
+giải mã lại giá trị mới, không cần đồng bộ hai nơi. Trần `MAX_CACHE_ENTRIES = 50_000` entry để
+không phình vô hạn qua một phiên làm việc dài; chạm trần thì xoá sạch cache và dựng lại dần (chỉ
+ảnh hưởng hiệu năng, không ảnh hưởng tính đúng đắn). `ConversationSearch.clear()` được gọi trong
+`data:purge` (`apps/desktop/src/main/ipc.ts`) để không giữ plaintext của dữ liệu vừa xoá trong RAM
+lâu hơn cần thiết.
+
+**Chưa giải quyết tận gốc:** đây chỉ là cache hiệu năng cho các lần search *lặp lại* trên cùng
+lịch sử — lần search đầu tiên trên một tập message chưa từng quét vẫn phải giải mã toàn bộ, nên
+**không thay đổi trần `maxMessagesScanned`/`budgetMs`** và không giúp gì cho lần search đầu tiên
+sau khi mở app. Nếu cần scale thật sự cho lần search đầu (ví dụ >50.000 message ngay từ đầu),
+vẫn cần phương án 1 hoặc 2 ở trên.
+
+Test: `packages/local-store/src/local-store.test.ts` (`describe('search on encrypted content')`)
+— khẳng định cache hit bỏ qua decrypt, cache tự vô hiệu khi sửa/xoá message, và `clear()` dọn sạch.
 
 ---
 

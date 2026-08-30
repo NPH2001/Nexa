@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -616,6 +616,59 @@ describe('search on encrypted content', () => {
 
     const result = search.search(ctx.profileId, 'tìm được')
     expect(result.hits).toHaveLength(1)
+  })
+
+  it('caches decrypted plaintext across searches instead of re-decrypting (OPEN-QUESTIONS A9)', async () => {
+    ctx = makeTempStore()
+    const repo = new ConversationRepository(ctx.store)
+    const search = new ConversationSearch(ctx.store, repo)
+    const conv = repo.create(ctx.profileId, 'Cache test', null)
+    repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'nội dung ổn định' })
+
+    const decryptSpy = vi.spyOn(repo, 'decryptContent')
+
+    search.search(ctx.profileId, 'ổn định')
+    expect(decryptSpy).toHaveBeenCalledTimes(1)
+
+    search.search(ctx.profileId, 'ổn định')
+    expect(decryptSpy).toHaveBeenCalledTimes(1) // lần thứ hai dùng cache, không giải mã lại
+
+    decryptSpy.mockRestore()
+  })
+
+  it('invalidates the cache entry when a message is edited or deleted', async () => {
+    ctx = makeTempStore()
+    const repo = new ConversationRepository(ctx.store)
+    const search = new ConversationSearch(ctx.store, repo)
+    const conv = repo.create(ctx.profileId, 'Cache invalidation', null)
+    const msg = repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'phiên bản một' })
+
+    expect(search.search(ctx.profileId, 'phiên bản một').hits).toHaveLength(1)
+
+    repo.editMessage(msg.id, 'phiên bản hai')
+    expect(search.search(ctx.profileId, 'phiên bản một').hits).toHaveLength(0)
+    expect(search.search(ctx.profileId, 'phiên bản hai').hits).toHaveLength(1)
+
+    repo.deleteMessage(msg.id)
+    expect(search.search(ctx.profileId, 'phiên bản hai').hits).toHaveLength(0)
+  })
+
+  it('clear() drops cached plaintext', async () => {
+    ctx = makeTempStore()
+    const repo = new ConversationRepository(ctx.store)
+    const search = new ConversationSearch(ctx.store, repo)
+    const conv = repo.create(ctx.profileId, 'Clear cache', null)
+    repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'sẽ bị xoá khỏi RAM' })
+
+    const decryptSpy = vi.spyOn(repo, 'decryptContent')
+    search.search(ctx.profileId, 'xoá')
+    expect(decryptSpy).toHaveBeenCalledTimes(1)
+
+    search.clear()
+    search.search(ctx.profileId, 'xoá')
+    expect(decryptSpy).toHaveBeenCalledTimes(2) // sau clear(), phải giải mã lại
+
+    decryptSpy.mockRestore()
   })
 })
 
