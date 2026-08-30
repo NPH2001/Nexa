@@ -518,7 +518,8 @@ code {
 }
 .activity-filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* auto-fit: ba bộ lọc xếp một hàng ở 1280px, tự gập lại khi hẹp. */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
 }
 .activity-filters .field {
@@ -1112,6 +1113,59 @@ code {
   flex-wrap: wrap;
   margin-top: 12px;
 }
+.account-status {
+  margin-top: 14px;
+  min-height: 24px;
+}
+.account-status p {
+  margin: 0;
+}
+.account-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+.account-details dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.account-details dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.account-model-catalog {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.account-model-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.account-model-catalog-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.account-model-state {
+  margin-top: 10px;
+  min-height: 24px;
+}
+.account-model-state p {
+  margin: 0;
+}
+.account-model-table-wrap {
+  overflow-x: auto;
+}
+.account-model-table {
+  min-width: 560px;
+  margin-bottom: 0;
+}
+.account-model-note {
+  margin: 10px 0 0;
+}
 
 .model-add {
   display: grid;
@@ -1137,6 +1191,92 @@ code {
   color: var(--text-muted);
   font-weight: 600;
 }
+/* ── Không gian Nghiệp vụ (openspec add-ba-workbench) ────────────────────── */
+/* Dựng theo đúng idiom của .memory-* — không mở một hệ token thứ hai. */
+.ba-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin: 8px 0 12px;
+}
+.ba-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+.ba-form textarea.input {
+  grid-column: 1 / -1;
+  resize: vertical;
+}
+.ba-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.ba-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.ba-card.active {
+  border-color: var(--accent);
+}
+.ba-card-main {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+.ba-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ba-body {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ba-code {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+.tag-warning {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+@media (max-width: 760px) {
+  .ba-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ba-card {
+    flex-direction: column;
+  }
+}
+
 .row-actions {
   display: flex;
   gap: 6px;
@@ -1414,6 +1554,10 @@ code {
     width: 100%;
   }
 
+  .chat-header-right .external-tag {
+    align-self: flex-start;
+  }
+
   .settings-body,
   .messages {
     padding: 12px;
@@ -1435,6 +1579,7 @@ code {
   }
 
   .memory-meta,
+  .account-details,
   .memory-form,
   .goal-form,
   .goal-meta,

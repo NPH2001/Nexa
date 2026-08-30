@@ -34,6 +34,14 @@ export const ERROR_CODES = {
   OPENAI_CONFIG_REQUIRED: 'OPENAI_CONFIG_REQUIRED',
   OPENAI_AUTH_FAILED: 'OPENAI_AUTH_FAILED',
   OPENAI_RATE_LIMITED: 'OPENAI_RATE_LIMITED',
+  CHATGPT_APP_SERVER_UNAVAILABLE: 'CHATGPT_APP_SERVER_UNAVAILABLE',
+  CHATGPT_MODEL_CATALOG_UNAVAILABLE: 'CHATGPT_MODEL_CATALOG_UNAVAILABLE',
+  CHATGPT_AUTH_FAILED: 'CHATGPT_AUTH_FAILED',
+  CHATGPT_LOGIN_TIMEOUT: 'CHATGPT_LOGIN_TIMEOUT',
+  CHATGPT_AUTH_REQUIRED: 'CHATGPT_AUTH_REQUIRED',
+  CHATGPT_MODEL_UNAVAILABLE: 'CHATGPT_MODEL_UNAVAILABLE',
+  CHATGPT_RATE_LIMITED: 'CHATGPT_RATE_LIMITED',
+  CHATGPT_TURN_FAILED: 'CHATGPT_TURN_FAILED',
   PROVIDER_DISABLED_BY_POLICY: 'PROVIDER_DISABLED_BY_POLICY',
   /** Người dùng bấm huỷ khi đang streaming (§2.1). Không phải lỗi thật. */
   LLM_CANCELLED: 'LLM_CANCELLED',
@@ -169,6 +177,46 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     message: 'Đã vượt hạn mức của OpenAI.',
     retryable: true,
     hint: 'Chờ hạn mức được đặt lại, hoặc kiểm tra hạn mức của tài khoản OpenAI.',
+  },
+  CHATGPT_APP_SERVER_UNAVAILABLE: {
+    message: 'Không khởi động được dịch vụ đăng nhập Codex trên máy.',
+    retryable: true,
+    hint: 'Cài hoặc cập nhật Codex CLI, rồi mở lại Nexa và thử đăng nhập lần nữa.',
+  },
+  CHATGPT_MODEL_CATALOG_UNAVAILABLE: {
+    message: 'Không tải được danh sách model Codex của tài khoản ChatGPT.',
+    retryable: true,
+    hint: 'Cập nhật Codex CLI lên bản mới nhất, rồi bấm Làm mới tài khoản và model.',
+  },
+  CHATGPT_AUTH_FAILED: {
+    message: 'Không đăng nhập được bằng tài khoản ChatGPT.',
+    retryable: true,
+    hint: 'Thử lại và hoàn tất bước xác nhận trong cửa sổ trình duyệt.',
+  },
+  CHATGPT_LOGIN_TIMEOUT: {
+    message: 'Phiên đăng nhập ChatGPT đã hết thời gian chờ.',
+    retryable: true,
+    hint: 'Bắt đầu đăng nhập lại và hoàn tất trong cửa sổ trình duyệt.',
+  },
+  CHATGPT_AUTH_REQUIRED: {
+    message: 'Cần đăng nhập ChatGPT trước khi dùng model Codex.',
+    retryable: false,
+    hint: 'Mở Cài đặt → OpenAI và đăng nhập bằng ChatGPT.',
+  },
+  CHATGPT_MODEL_UNAVAILABLE: {
+    message: 'Model Codex đã chọn hiện không còn khả dụng cho tài khoản này.',
+    retryable: false,
+    hint: 'Làm mới danh sách model rồi chọn một model Codex khác.',
+  },
+  CHATGPT_RATE_LIMITED: {
+    message: 'Tài khoản ChatGPT đã chạm hạn mức Codex.',
+    retryable: true,
+    hint: 'Chờ hạn mức được đặt lại hoặc chọn một provider khác.',
+  },
+  CHATGPT_TURN_FAILED: {
+    message: 'Codex không hoàn tất được lượt trả lời.',
+    retryable: true,
+    hint: 'Thử lại; nếu lỗi lặp lại, làm mới tài khoản và danh sách model trong Cài đặt → OpenAI.',
   },
   PROVIDER_DISABLED_BY_POLICY: {
     message: 'Provider này đã bị chính sách của tổ chức vô hiệu hoá.',

@@ -4,7 +4,7 @@
 > từ bên ngoài (admin LiteLLM, admin Atlassian, ATTT).
 > Mỗi mục có: câu hỏi → **giả định tôi đã dùng để code** → chỗ cần sửa nếu bạn quyết khác.
 >
-> Cập nhật lần cuối: 2026-08-26 (thu hẹp danh mục tool theo ngữ cảnh — ADR 0009, mục H)
+> Cập nhật lần cuối: 2026-08-30 (bộ luật kiểm tài liệu BA và hợp đồng ảnh nội bộ — mục I)
 
 ## Cách đọc
 
@@ -807,3 +807,58 @@ mở rộng che. Sau pilot nên rà lại bằng chính câu hỏi thật — nh
 **Sửa ở đâu nếu khác:** `WRITE_WORDS`, `CONFLUENCE_WORDS`, `CONFLUENCE_FALSE_FRIENDS` trong
 `packages/agent-runtime/src/tool-preset-selector.ts` — mỗi thay đổi cần một ca test tương ứng
 trong `tool-preset-selector.test.ts`.
+
+---
+
+## I. Business Analyst workbench (2026-08-30, openspec `add-ba-workbench`)
+
+### I1. 🔴 Ảnh nội bộ: hợp đồng consent và transport chưa có ai duyệt
+
+**Đây là câu hỏi đang CHẶN mục 13 của change `add-ba-workbench`.** Giai đoạn 1–3 của tính năng BA
+đã xong và dùng được mà không cần ảnh; riêng phần "ảnh → danh sách trường" thì chưa bắt đầu và
+**sẽ không bắt đầu** cho tới khi có kết luận.
+
+**Câu hỏi:** điều kiện gì để Nexa được phép nhận một ảnh chụp màn hình sản phẩm nội bộ và gửi nó
+tới một model?
+
+**Vì sao nó không phải một dòng code:**
+
+- Hiện **không đường nào** trong Nexa nhận ảnh — `document-processor` chỉ chấp nhận `.txt`, `.md`,
+  `.pdf`, `.docx`. Mở ảnh là mở thêm loại file ở `FileBroker`.
+- `DESIGN.md` đang ghi rõ file và ảnh còn tắt cho lựa chọn `chatgpt` **cho tới khi** có một hợp
+  đồng consent và media transport đã được duyệt. Việc này đụng thẳng F1.
+- Một ảnh chụp màn hình mang theo nhiều hơn thứ người gửi định gửi: dữ liệu khách hàng trên
+  staging, URL nội bộ, danh tính người chụp. Không có phép che tự động nào đáng tin cho việc đó.
+
+**Đề xuất đã soạn sẵn để duyệt:** `docs/security/ba-vision-consent-contract.md` — bảy điều khoản
+duyệt/bác được riêng lẻ (ảnh không rời hạ tầng nội bộ; consent từng ảnh một, không nhớ; ảnh không
+nằm lại trên đĩa; chỉ lưu danh sách tên trường; trường từ ảnh mặc định `needs_review`; log chỉ số
+đếm; cờ `baVision` riêng, mặc định tắt và IT khoá được).
+
+**Bốn câu hỏi cần ATTT trả lời dứt khoát** (chi tiết trong tài liệu trên): backend phía sau LiteLLM
+chạy ở đâu; môi trường nào được phép chụp; có cần dấu vết kiểm toán không (mâu thuẫn trực tiếp với
+điều khoản "không lưu ảnh"); và ranh giới trách nhiệm khi một ảnh chứa dữ liệu thật được gửi đi.
+
+**Nếu bị bác toàn bộ:** tính năng BA không mất phần có giá trị — rulebook và `R-FLD-02` đã trả lời
+được "trường này còn thiếu validate nào" cho trường đến từ văn xuôi và bảng DOCX. Khi đó nên đóng
+D7 với kết luận "không làm" và ghi lý do vào ADR 0010.
+
+**Sửa ở đâu nếu quyết định khác:** `openspec/changes/add-ba-workbench/tasks.md` mục 13,
+`docs/security/ba-vision-consent-contract.md`, và `DESIGN.md` (dòng Codex attachment contract).
+
+### I2. 🟠 Bộ luật review có thể bị đọc thành "tài liệu đã đúng"
+
+**Bối cảnh:** báo cáo review chạy 15 luật và nói "đã kiểm 15/15 luật, 15 luật đạt". Đó là một câu
+đúng và cũng là một câu rất dễ bị đọc thành "tài liệu không còn thiếu gì" — đúng thứ mà người đặt
+yêu cầu ban đầu than phiền về các công cụ AI review khác.
+
+**Biện pháp đã dựng:** chữ "đầy đủ" không bao giờ xuất hiện cho toàn tài liệu (có test ở cả helper
+giao diện, output tool và E2E); mọi báo cáo hiển thị kèm một câu nói thẳng bộ luật kiểm cái gì và
+không kiểm cái gì; luật chưa chạy được vì thiếu mẫu/rulebook/tri thức được báo là **chưa kiểm**
+chứ không tính là đã đạt.
+
+**Câu hỏi cần Design owner:** câu chữ và bố cục hiện tại đã đủ để không bị đọc sai chưa? Đây là
+open question cuối còn mở của change, và giờ đã có bản chạy thật để soi thay vì soi trên mô tả.
+
+**Sửa ở đâu nếu khác:** `REVIEW_SCOPE_NOTE` và `summarizeReview` trong
+`apps/desktop/src/renderer/components/ba-ui.ts`, kèm test tương ứng trong `ba-ui.test.ts`.

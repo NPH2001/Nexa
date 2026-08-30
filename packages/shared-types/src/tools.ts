@@ -164,3 +164,52 @@ export const TOOL_PRESETS: readonly ToolPreset[] = Object.keys(TOOL_PRESET_FLAGS
  * `AtlassianMcpManager.callTool` cảnh báo.
  */
 export const EXPAND_TOOLS_TOOL_NAME = 'nexa_mo_rong_tool'
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tool cục bộ — thao tác lên dữ liệu trên máy người dùng
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Tool chạy thẳng trong main process, không qua MCP.
+ *
+ * Kiểu này CỐ Ý tách khỏi `ToolDefinition`: tool cục bộ không có `mcpToolName`, không thuộc
+ * hệ thống đích Jira/Confluence và không gắn với feature flag của MCP server. Ép chung một
+ * kiểu sẽ buộc phải điền các trường vô nghĩa, và đó chính là cách một tool cục bộ vô tình
+ * lọt vào đường thực thi MCP.
+ *
+ * Cái KHÔNG đổi: risk level, preview và Confirmation Guard. Tool cục bộ ghi dữ liệu người dùng
+ * nên nó đi qua đúng tám bước của §7.4 như tool write ngoài.
+ */
+export interface LocalToolDefinition<TInput = unknown> {
+  readonly kind: 'local'
+  /** Tên gửi cho LLM. Không được trùng tên tool MCP nào. */
+  readonly name: string
+  readonly riskLevel: RiskLevel
+  readonly description: string
+  readonly inputSchema: z.ZodType<TInput>
+  readonly jsonSchema: Record<string, unknown>
+  /** Bắt buộc với mọi risk khác READ — không có preview thì không có xác nhận có nghĩa. */
+  readonly buildPreview?: (input: TInput, ctx: LocalPreviewContext) => Promise<ToolPreview>
+  readonly execute: (input: TInput) => Promise<ToolResultSummary>
+}
+
+/**
+ * Context dựng preview cho tool cục bộ.
+ *
+ * Không có `readTool`: tool cục bộ không được phép gọi tool MCP để dựng preview. Muốn đọc giá
+ * trị "trước", nó dùng cổng đọc cục bộ mà main process bơm vào chính định nghĩa tool.
+ */
+export interface LocalPreviewContext {
+  /** Profile đang thao tác — thay cho tài khoản Jira ở tool ngoài. */
+  readonly actingAccount: string
+}
+
+/**
+ * Danh mục tool cục bộ khả dụng cho một lượt chat.
+ *
+ * Danh sách ĐÓNG và do main process dựng theo setting; runtime chỉ đọc.
+ */
+export interface LocalToolRegistry {
+  list(): readonly LocalToolDefinition[]
+  get(name: string): LocalToolDefinition | undefined
+}

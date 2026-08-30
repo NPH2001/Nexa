@@ -19,7 +19,7 @@ tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chi�
 
 | Hạng mục                                 | Trạng thái                                                                         |
 | ---------------------------------------- | ---------------------------------------------------------------------------------- |
-| Test                                     | **390 unit/integration** + **17 E2E** được định nghĩa (15 Linux + 2 Windows-only)  |
+| Test                                     | **842 unit/integration** + **23 E2E** được định nghĩa (21 Linux + 2 Windows-only)  |
 | Lint · typecheck                         | sạch                                                                               |
 | Build (main/preload/renderer)            | chạy được                                                                          |
 | Chạy app thật                            | ✅ trên Linux — `window-ready` sau 304 ms                                          |
@@ -70,7 +70,9 @@ nexa/
 │  ├─ atlassian-mcp-manager/   Lifecycle MCP + danh mục tool + preview (EPIC-07)
 │  ├─ connection-config/       Connection/model/settings service (EPIC-02/03)
 │  ├─ document-processor/      TXT/PDF/DOCX, worker, chunking (EPIC-06)
-│  └─ agent-runtime/           Vòng lặp tool, confirmation guard, operation tracker (EPIC-08)
+│  ├─ agent-runtime/           Vòng lặp tool, confirmation guard, operation tracker (EPIC-08)
+│  └─ ba-kit/                  Mô hình tài liệu BA, template, rulebook, dò trùng, phép chiếu
+│                                (Markdown · Mermaid · ma trận · trang mã lỗi) — thuần, không DB/LLM
 ├─ docs/
 │  ├─ OPEN-QUESTIONS.md        ⚠️ Câu hỏi cần review
 │  ├─ RUNBOOK.md               Điều tra sự cố, đối chiếu request_id (§15.2)
@@ -138,6 +140,29 @@ model *thấy*, không đổi cái được phép *chạy*. Tắt toàn tổ ch�
 
 ```json
 { "forcedFeatures": { "toolScoping": false } }
+```
+
+**Không gian Nghiệp vụ (BA)** — cờ `baWorkbench`, mặc định **tắt** (openspec `add-ba-workbench`).
+Bật trong Cài đặt → Dữ liệu & quyền riêng tư. Khi bật, Nexa thêm một đích **Nghiệp vụ** gồm kho tri
+thức nghiệp vụ đã xác nhận, tài liệu có cấu trúc, trang mã lỗi và bộ kiểm tra tài liệu, cùng ba tool
+chat chỉ đọc `nexa_ba_tra_cuu_tri_thuc`, `nexa_ba_tong_hop_ma_loi` và `nexa_ba_kiem_tra_tai_lieu`.
+Tri thức nghiệp vụ **luôn** ở lại trong tổ chức — không có tuỳ chọn chia sẻ ra provider ngoài cho
+từng mục, khác với memory.
+
+Bộ kiểm tra chạy một **rule pack có phiên bản** gồm các hàm thuần trên mô hình tài liệu: cùng tài
+liệu và cùng phiên bản luật thì ra cùng tập phát hiện, mỗi lần chạy. Model không ra phán quyết —
+nó chỉ được nhờ đề xuất câu chữ cho một phát hiện mà code đã sinh ra, và áp dụng là thao tác riêng
+của người dùng cho từng chỗ. Báo cáo nêu rõ đã kiểm bộ luật nào, bao nhiêu luật, luật nào **chưa**
+kiểm được và bao nhiêu mục còn cần soát đã bị loại; nó không bao giờ kết luận tài liệu đã đầy đủ.
+
+Bộ mẫu tài liệu và chuẩn validate ship kèm bản cài ở `apps/desktop/resources/ba-templates.json` và
+`ba-rulebook.json`; IT ghi đè hai file này lúc phân phối đúng như `policy.json`. Người dùng cuối
+chọn mẫu chứ không sửa mẫu. File hỏng chỉ làm mất mẫu đó, không làm hỏng khởi động app.
+
+Khoá toàn tổ chức bằng `forcedFeatures` trong `policy.json`:
+
+```json
+{ "forcedFeatures": { "baWorkbench": false } }
 ```
 
 **MCP Atlassian** — package chưa được chốt (OPEN-QUESTIONS A4 🔴). Ghi đè để thử package khác:

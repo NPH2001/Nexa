@@ -504,6 +504,167 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS commitment_check_ins;
     `,
   },
+  {
+    version: 8,
+    name: 'commitment-provenance',
+    /**
+     * Ai tạo ra cam kết này — người dùng gõ tay trong Mục tiêu, hay agent đề xuất trong chat rồi
+     * người dùng xác nhận. Đây là enum provenance, KHÔNG phải nội dung, nên không mã hoá.
+     *
+     * Default `'user'` là đúng với lịch sử chứ không phải phỏng đoán: trước migration này agent
+     * không có đường nào tạo commitment, nên mọi record cũ đều do người dùng tạo. Không backfill
+     * gì khác.
+     */
+    up: `
+      ALTER TABLE commitments ADD COLUMN created_by TEXT NOT NULL DEFAULT 'user';
+      ALTER TABLE local_audit ADD COLUMN actor TEXT;
+    `,
+    down: `
+      ALTER TABLE local_audit DROP COLUMN actor;
+      ALTER TABLE commitments DROP COLUMN created_by;
+    `,
+  },
+  {
+    version: 9,
+    name: 'ba-workbench',
+    /**
+     * Business Analyst workbench (openspec `add-ba-workbench`).
+     *
+     * Hai điều đáng nói về hình dạng của schema này:
+     *
+     * 1. **Không có `ba_projects`** (D11). Tri thức gắn thẳng vào profile; trục nhóm duy nhất là
+     *    `category`. Thêm project về sau là `ADD COLUMN project_id` với NULL = chưa phân loại,
+     *    không phải viết lại dòng nào. Cũng **không có `ba_templates`** (D12): bộ template chuẩn
+     *    là resource chỉ đọc đi kèm bản cài, IT ghi đè lúc phân phối như `policy.json`.
+     *
+     * 2. **Không cột plaintext nào chứa nội dung nghiệp vụ.** Tên use case, nội dung rule và mã
+     *    lỗi đều nằm trong `payload_ciphertext`. Việc gom, dò trùng và join chạy trên object đã
+     *    giải mã trong main process — cùng cách `search.ts` (A9) đã làm. Cột rõ chỉ có enum, id,
+     *    ordinal, số đếm và timestamp.
+     *
+     * `item_type`, `ordinal` và `needs_review` bị lặp giữa cột và payload có chủ đích: chúng cần
+     * cho việc lọc/sắp xếp mà không phải giải mã cả tài liệu. Repository là NGƯỜI GHI DUY NHẤT của
+     * ba cột đó và luôn suy ra từ payload, nên hai bản không có đường lệch nhau.
+     */
+    up: `
+      CREATE TABLE ba_knowledge (
+        id                     TEXT PRIMARY KEY,
+        profile_id             TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        title_ciphertext       TEXT NOT NULL,
+        body_ciphertext        TEXT NOT NULL,
+        category               TEXT NOT NULL CHECK (category IN ('domain','rule','term','constraint','decision')),
+        status                 TEXT NOT NULL CHECK (status IN ('draft','confirmed','outdated')),
+        source_kind            TEXT NOT NULL CHECK (source_kind IN ('conversation','document','url','manual')),
+        source_ref_ciphertext  TEXT,
+        source_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+        superseded_by          TEXT REFERENCES ba_knowledge(id) ON DELETE SET NULL,
+        created_by             TEXT NOT NULL CHECK (created_by IN ('user','agent')),
+        use_count              INTEGER NOT NULL DEFAULT 0,
+        last_used_at           TEXT,
+        confirmed_at           TEXT,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+      );
+      CREATE INDEX idx_ba_knowledge_profile_status_updated
+        ON ba_knowledge(profile_id, status, updated_at DESC);
+      CREATE INDEX idx_ba_knowledge_profile_category
+        ON ba_knowledge(profile_id, category, status);
+      CREATE INDEX idx_ba_knowledge_source_conversation
+        ON ba_knowledge(source_conversation_id);
+
+      CREATE TABLE ba_knowledge_links (
+        id         TEXT PRIMARY KEY,
+        from_id    TEXT NOT NULL REFERENCES ba_knowledge(id) ON DELETE CASCADE,
+        to_id      TEXT NOT NULL REFERENCES ba_knowledge(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('supports','conflicts','supersedes')),
+        created_at TEXT NOT NULL,
+        UNIQUE (from_id, to_id, kind)
+      );
+      CREATE INDEX idx_ba_knowledge_links_from ON ba_knowledge_links(from_id);
+      CREATE INDEX idx_ba_knowledge_links_to ON ba_knowledge_links(to_id);
+
+      CREATE TABLE ba_documents (
+        id                     TEXT PRIMARY KEY,
+        profile_id             TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        title_ciphertext       TEXT NOT NULL,
+        kind                   TEXT NOT NULL CHECK (kind IN ('us','srs','brd','note')),
+        status                 TEXT NOT NULL CHECK (status IN ('draft','reviewed')),
+        template_id            TEXT,
+        template_version       TEXT,
+        source_hash            TEXT,
+        source_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+      );
+      CREATE INDEX idx_ba_documents_profile_updated
+        ON ba_documents(profile_id, updated_at DESC);
+
+      /*
+       * Khoá chính là (document_id, id), KHÔNG phải id.
+       *
+       * Id item do bước trích xuất sinh và chỉ duy nhất trong phạm vi một tài liệu — hai US khác
+       * nhau đều có e-1 là chuyện bình thường. Đặt id làm khoá chính toàn cục làm tài liệu thứ
+       * hai không lưu được, và lỗi chỉ lộ ra khi người dùng có nhiều hơn một tài liệu.
+       */
+      CREATE TABLE ba_doc_items (
+        document_id        TEXT NOT NULL REFERENCES ba_documents(id) ON DELETE CASCADE,
+        id                 TEXT NOT NULL,
+        item_type          TEXT NOT NULL CHECK (item_type IN ('field','use_case','rule','flow_step','error_code','actor')),
+        ordinal            INTEGER NOT NULL,
+        needs_review       INTEGER NOT NULL DEFAULT 0,
+        payload_ciphertext TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL,
+        PRIMARY KEY (document_id, id)
+      );
+      CREATE INDEX idx_ba_doc_items_document_type_ordinal
+        ON ba_doc_items(document_id, item_type, ordinal);
+      CREATE INDEX idx_ba_doc_items_document_needs_review
+        ON ba_doc_items(document_id, needs_review);
+
+      /*
+       * Khoá ngoại ghép theo (document_id, item_id) nên một link KHÔNG THỂ nối hai tài liệu —
+       * ràng buộc đó do schema giữ, không phải do người viết repository nhớ giữ.
+       */
+      CREATE TABLE ba_doc_links (
+        id               TEXT PRIMARY KEY,
+        document_id      TEXT NOT NULL REFERENCES ba_documents(id) ON DELETE CASCADE,
+        from_item_id     TEXT NOT NULL,
+        to_item_id       TEXT NOT NULL,
+        kind             TEXT NOT NULL CHECK (kind IN ('next','covers','raises','validates','references')),
+        label_ciphertext TEXT,
+        created_at       TEXT NOT NULL,
+        UNIQUE (document_id, from_item_id, to_item_id, kind),
+        FOREIGN KEY (document_id, from_item_id)
+          REFERENCES ba_doc_items(document_id, id) ON DELETE CASCADE,
+        FOREIGN KEY (document_id, to_item_id)
+          REFERENCES ba_doc_items(document_id, id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_ba_doc_links_document ON ba_doc_links(document_id);
+
+      CREATE TABLE ba_reviews (
+        id                    TEXT PRIMARY KEY,
+        document_id           TEXT NOT NULL REFERENCES ba_documents(id) ON DELETE CASCADE,
+        rule_pack_id          TEXT NOT NULL,
+        rule_pack_version     TEXT NOT NULL,
+        rules_run             INTEGER NOT NULL,
+        rules_passed          INTEGER NOT NULL,
+        excluded_needs_review INTEGER NOT NULL DEFAULT 0,
+        findings_ciphertext   TEXT NOT NULL,
+        created_at            TEXT NOT NULL
+      );
+      CREATE INDEX idx_ba_reviews_document_created
+        ON ba_reviews(document_id, created_at DESC);
+    `,
+    down: `
+      DROP TABLE IF EXISTS ba_reviews;
+      DROP TABLE IF EXISTS ba_doc_links;
+      DROP TABLE IF EXISTS ba_doc_items;
+      DROP TABLE IF EXISTS ba_documents;
+      DROP TABLE IF EXISTS ba_knowledge_links;
+      DROP TABLE IF EXISTS ba_knowledge;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

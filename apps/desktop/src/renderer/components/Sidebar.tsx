@@ -12,6 +12,8 @@ interface SearchState {
 
 export function Sidebar(props: {
   view: View
+  /** Đích Nghiệp vụ chỉ hiện khi cờ bật — ẩn một đích chưa dùng được đỡ khó hiểu hơn là khoá nó. */
+  baEnabled: boolean
   conversations: readonly Conversation[]
   activeId: string | null
   mcpStatus: McpStatusEvent | null
@@ -98,6 +100,16 @@ export function Sidebar(props: {
         >
           Hoạt động
         </button>
+        {props.baEnabled && (
+          <button
+            type="button"
+            className={`btn btn-block ${props.view === 'ba' ? 'btn-active' : ''}`}
+            aria-current={props.view === 'ba' ? 'page' : undefined}
+            onClick={() => props.onChangeView('ba')}
+          >
+            Nghiệp vụ
+          </button>
+        )}
         <button type="button" className="btn btn-primary btn-block" onClick={props.onCreate}>
           + Hội thoại mới
         </button>

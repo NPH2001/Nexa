@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ConfirmationRequest } from '@nexa/shared-types/renderer'
+import type { ConfirmationRequest, ToolPreview } from '@nexa/shared-types/renderer'
 import { useModalDialog } from './useModalDialog.js'
 
 /**
@@ -60,8 +60,10 @@ export function ConfirmationDialog(props: {
             <h2 id="confirm-title">Xác nhận thao tác thay đổi dữ liệu</h2>
             <p className="modal-subtitle">
               <code>{preview.toolName}</code> →{' '}
-              <strong>{preview.targetSystem === 'jira' ? 'Jira' : 'Confluence'}</strong>{' '}
-              <span className="muted">{preview.targetSystemUrl}</span>
+              <strong>{targetSystemLabel(preview.targetSystem)}</strong>{' '}
+              {preview.targetSystemUrl !== '' && (
+                <span className="muted">{preview.targetSystemUrl}</span>
+              )}
             </p>
           </div>
           <span className={`risk-badge risk-${preview.riskLevel.toLowerCase()}`}>
@@ -201,4 +203,19 @@ export function ConfirmationDialog(props: {
 
 function remainingSeconds(expiresAt: string): number {
   return Math.round((new Date(expiresAt).getTime() - Date.now()) / 1000)
+}
+
+/**
+ * Nhãn hệ thống đích. `local` phải nói rõ dữ liệu nằm trên máy người dùng — mượn nhãn Jira cho
+ * một thao tác cục bộ là nói dối người dùng về nơi dữ liệu sẽ đi.
+ */
+function targetSystemLabel(targetSystem: ToolPreview['targetSystem']): string {
+  switch (targetSystem) {
+    case 'jira':
+      return 'Jira'
+    case 'confluence':
+      return 'Confluence'
+    case 'local':
+      return 'Dữ liệu trên máy bạn'
+  }
 }

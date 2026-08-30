@@ -1,0 +1,124 @@
+{
+  "_comment": "Chuẩn validate chung của tổ chức, tra theo kiểu trường. IT ghi đè file này lúc phân phối, giống policy.json và ba-templates.json. Đây là nửa có giá trị của yêu cầu 'đọc ảnh để biết trường nào cần validate' — và nó không cần đọc ảnh: ảnh chỉ cho biết form có trường gì, còn 'trường kiểu này cần validate gì' là tri thức tổ chức. Xem design.md quyết định D7.",
+  "_comment_key": "'key' là định danh máy đọc; trường trong tài liệu khai đúng key này ở 'validations'. So bằng === chứ không so khớp mờ câu chữ.",
+  "id": "chuan-validate-mac-dinh",
+  "version": "1",
+  "name": "Chuẩn validate mặc định",
+  "byFieldType": [
+    {
+      "fieldType": "email",
+      "validations": [
+        {
+          "key": "required-check",
+          "label": "Kiểm tra bắt buộc / cho phép rỗng",
+          "rationale": "Trường bắt buộc mà không chặn rỗng thì lỗi rơi xuống tầng dưới."
+        },
+        {
+          "key": "email-format",
+          "label": "Đúng định dạng email",
+          "rationale": "Sai định dạng thì thư báo không tới được người nhận."
+        },
+        {
+          "key": "max-length",
+          "label": "Giới hạn độ dài",
+          "rationale": "Chặn tràn cột khi lưu và tràn giao diện khi hiển thị."
+        }
+      ]
+    },
+    {
+      "fieldType": "phone",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        {
+          "key": "phone-format",
+          "label": "Đúng định dạng số điện thoại",
+          "rationale": "Nêu rõ có chấp nhận mã quốc gia và dấu cách hay không."
+        },
+        { "key": "max-length", "label": "Giới hạn độ dài" }
+      ]
+    },
+    {
+      "fieldType": "money",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        {
+          "key": "non-negative",
+          "label": "Không âm",
+          "rationale": "Số tiền âm gần như luôn là lỗi nhập liệu, trừ khi tài liệu nói rõ ngược lại."
+        },
+        {
+          "key": "currency-scale",
+          "label": "Đúng số chữ số thập phân của loại tiền",
+          "rationale": "VND không có phần thập phân; làm tròn sai chỗ này gây lệch đối soát."
+        },
+        { "key": "range-check", "label": "Giới hạn trên / dưới" }
+      ]
+    },
+    {
+      "fieldType": "date",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        { "key": "date-format", "label": "Đúng định dạng ngày" },
+        {
+          "key": "range-check",
+          "label": "Giới hạn khoảng ngày hợp lệ",
+          "rationale": "Nêu rõ có cho phép ngày quá khứ hay tương lai không."
+        }
+      ]
+    },
+    {
+      "fieldType": "identifier",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        { "key": "format-pattern", "label": "Đúng quy tắc sinh mã" },
+        {
+          "key": "uniqueness",
+          "label": "Kiểm tra trùng",
+          "rationale": "Mã định danh trùng làm hỏng mọi tra cứu về sau."
+        },
+        { "key": "max-length", "label": "Giới hạn độ dài" }
+      ]
+    },
+    {
+      "fieldType": "number",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        { "key": "numeric-type", "label": "Đúng kiểu số (nguyên hay thập phân)" },
+        { "key": "range-check", "label": "Giới hạn trên / dưới" }
+      ]
+    },
+    {
+      "fieldType": "enum",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        {
+          "key": "allowed-values",
+          "label": "Chỉ nhận giá trị trong danh sách",
+          "rationale": "Danh sách giá trị phải được liệt kê trong tài liệu, không để ngầm hiểu."
+        }
+      ]
+    },
+    {
+      "fieldType": "free_text",
+      "validations": [
+        { "key": "required-check", "label": "Kiểm tra bắt buộc / cho phép rỗng" },
+        { "key": "max-length", "label": "Giới hạn độ dài" },
+        {
+          "key": "unsafe-input",
+          "label": "Xử lý ký tự đặc biệt khi hiển thị lại",
+          "rationale": "Trường tự do là nơi nội dung của người dùng quay lại giao diện."
+        }
+      ]
+    },
+    {
+      "fieldType": "boolean",
+      "validations": [
+        {
+          "key": "default-value",
+          "label": "Nêu rõ giá trị mặc định",
+          "rationale": "Bỏ trống mặc định của một cờ là chỗ hai bên hiểu khác nhau."
+        }
+      ]
+    }
+  ]
+}

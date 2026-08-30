@@ -10,6 +10,18 @@ import {
   type IpcChannel,
 } from '@nexa/shared-types'
 import { SECURITY_EVENTS, newRequestId } from '@nexa/observability'
+import {
+  auditFields,
+  buildErrorCodePage,
+  buildTraceabilityMatrix,
+  evaluateTemplate,
+  itemsOfType,
+  mergeItemsInModel,
+  renderMarkdown,
+  renderMermaid,
+  summarizeModel,
+  analyzeSimilarity,
+} from '@nexa/ba-kit'
 import type { ChatController } from './chat-controller.js'
 import type { NexaServices } from './services.js'
 import { buildMcpManager } from './services.js'
@@ -112,6 +124,77 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     return checkIn
   }
 
+  /**
+   * Hàng rào cờ cho toàn bộ namespace `ba:*`.
+   *
+   * Renderer đã ẩn đích Nghiệp vụ khi cờ tắt, nhưng renderer là bên không đáng tin (§5.3): nó có
+   * thể gọi thẳng channel. Đây mới là chỗ quyết định.
+   */
+  const requireBaWorkbench = (): void => {
+    if (!services.settings.get().features.baWorkbench) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'ba workbench is disabled by settings or org policy',
+      })
+    }
+  }
+
+  const requireBaKnowledgeForCurrentProfile = (id: string) => {
+    requireBaWorkbench()
+    const item = services.baKnowledge.get(id)
+    if (item === null || item.profileId !== services.profileId) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'ba knowledge item not found for current profile',
+      })
+    }
+    return item
+  }
+
+  const requireBaDocumentForCurrentProfile = (id: string) => {
+    requireBaWorkbench()
+    const document = services.baDocuments.get(id)
+    if (document === null || document.profileId !== services.profileId) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'ba document not found for current profile',
+      })
+    }
+    return document
+  }
+
+  /** Bỏ `profileId` trước khi ra renderer — renderer không cần và không được biết profile nào. */
+  const toKnowledgeView = (item: ReturnType<typeof requireBaKnowledgeForCurrentProfile>) => {
+    const { profileId: _profileId, ...view } = item
+    return view
+  }
+
+  const toDocumentView = (document: ReturnType<typeof requireBaDocumentForCurrentProfile>) => {
+    const { profileId: _profileId, ...view } = document
+    return { ...view, needsReviewCount: services.baDocuments.countNeedsReview(document.id) }
+  }
+
+  /**
+   * Đổi một `fileToken` do `file:pick` cấp thành text.
+   *
+   * Renderer không bao giờ gửi đường dẫn (§5.3) — nó gửi token, main tự tra ra descriptor. Token
+   * được giải phóng ngay sau khi trích xuất, thành công hay không, đúng như đường tài liệu của chat.
+   */
+  const readPickedFileText = async (fileToken: string | undefined): Promise<string> => {
+    if (fileToken === undefined) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, { safeDetail: 'missing file token' })
+    }
+    const tokens = [fileToken]
+    try {
+      const [document] = await services.documents.process(services.files.resolve(tokens))
+      if (document === undefined) {
+        throw new NexaError(ERROR_CODES.FILE_UNSUPPORTED, {
+          safeDetail: 'no text could be extracted from the picked file',
+        })
+      }
+      return document.text
+    } finally {
+      services.files.releaseAll(tokens)
+    }
+  }
+
   const recordLocalMutation = (input: {
     type: 'memory_mutation' | 'commitment_mutation'
     action: 'created' | 'updated' | 'archived' | 'restored' | 'deleted'
@@ -175,6 +258,27 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       return { deleted: true }
     },
 
+    // ── ChatGPT managed account (Codex App Server) ───────────────────────
+    'chatgpt:status': () => services.chatgpt.status(),
+    'chatgpt:models': () => {
+      if (!services.policy.allowDirectOpenAi) {
+        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+          safeDetail: 'managed ChatGPT model catalog is disabled by organisation policy',
+        })
+      }
+      return services.chatgpt.models()
+    },
+    'chatgpt:login': () => {
+      if (!services.policy.allowDirectOpenAi) {
+        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+          safeDetail: 'managed ChatGPT login is disabled by organisation policy',
+        })
+      }
+      return services.chatgpt.login()
+    },
+    // Cho phép đăng xuất kể cả khi policy vừa đổi để người dùng luôn gỡ được phiên cũ.
+    'chatgpt:logout': () => services.chatgpt.logout(),
+
     // ── Models ────────────────────────────────────────────────────────────
     'model:list': () => services.models.list(),
     'model:add': (input) => services.models.add(input),
@@ -199,11 +303,21 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         limit: input.limit,
         offset: input.offset,
       }),
-    'conversation:create': (input) => {
+    'conversation:create': async (input) => {
+      if (input.modelProvider === 'chatgpt' && !services.policy.allowDirectOpenAi) {
+        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+          safeDetail: 'managed ChatGPT conversation creation is disabled by organisation policy',
+        })
+      }
       const model =
         input.modelId === null || input.modelProvider === null
           ? null
-          : services.models.resolveForConversation(input.modelId, input.modelProvider)
+          : input.modelProvider === 'chatgpt'
+            ? {
+                ...(await services.chatgpt.resolveModel(input.modelId)),
+                provider: 'chatgpt' as const,
+              }
+            : services.models.resolveForConversation(input.modelId, input.modelProvider)
       return services.conversations.create(
         services.profileId,
         input.title,
@@ -394,6 +508,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         .list(services.profileId, {
           type: input.type,
           status: input.status,
+          actor: input.actor,
           limit: input.limit,
           offset: input.offset,
         })
@@ -401,6 +516,224 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
           ...event,
           subjectLabel: resolveActivitySubjectLabel(services, event.subjectType, event.subjectId),
         })),
+
+    // ── BA workbench ────────────────────────────────────────────────────
+    'ba:knowledge:list': (input) => {
+      requireBaWorkbench()
+      return services.baKnowledge
+        .list(services.profileId, {
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.category !== undefined ? { category: input.category } : {}),
+        })
+        .map(toKnowledgeView)
+    },
+    'ba:knowledge:create': (input) => {
+      requireBaWorkbench()
+      // Renderer tạo item thì luôn là người dùng gõ tay. `status` không nhận từ renderer: item
+      // mới luôn là draft, chốt là một channel riêng.
+      const item = services.baKnowledge.create({
+        profileId: services.profileId,
+        title: input.title,
+        body: input.body,
+        category: input.category,
+        sourceKind: input.sourceKind,
+        sourceRef: input.sourceRef,
+        sourceConversationId: input.sourceConversationId,
+        createdBy: 'user',
+      })
+      return toKnowledgeView(item)
+    },
+    'ba:knowledge:update': (input) => {
+      requireBaKnowledgeForCurrentProfile(input.id)
+      return toKnowledgeView(
+        services.baKnowledge.update(input.id, {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.body !== undefined ? { body: input.body } : {}),
+          ...(input.category !== undefined ? { category: input.category } : {}),
+          ...(input.sourceRef !== undefined ? { sourceRef: input.sourceRef } : {}),
+        }),
+      )
+    },
+    'ba:knowledge:confirm': (input) => {
+      requireBaKnowledgeForCurrentProfile(input.id)
+      return toKnowledgeView(services.baKnowledge.confirm(input.id))
+    },
+    'ba:knowledge:supersede': (input) => {
+      requireBaKnowledgeForCurrentProfile(input.id)
+      requireBaKnowledgeForCurrentProfile(input.replacementId)
+      return toKnowledgeView(services.baKnowledge.supersede(input.id, input.replacementId))
+    },
+    'ba:knowledge:delete': (input) => {
+      requireBaKnowledgeForCurrentProfile(input.id)
+      services.baKnowledge.delete(input.id)
+      return { ok: true }
+    },
+    'ba:knowledge:link': (input) => {
+      requireBaKnowledgeForCurrentProfile(input.fromId)
+      requireBaKnowledgeForCurrentProfile(input.toId)
+      return services.baKnowledge.link(input.fromId, input.toId, input.kind)
+    },
+    'ba:knowledge:unlink': (input) => {
+      requireBaWorkbench()
+      services.baKnowledge.unlink(input.linkId)
+      return { ok: true }
+    },
+    'ba:knowledge:stats': () => {
+      requireBaWorkbench()
+      return services.baKnowledge.stats(services.profileId)
+    },
+    'ba:document:list': () => {
+      requireBaWorkbench()
+      return services.baDocuments.list(services.profileId).map(toDocumentView)
+    },
+    'ba:document:create': (input) => {
+      requireBaWorkbench()
+      return toDocumentView(
+        services.baDocuments.create({
+          profileId: services.profileId,
+          title: input.title,
+          kind: input.kind,
+          sourceConversationId: input.sourceConversationId,
+        }),
+      )
+    },
+    'ba:document:delete': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      services.baDocuments.delete(input.id)
+      return { ok: true }
+    },
+    'ba:document:read': (input) => {
+      const document = requireBaDocumentForCurrentProfile(input.id)
+      const model = services.baDocuments.readModel(input.id)
+      // Renderer nhận bản rút gọn, không nhận mô hình đầy đủ — xem `summarizeItem`.
+      return {
+        document: toDocumentView(document),
+        items: summarizeModel(model.items),
+        linkCount: model.links.length,
+      }
+    },
+    'ba:document:extract': async (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      const text = input.text ?? (await readPickedFileText(input.fileToken))
+      const result = await services.baExtraction.run(input.id, text)
+      return {
+        items: summarizeModel(result.model.items),
+        nearDuplicates: result.nearDuplicates,
+        potentialContradictions: result.potentialContradictions,
+        mergedCount: result.mergedCount,
+        needsReviewCount: result.needsReviewCount,
+        sectionCount: result.sectionCount,
+        cached: result.cached,
+      }
+    },
+    'ba:document:errorCodes': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      return buildErrorCodePage(services.baDocuments.readModel(input.id))
+    },
+
+    'ba:template:list': () => {
+      requireBaWorkbench()
+      // Chỉ đọc: không có create/update/delete. Chuẩn của tổ chức do IT phân phối (D12).
+      return {
+        templates: services.baStandards.templates,
+        rulebook:
+          services.baStandards.rulebook === null
+            ? null
+            : {
+                id: services.baStandards.rulebook.id,
+                version: services.baStandards.rulebook.version,
+                name: services.baStandards.rulebook.name,
+              },
+      }
+    },
+    'ba:document:setTemplate': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      if (input.templateId === null) {
+        return toDocumentView(
+          services.baDocuments.update(input.id, { templateId: null, templateVersion: null }),
+        )
+      }
+      const template = services.baStandards.templates.find(
+        (entry) => entry.id === input.templateId,
+      )
+      if (template === undefined) {
+        throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+          safeDetail: `unknown ba template: ${input.templateId}`,
+        })
+      }
+      // Ghi lại CẢ phiên bản: khi IT nâng chuẩn, tài liệu cũ vẫn nói được nó viết theo bản nào.
+      return toDocumentView(
+        services.baDocuments.update(input.id, {
+          templateId: template.id,
+          templateVersion: template.version,
+        }),
+      )
+    },
+    'ba:document:projections': (input) => {
+      const document = requireBaDocumentForCurrentProfile(input.id)
+      const model = services.baDocuments.readModel(input.id)
+      const template = services.baStandards.templates.find(
+        (entry) => entry.id === document.templateId,
+      )
+      const rulebook = services.baStandards.rulebook
+      const similarity = analyzeSimilarity(model.items)
+      const mermaid = renderMermaid(model)
+
+      return {
+        mermaid: { code: mermaid.code, isolatedSteps: mermaid.isolatedSteps, stepCount: mermaid.stepCount, edgeCount: mermaid.edgeCount },
+        matrix: buildTraceabilityMatrix(model),
+        fieldAudits: rulebook === null ? [] : auditFields(itemsOfType(model, 'field'), rulebook),
+        nearDuplicates: similarity.nearDuplicates,
+        potentialContradictions: similarity.potentialContradictions,
+        ...(template === undefined
+          ? { template: null, markdown: null, missingRequired: [], unplacedCount: 0 }
+          : {
+              template: { id: template.id, version: template.version, name: template.name },
+              markdown: renderMarkdown(model, template, { title: document.title }),
+              missingRequired: evaluateTemplate(model, template).missingRequired,
+              unplacedCount: evaluateTemplate(model, template).unplaced.length,
+              // Người dùng phải biết tài liệu đang theo một bản mẫu cũ hơn bản hiện có.
+              templateOutdated: document.templateVersion !== template.version,
+            }),
+      }
+    },
+    'ba:document:mergeItems': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      const model = services.baDocuments.readModel(input.id)
+      const merged = mergeItemsInModel(model, input.keepItemId, input.dropItemId)
+      if (!merged.merged) {
+        throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+          safeDetail: merged.reason ?? 'items could not be merged',
+        })
+      }
+      services.baDocuments.replaceModel(input.id, merged.model)
+      return { items: summarizeModel(merged.model.items) }
+    },
+    'ba:document:review': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      return services.baReview.run(input.id)
+    },
+    'ba:document:reviewHistory': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      return services.baReview.history(input.id)
+    },
+    'ba:document:suggestWording': async (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      return services.baReview.suggestWording(input.id, {
+        ruleId: input.ruleId,
+        itemId: input.itemId,
+      })
+    },
+    'ba:document:applyFinding': (input) => {
+      requireBaDocumentForCurrentProfile(input.id)
+      // Áp dụng là thao tác của NGƯỜI DÙNG, từng chỗ một (D2). Không có kênh áp dụng hàng loạt.
+      return services.baReview.applyFinding({
+        documentId: input.id,
+        itemId: input.itemId,
+        field: input.field,
+        value: input.value,
+      })
+    },
 
     // ── Chat ──────────────────────────────────────────────────────────────
     'chat:send': (input) => chat.send(input),
@@ -550,6 +883,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     // ── Xoá dữ liệu (§11.1) ───────────────────────────────────────────────
     'data:purge': (input) => {
       services.store.purgeProfile(services.profileId)
+      services.search.clear()
       if (input.alsoDeleteCredentials) services.security.purgeAllSecrets()
       services.logger.security(SECURITY_EVENTS.dataPurged, {
         includedCredentials: input.alsoDeleteCredentials,
@@ -561,7 +895,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
 
 function resolveActivitySubjectLabel(
   services: NexaServices,
-  subjectType: 'memory' | 'commitment' | 'tool' | null,
+  subjectType: 'memory' | 'commitment' | 'tool' | 'ba_document' | null,
   subjectId: string | null,
 ): string {
   if (subjectType === null || subjectId === null) return 'Hoạt động hệ thống'
@@ -569,6 +903,12 @@ function resolveActivitySubjectLabel(
   if (subjectType === 'memory') {
     const fact = services.memory.get(subjectId)
     return fact !== null && fact.profileId === services.profileId ? 'Nexa nhớ' : 'Memory đã xoá'
+  }
+  if (subjectType === 'ba_document') {
+    const document = services.baDocuments.get(subjectId)
+    return document !== null && document.profileId === services.profileId
+      ? document.title
+      : 'Tài liệu đã xoá'
   }
 
   const commitment = services.commitments.get(subjectId)

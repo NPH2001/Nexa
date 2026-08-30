@@ -31,6 +31,11 @@ extraResources:
   # Chính sách của tổ chức. IT ghi đè file này lúc phân phối (§13.1 feature flag, §11.2 allowlist).
   - from: apps/desktop/resources/policy.json
     to: policy.json
+  # Chuẩn tài liệu BA. IT ghi đè hai file này lúc phân phối, cùng đường với policy.json (D12).
+  - from: apps/desktop/resources/ba-templates.json
+    to: ba-templates.json
+  - from: apps/desktop/resources/ba-rulebook.json
+    to: ba-rulebook.json
 
 asar: true
 

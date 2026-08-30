@@ -137,6 +137,43 @@ describe('exportDiagnostics', () => {
     expect(memoryLog).not.toContain(secret)
   })
 
+  /**
+   * Gói chẩn đoán là đường duy nhất log rời khỏi máy người dùng, nên nó là chỗ cuối cùng để
+   * khẳng định bộ luật review không đánh rơi nội dung nghiệp vụ ra ngoài.
+   *
+   * Bản ghi dưới đây là ĐÚNG hình dạng `BaReviewService` ghi ra: id, phiên bản pack, số đếm. Test
+   * đỏ nếu có ai thêm `findings` hay tên item vào một dòng log của review.
+   */
+  it('gói chẩn đoán chứa số đếm của review, không chứa nội dung finding', () => {
+    const memorySink = new MemorySink()
+    memorySink.write({
+      ts: '2026-08-30T00:00:00.000Z',
+      level: 'info',
+      category: 'application',
+      event: 'ba-review-completed',
+      fields: {
+        documentId: 'doc-1',
+        reviewId: 'rev-1',
+        rulePackId: 'nexa-ba',
+        rulePackVersion: '1',
+        rulesTotal: 15,
+        rulesRun: 14,
+        rulesPassed: 13,
+        findingCount: 2,
+        excludedNeedsReview: 1,
+      },
+    })
+
+    const bundle = exportDiagnostics(makeServices({ memorySink }))
+    const memoryLog = readBundleFile(bundle, 'memory-log.jsonl')
+
+    expect(memoryLog).toContain('ba-review-completed')
+    expect(memoryLog).toContain('"findingCount":2')
+    expect(memoryLog).not.toContain('luồng ngoại lệ')
+    expect(memoryLog).not.toContain('Khách hàng đặt đơn')
+    expect(memoryLog).not.toContain('R-UC-')
+  })
+
   it('sao chép log đọc được và bỏ qua file đang mất', () => {
     const source = join(dir, 'nexa.log')
     const missing = join(dir, 'missing.log')

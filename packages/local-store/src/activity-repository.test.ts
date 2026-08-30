@@ -112,4 +112,39 @@ describe('activity timeline repository', () => {
       subject_id: '11111111-1111-4111-8111-111111111111',
     })
   })
+
+  it('separates user actions from agent proposals and defaults old writes to user', () => {
+    ctx = makeTempStore()
+    const repo = new ActivityRepository(ctx.store)
+
+    repo.record({
+      profileId: ctx.profileId,
+      type: 'commitment_mutation',
+      action: 'created',
+      status: 'success',
+      subjectType: 'commitment',
+      subjectId: '11111111-1111-4111-8111-111111111111',
+    })
+    repo.record({
+      profileId: ctx.profileId,
+      type: 'commitment_mutation',
+      action: 'created',
+      status: 'success',
+      subjectType: 'commitment',
+      subjectId: '22222222-2222-4222-8222-222222222222',
+      actor: 'agent',
+    })
+
+    // Không nêu actor ⇒ 'user': mọi đường ghi có trước cột này đều do người dùng bấm.
+    const byUser = repo.list(ctx.profileId, { actor: 'user', limit: 200, offset: 0 })
+    expect(byUser.map((event) => event.subjectId)).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+    ])
+
+    const byAgent = repo.list(ctx.profileId, { actor: 'agent', limit: 200, offset: 0 })
+    expect(byAgent.map((event) => event.subjectId)).toEqual([
+      '22222222-2222-4222-8222-222222222222',
+    ])
+    expect(byAgent[0]?.actor).toBe('agent')
+  })
 })

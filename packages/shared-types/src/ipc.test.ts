@@ -86,6 +86,12 @@ describe('check-in IPC schemas', () => {
     expect(DEFAULT_APP_SETTINGS.proactiveCheckInsEnabled).toBe(false)
   })
 
+  it('keeps agent commitment writes opt-in but commitment context on by default', () => {
+    // Ghi dữ liệu người dùng là quyền mới ⇒ opt-in. Đọc để trả lời sát hơn thì không.
+    expect(DEFAULT_APP_SETTINGS.agentCommitmentToolsEnabled).toBe(false)
+    expect(DEFAULT_APP_SETTINGS.commitmentContextEnabled).toBe(true)
+  })
+
   it('requires snoozeMinutes only for snoozed actions', () => {
     expect(
       checkInRespondSchema.parse({

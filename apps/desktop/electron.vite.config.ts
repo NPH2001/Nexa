@@ -7,6 +7,7 @@ const workspace = (name: string): string =>
 
 const WORKSPACE_PACKAGES = [
   'shared-types',
+  'ba-kit',
   'observability',
   'security',
   'local-store',

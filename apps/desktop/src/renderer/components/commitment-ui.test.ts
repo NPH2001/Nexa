@@ -17,6 +17,7 @@ const makeCommitment = (overrides: Partial<Commitment> = {}): Commitment => ({
   checkInAt: null,
   completedAt: null,
   sourceConversationId: null,
+  createdBy: 'user',
   createdAt: '2026-08-26T00:00:00.000Z',
   updatedAt: '2026-08-26T00:00:00.000Z',
   ...overrides,

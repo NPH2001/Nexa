@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
+import { z } from 'zod'
 import {
   DEFAULT_APP_SETTINGS,
   ERROR_CODES,
@@ -8,6 +9,8 @@ import {
   type ConfirmationRequest,
   type MessageRole,
   type OperationStatus,
+  type LocalToolDefinition,
+  type LocalToolRegistry,
   type RiskLevel,
   type ToolPreview,
 } from '@nexa/shared-types'
@@ -96,6 +99,8 @@ async function makeHarness(opts: {
   now?: () => Date
   /** Can thiệp vào request ngay trước khi người dùng bấm Xác nhận (test TOCTOU). */
   onConfirm?: (request: ConfirmationRequest, guard: ConfirmationGuard) => void
+  /** Tool cục bộ khả dụng cho lượt này. */
+  localTools?: LocalToolRegistry
 }): Promise<Harness> {
   const { logger, sink: logSink, redactor } = testLogger()
   redactor.registerSecret('PAT-jira-0123456789abcdef')
@@ -153,6 +158,7 @@ async function makeHarness(opts: {
     actingAccount: () => ACCOUNT,
     jiraBaseUrl: () => JIRA_URL,
     confluenceBaseUrl: () => CONFLUENCE_URL,
+    ...(opts.localTools !== undefined ? { localTools: opts.localTools } : {}),
     requestConfirmation: (request) => {
       confirmations.push(request)
       opts.onConfirm?.(request, guard)
@@ -1221,5 +1227,215 @@ describe('ADR 0009 — mở rộng khi chưa kết nối được MCP', () => {
     )
     expect(sink.records).toHaveLength(0)
     expect(confirmations).toHaveLength(0)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tool cục bộ — cùng cổng bảo mật với tool ngoài
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('tool cục bộ', () => {
+  const CONVERSATION = '00000000-0000-4000-8000-000000000004'
+
+  /** Tool cục bộ giả: ghi vào một mảng thay vì DB, để test quan sát được "đã ghi hay chưa". */
+  function fakeLocalTool(writes: Record<string, unknown>[]): LocalToolDefinition {
+    return {
+      kind: 'local',
+      name: 'commitment_tao',
+      riskLevel: 'WRITE_LOW',
+      description: 'Tạo cam kết trên máy người dùng',
+      inputSchema: z.object({ title: z.string().min(1) }),
+      jsonSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+      },
+      buildPreview: (input, ctx) =>
+        Promise.resolve({
+          toolName: 'commitment_tao',
+          targetSystem: 'local',
+          targetSystemUrl: '',
+          action: 'Tạo cam kết mới',
+          actingAccount: ctx.actingAccount,
+          payloadFields: [
+            { label: 'Kết quả muốn đạt', value: String((input as { title: string }).title) },
+          ],
+          changes: [],
+          impactWarning: 'Chỉ ghi vào dữ liệu trên máy bạn.',
+          reversible: true,
+          riskLevel: 'WRITE_LOW',
+        }),
+      execute: (input) => {
+        writes.push(input as Record<string, unknown>)
+        return Promise.resolve({ forModel: 'Đã tạo cam kết.', forUser: 'Đã tạo cam kết.' })
+      },
+    }
+  }
+
+  function registryOf(definition: LocalToolDefinition): LocalToolRegistry {
+    return {
+      list: () => [definition],
+      get: (name) => (name === definition.name ? definition : undefined),
+    }
+  }
+
+  /** Runtime không có Atlassian — tool cục bộ phải tự đứng được. */
+  function makeLocalHarness(opts: {
+    script: readonly ScriptedTurn[]
+    decision?: 'approve' | 'cancel'
+    onConfirm?: (request: ConfirmationRequest, guard: ConfirmationGuard) => void
+  }): {
+    runtime: AgentRuntime
+    llm: FakeLlmClient
+    sink: MemoryToolCallSink
+    guard: ConfirmationGuard
+    writes: Record<string, unknown>[]
+    confirmations: ConfirmationRequest[]
+    run: () => Promise<Awaited<ReturnType<AgentRuntime['runTurn']>>>
+  } {
+    const { logger } = testLogger()
+    const guard = new ConfirmationGuard({ logger })
+    const llm = new FakeLlmClient(opts.script)
+    const sink = new MemoryToolCallSink()
+    const writes: Record<string, unknown>[] = []
+    const confirmations: ConfirmationRequest[] = []
+
+    const runtime = new AgentRuntime({
+      llm: llm.asClient(),
+      mcp: null,
+      guard,
+      tracker: new OperationTracker(logger),
+      logger,
+      settings: () => DEFAULT_APP_SETTINGS,
+      actingAccount: () => ACCOUNT,
+      jiraBaseUrl: () => JIRA_URL,
+      confluenceBaseUrl: () => CONFLUENCE_URL,
+      localTools: registryOf(fakeLocalTool(writes)),
+      requestConfirmation: (request) => {
+        confirmations.push(request)
+        opts.onConfirm?.(request, guard)
+        if (opts.decision === 'cancel') {
+          guard.cancel(request.operationId)
+          return Promise.resolve('cancelled')
+        }
+        guard.approve(request.operationId, request.payloadHash)
+        return Promise.resolve('approved')
+      },
+    })
+
+    return {
+      runtime,
+      llm,
+      sink,
+      guard,
+      writes,
+      confirmations,
+      run: () =>
+        runtime.runTurn({
+          requestId: 'req_local',
+          conversationId: CONVERSATION,
+          modelId: 'model-a',
+          modelProvider: 'litellm',
+          contextWindowTokens: 128_000,
+          history: [{ role: 'user', content: 'Tuần sau tôi phải xong báo cáo' }],
+          emit: () => undefined,
+          toolCalls: sink,
+        }),
+    }
+  }
+
+  const proposeCall = {
+    toolCalls: [{ name: 'commitment_tao', args: { title: 'Xong báo cáo quý' } }],
+  }
+
+  it('publishes local tools even when Atlassian is not configured', async () => {
+    const h = makeLocalHarness({ script: [{ text: 'ok' }] })
+    await h.run()
+
+    const names = (h.llm.requests[0]?.tools ?? []).map((t) => t.function.name)
+    expect(names).toEqual(['commitment_tao'])
+  })
+
+  it('survives a narrowed tool preset alongside the MCP catalogue', async () => {
+    // Preset phân hoạch 98 tool Atlassian theo feature flag; tool cục bộ không thuộc cờ nào,
+    // nên nó phải nằm ngoài phép lọc đó thay vì biến mất khi câu hỏi trông giống việc Jira.
+    const definition = fakeLocalTool([])
+    const h = await makeHarness({
+      script: [{ text: 'ok' }],
+      localTools: registryOf(definition),
+      settings: { features: { toolScoping: true } as never },
+    })
+    await h.run({ history: [{ role: 'user', content: 'Tìm trang Confluence về quy trình' }] })
+
+    const names = (h.llm.requests[0]?.tools ?? []).map((t) => t.function.name)
+    expect(names).toContain('commitment_tao')
+    expect(names.some((name) => name.startsWith('confluence_'))).toBe(true)
+    expect(names.some((name) => name.startsWith('jira_'))).toBe(false)
+  })
+
+  it('requires confirmation before writing anything', async () => {
+    const h = makeLocalHarness({ script: [proposeCall, { text: 'Đã tạo xong.' }] })
+    await h.run()
+
+    expect(h.confirmations).toHaveLength(1)
+    expect(h.confirmations[0]?.preview.targetSystem).toBe('local')
+    expect(h.writes).toEqual([{ title: 'Xong báo cáo quý' }])
+  })
+
+  it('writes nothing when the user cancels', async () => {
+    const h = makeLocalHarness({
+      script: [proposeCall, { text: 'Mình đã huỷ.' }],
+      decision: 'cancel',
+    })
+    await h.run()
+
+    expect(h.writes).toEqual([])
+    expect(h.sink.byTool('commitment_tao')[0]?.approvalStatus).toBe('cancelled')
+  })
+
+  it('refuses an approval whose payload no longer matches the preview', async () => {
+    // Cùng bất biến TOCTOU với tool ngoài: hash người dùng đã nhìn thấy phải khớp payload thật.
+    const h = makeLocalHarness({
+      script: [proposeCall, { text: 'Không thực hiện được.' }],
+      onConfirm: (request, guard) => {
+        guard.approve(request.operationId, computePayloadHash('commitment_tao', { title: 'Khác' }))
+      },
+    })
+    await expect(h.run()).rejects.toThrow(
+      expect.objectContaining({ code: ERROR_CODES.TOOL_PAYLOAD_MISMATCH }),
+    )
+    expect(h.writes).toEqual([])
+  })
+
+  it('spends the single write slot per turn like any external write', async () => {
+    const h = makeLocalHarness({
+      script: [
+        {
+          toolCalls: [
+            { name: 'commitment_tao', args: { title: 'Việc một' } },
+            { name: 'commitment_tao', args: { title: 'Việc hai' } },
+          ],
+        },
+        { text: 'Xong.' },
+      ],
+    })
+    await h.run()
+
+    expect(h.writes).toEqual([{ title: 'Việc một' }])
+    expect(h.confirmations).toHaveLength(1)
+  })
+
+  it('returns a schema error to the model instead of opening a confirmation', async () => {
+    const h = makeLocalHarness({
+      script: [
+        { toolCalls: [{ name: 'commitment_tao', args: { title: '' } }] },
+        { text: 'Bạn muốn đặt tên cam kết là gì?' },
+      ],
+    })
+    await h.run()
+
+    expect(h.confirmations).toHaveLength(0)
+    expect(h.writes).toEqual([])
+    expect(h.sink.records).toHaveLength(0)
   })
 })

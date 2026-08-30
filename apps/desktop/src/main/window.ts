@@ -71,7 +71,9 @@ export function createMainWindow(opts: WindowOptions): BrowserWindow {
       // §11.3 chống XSS: tắt mọi cửa hậu chạy mã trong renderer.
       allowRunningInsecureContent: false,
       experimentalFeatures: false,
-      spellcheck: false,
+      // Dùng spellchecker/IME của Chromium và hệ điều hành; không có dịch vụ nhập liệu riêng.
+      // `lang="vi"` trên textarea giúp chọn đúng ngôn ngữ khi máy có từ điển tiếng Việt.
+      spellcheck: true,
     },
   })
 

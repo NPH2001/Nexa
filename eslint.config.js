@@ -57,6 +57,36 @@ export default tseslint.config(
     },
   },
 
+  // ba-kit là logic thuần (add-ba-workbench D9). Ranh giới có test runtime trong
+  // packages/ba-kit/src/boundary.test.ts; luật này bắt vi phạm ngay lúc gõ code.
+  {
+    files: ['packages/ba-kit/**/*.ts'],
+    // Chính test ranh giới phải đọc được file bằng node:fs, nên nó đứng ngoài luật này.
+    ignores: ['packages/ba-kit/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                'electron',
+                'node:*',
+                '@nexa/local-store',
+                '@nexa/llm-client',
+                '@nexa/security',
+                '@nexa/observability',
+                '**/main/**',
+              ],
+              message:
+                'ba-kit phải là logic thuần: không Electron, không DB, không LLM, không Node builtin (D9).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // Secrets must never reach a logger or the console (§11.1, §15.1).
   {
     files: ['packages/**/*.ts', 'apps/desktop/src/main/**/*.ts'],

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LLM_PROVIDERS, type LlmProvider } from './provider.js'
+import { LLM_PROVIDERS, type ChatModelProvider, type LlmProvider } from './provider.js'
 
 /** Vai trò message. `tool` dùng cho kết quả tool trả về model (§7.3). */
 export const MESSAGE_ROLES = ['system', 'user', 'assistant', 'tool'] as const
@@ -29,7 +29,7 @@ export interface Conversation {
    * Provider của model đang gán. Lưu cùng `modelId` vì cùng một model id có thể tồn tại ở
    * hai provider — thiếu trường này thì mở lại hội thoại sẽ không biết gửi đi đâu.
    */
-  readonly modelProvider: LlmProvider | null
+  readonly modelProvider: ChatModelProvider | null
   readonly createdAt: string
   readonly updatedAt: string
   readonly archivedAt: string | null
@@ -67,6 +67,14 @@ export const COMMITMENT_STATUSES = ['active', 'blocked', 'paused', 'completed'] 
 export type CommitmentStatus = (typeof COMMITMENT_STATUSES)[number]
 
 /**
+ * Ai đưa cam kết này vào hệ thống: người dùng gõ tay trong Mục tiêu, hay agent đề xuất trong chat
+ * rồi người dùng xác nhận. Cả hai đều cần một xác nhận tường minh — khác biệt nằm ở người khởi
+ * xướng, không phải ở mức quyền.
+ */
+export const COMMITMENT_CREATORS = ['user', 'agent'] as const
+export type CommitmentCreator = (typeof COMMITMENT_CREATORS)[number]
+
+/**
  * Một kết quả người dùng chủ động yêu cầu Nexa theo dõi xuyên nhiều phiên làm việc.
  *
  * Khác với memory `kind=goal`, commitment là state công việc thay đổi thường xuyên: có bước tiếp
@@ -83,6 +91,7 @@ export interface Commitment {
   readonly checkInAt: string | null
   readonly completedAt: string | null
   readonly sourceConversationId: string | null
+  readonly createdBy: CommitmentCreator
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -107,6 +116,284 @@ export interface CheckInSuggestion {
   readonly updatedAt: string
 }
 
+// ── Business Analyst workbench (openspec `add-ba-workbench`) ──────────────
+
+export const BA_KNOWLEDGE_CATEGORIES = [
+  'domain',
+  'rule',
+  'term',
+  'constraint',
+  'decision',
+] as const
+export type BaKnowledgeCategoryName = (typeof BA_KNOWLEDGE_CATEGORIES)[number]
+
+/**
+ * `draft` → `confirmed` → `outdated`.
+ *
+ * Chỉ `confirmed` được đưa vào context và được luật review lấy làm căn cứ. Đây là điều mà chữ
+ * "đã confirm" trong yêu cầu gốc phải thật sự mang nghĩa, chứ không phải một nhãn trang trí.
+ */
+export const BA_KNOWLEDGE_STATUSES = ['draft', 'confirmed', 'outdated'] as const
+export type BaKnowledgeStatusName = (typeof BA_KNOWLEDGE_STATUSES)[number]
+
+export const BA_KNOWLEDGE_SOURCE_KINDS = ['conversation', 'document', 'url', 'manual'] as const
+export type BaKnowledgeSourceKindName = (typeof BA_KNOWLEDGE_SOURCE_KINDS)[number]
+
+export const BA_KNOWLEDGE_LINK_KINDS = ['supports', 'conflicts', 'supersedes'] as const
+export type BaKnowledgeLinkKindName = (typeof BA_KNOWLEDGE_LINK_KINDS)[number]
+
+export const BA_DOCUMENT_KINDS = ['us', 'srs', 'brd', 'note'] as const
+export type BaDocumentKindName = (typeof BA_DOCUMENT_KINDS)[number]
+
+export const BA_DOCUMENT_STATUSES = ['draft', 'reviewed'] as const
+export type BaDocumentStatusName = (typeof BA_DOCUMENT_STATUSES)[number]
+
+/**
+ * Tri thức BA hiển thị cho renderer.
+ *
+ * Không có `sharingPolicy` — tri thức nghiệp vụ luôn nội bộ, không có ngoại lệ per-item (D6).
+ * Thiếu trường này là một quyết định, không phải một thiếu sót cần bổ sung sau.
+ */
+export interface BaKnowledgeView {
+  readonly id: string
+  readonly title: string
+  readonly body: string
+  readonly category: BaKnowledgeCategoryName
+  readonly status: BaKnowledgeStatusName
+  readonly sourceKind: BaKnowledgeSourceKindName
+  readonly sourceRef: string | null
+  readonly sourceConversationId: string | null
+  readonly supersededBy: string | null
+  readonly createdBy: ActivityActor
+  readonly useCount: number
+  readonly lastUsedAt: string | null
+  readonly confirmedAt: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export const BA_ITEM_TYPES = [
+  'actor',
+  'field',
+  'use_case',
+  'rule',
+  'flow_step',
+  'error_code',
+] as const
+export type BaItemTypeName = (typeof BA_ITEM_TYPES)[number]
+
+/**
+ * Item rút gọn để hiển thị.
+ *
+ * Renderer nhận bản này chứ không nhận `BaDocItem` đầy đủ: mô hình đầy đủ mang trọn nội dung
+ * nghiệp vụ lồng nhau, còn danh sách chỉ cần hai dòng. Phép rút gọn nằm trong `ba-kit`.
+ */
+export interface BaItemSummaryView {
+  readonly id: string
+  readonly itemType: BaItemTypeName
+  readonly ordinal: number
+  readonly needsReview: boolean
+  readonly title: string
+  readonly detail: string
+}
+
+export interface BaErrorCodeEntryView {
+  readonly code: string
+  readonly message: string
+  readonly meaning?: string
+  readonly httpStatus?: number
+  readonly itemId: string
+  readonly referencedBy: readonly string[]
+}
+
+export interface BaErrorCodePageView {
+  readonly declared: readonly BaErrorCodeEntryView[]
+  readonly undeclared: readonly { readonly code: string; readonly referencedBy: readonly string[] }[]
+  readonly unreferenced: readonly BaErrorCodeEntryView[]
+  readonly inconsistent: readonly {
+    readonly code: string
+    readonly variants: readonly { readonly message: string; readonly itemId: string }[]
+  }[]
+  readonly counts: {
+    readonly declared: number
+    readonly undeclared: number
+    readonly unreferenced: number
+    readonly inconsistent: number
+    readonly excludedNeedsReview: number
+  }
+}
+
+export interface BaTemplateSectionView {
+  readonly key: string
+  readonly title: string
+  readonly required: boolean
+  readonly itemTypes: readonly BaItemTypeName[]
+  readonly guidance?: string
+}
+
+export interface BaTemplateView {
+  readonly id: string
+  readonly version: string
+  readonly name: string
+  readonly documentKind: BaDocumentKindName
+  readonly description?: string
+  readonly sections: readonly BaTemplateSectionView[]
+}
+
+export interface BaTemplateCatalogView {
+  readonly templates: readonly BaTemplateView[]
+  /** Chỉ metadata của rulebook; nội dung chuẩn validate không cần đi qua ranh giới renderer. */
+  readonly rulebook: { readonly id: string; readonly version: string; readonly name: string } | null
+}
+
+export interface BaFieldAuditView {
+  readonly fieldId: string
+  readonly fieldName: string
+  readonly fieldType: string
+  readonly expected: readonly { readonly key: string; readonly label: string; readonly rationale?: string }[]
+  readonly missing: readonly { readonly key: string; readonly label: string; readonly rationale?: string }[]
+  readonly unknownKeys: readonly string[]
+  readonly exemptReason?: string
+}
+
+export interface BaSimilarPairView {
+  readonly a: string
+  readonly b: string
+  readonly similarity: number
+}
+
+export interface BaTraceabilityView {
+  readonly steps: readonly { readonly id: string; readonly label: string; readonly coveredBy: readonly string[] }[]
+  readonly useCases: readonly {
+    readonly id: string
+    readonly name: string
+    readonly standalone: boolean
+    readonly covers: readonly string[]
+  }[]
+  readonly uncoveredSteps: readonly string[]
+  readonly unusedUseCases: readonly string[]
+  readonly excludedNeedsReview: number
+}
+
+/** Toàn bộ phép chiếu chỉ-đọc của một tài liệu, trả trong một lượt IPC. */
+export interface BaProjectionsView {
+  readonly mermaid: {
+    readonly code: string
+    readonly isolatedSteps: readonly string[]
+    readonly stepCount: number
+    readonly edgeCount: number
+  }
+  readonly matrix: BaTraceabilityView
+  readonly fieldAudits: readonly BaFieldAuditView[]
+  readonly nearDuplicates: readonly BaSimilarPairView[]
+  readonly potentialContradictions: readonly BaSimilarPairView[]
+  readonly template: { readonly id: string; readonly version: string; readonly name: string } | null
+  readonly markdown: string | null
+  readonly missingRequired: readonly string[]
+  readonly unplacedCount: number
+  /** Tài liệu đang theo một bản mẫu cũ hơn bản IT đang phát hành. */
+  readonly templateOutdated?: boolean
+}
+
+export interface BaKnowledgeStatsView {
+  readonly byCategory: readonly {
+    readonly category: BaKnowledgeCategoryName
+    readonly draft: number
+    readonly confirmed: number
+    readonly outdated: number
+  }[]
+  readonly total: { readonly draft: number; readonly confirmed: number; readonly outdated: number }
+  readonly conflictPairs: number
+  readonly unusedConfirmed: number
+  readonly mostUsed: readonly {
+    readonly id: string
+    readonly title: string
+    readonly useCount: number
+  }[]
+}
+
+export const BA_FINDING_SEVERITIES = ['blocker', 'warning', 'info'] as const
+export type BaFindingSeverityName = (typeof BA_FINDING_SEVERITIES)[number]
+
+/**
+ * Một phát hiện của bộ luật.
+ *
+ * `ruleId` không nullable là chủ đích, không phải tiện tay: bất biến của cả tính năng review là
+ * **không có nhận xét nào không truy được về một luật**. Cho phép `null` ở đây là mở đúng cánh cửa
+ * mà D2 đóng lại — một câu nhận xét không có nguồn.
+ */
+export interface BaFindingView {
+  readonly ruleId: string
+  readonly severity: BaFindingSeverityName
+  readonly itemId: string | null
+  readonly message: string
+  readonly fix: string
+  readonly evidence: readonly string[]
+}
+
+/** Một luật của pack và kết quả của nó trong lần chạy này. */
+export interface BaReviewRuleView {
+  readonly id: string
+  readonly description: string
+  readonly status: 'passed' | 'failed' | 'skipped'
+  readonly findingCount: number
+  /** Chỉ có khi `status = 'skipped'`: thứ còn thiếu nên luật chưa kiểm được. */
+  readonly missing?: 'template' | 'rulebook' | 'knowledge'
+}
+
+/**
+ * Báo cáo review.
+ *
+ * Mọi trường ở đây tồn tại để trả lời **"đã kiểm cái gì"**, chứ không để trả lời "tài liệu có đúng
+ * không" — câu sau bộ luật không biết và không được phép trả lời (ADR 0010).
+ */
+export interface BaReviewReportView {
+  readonly reviewId: string
+  readonly documentId: string
+  readonly rulePackId: string
+  readonly rulePackVersion: string
+  readonly rulesTotal: number
+  readonly rulesRun: number
+  readonly rulesPassed: number
+  readonly excludedNeedsReview: number
+  readonly knowledgeConsidered: number
+  readonly countsBySeverity: Readonly<Record<BaFindingSeverityName, number>>
+  readonly findings: readonly BaFindingView[]
+  readonly rules: readonly BaReviewRuleView[]
+  readonly createdAt: string
+  /**
+   * Phiên bản pack của báo cáo liền trước, khi nó khác phiên bản lần này.
+   *
+   * Có mặt để giao diện nói được "hai báo cáo này đo bằng hai thước khác nhau" thay vì để người
+   * đọc tự so hai con số ra đời từ hai bộ luật.
+   */
+  readonly previousRulePackVersion?: string
+}
+
+/**
+ * Gợi ý câu chữ cho MỘT finding.
+ *
+ * `finding` đi kèm nguyên văn bản do code sinh ra, không phải bản model trả về. Đó là hình dạng
+ * làm cho "model không thêm, không xoá, không hạ mức finding" thành một tính chất kiểm được: cái
+ * duy nhất model đóng góp là chuỗi `suggestion`.
+ */
+export interface BaWordingSuggestionView {
+  readonly finding: BaFindingView
+  readonly suggestion: string
+}
+
+export interface BaDocumentView {
+  readonly id: string
+  readonly title: string
+  readonly kind: BaDocumentKindName
+  readonly status: BaDocumentStatusName
+  readonly templateId: string | null
+  readonly templateVersion: string | null
+  readonly needsReviewCount: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
 export const ACTIVITY_TYPES = [
   'suggestion',
   'memory_mutation',
@@ -115,6 +402,13 @@ export const ACTIVITY_TYPES = [
   'confirmation',
   'tool_result',
   'uncertain_operation',
+  /**
+   * Người dùng áp dụng một gợi ý của review lên một item tài liệu.
+   *
+   * Ghi lại vì đây là một thao tác sửa dữ liệu người dùng, và mỗi lần áp dụng là một quyết định
+   * riêng (D2). Dòng activity chỉ có id tài liệu và enum — nội dung sửa không đi vào đây.
+   */
+  'ba_document_mutation',
 ] as const
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
@@ -130,7 +424,7 @@ export const ACTIVITY_STATUSES = [
 ] as const
 export type ActivityStatus = (typeof ACTIVITY_STATUSES)[number]
 
-export const ACTIVITY_SUBJECT_TYPES = ['memory', 'commitment', 'tool'] as const
+export const ACTIVITY_SUBJECT_TYPES = ['memory', 'commitment', 'tool', 'ba_document'] as const
 export type ActivitySubjectType = (typeof ACTIVITY_SUBJECT_TYPES)[number]
 
 export const ACTIVITY_ACTIONS = [
@@ -156,11 +450,19 @@ export const ACTIVITY_ACTIONS = [
 ] as const
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number]
 
+/**
+ * Ai khởi xướng sự kiện. Enum, không phải nội dung — activity row vẫn không được chứa plaintext.
+ * `null` cho record ghi trước khi có cột này.
+ */
+export const ACTIVITY_ACTORS = ['user', 'agent'] as const
+export type ActivityActor = (typeof ACTIVITY_ACTORS)[number]
+
 export interface ActivityEvent {
   readonly id: string
   readonly type: ActivityType
   readonly action: ActivityAction
   readonly status: ActivityStatus
+  readonly actor: ActivityActor | null
   readonly subjectType: ActivitySubjectType | null
   readonly subjectId: string | null
   readonly subjectLabel: string | null
@@ -255,7 +557,13 @@ export interface ToolCallRecord {
 export interface ToolPreview {
   /** Mục 1: tên công cụ + hệ thống đích. */
   readonly toolName: string
-  readonly targetSystem: 'jira' | 'confluence'
+  /**
+   * `local` = thao tác lên dữ liệu trên chính máy người dùng (ví dụ commitment), không gửi ra
+   * mạng. Preview vẫn bắt buộc: người dùng phải thấy rõ cái gì sắp bị ghi, kể cả khi đích đến
+   * không phải hệ thống bên ngoài.
+   */
+  readonly targetSystem: 'jira' | 'confluence' | 'local'
+  /** Rỗng với `local` — không có hệ thống đích để hiển thị URL. */
   readonly targetSystemUrl: string
   /** Mục 2: hành động cụ thể, tiếng Việt. */
   readonly action: string
@@ -303,12 +611,14 @@ export interface PreviewChange {
  *   - chính sách tài liệu FAIL-CLOSED với provider ngoài (`document-policy.ts`)
  */
 export {
+  CHAT_MODEL_PROVIDERS,
   LLM_PROVIDERS,
   PROVIDER_LABELS,
   isExternalProvider,
   isProviderAllowedByPolicy,
 } from './provider.js'
 export type { LlmProvider } from './provider.js'
+export type { ChatModelProvider } from './provider.js'
 
 /**
  * §8.1 bảng `connections`. Không chứa API key/PAT.
@@ -359,6 +669,44 @@ export interface ConnectionTestResult {
   readonly detail?: string
 }
 
+export interface ChatGptRateLimitWindow {
+  readonly usedPercent: number
+  readonly windowDurationMins: number
+  /** Unix timestamp theo giây, đúng với contract của Codex App Server. */
+  readonly resetsAt: number
+}
+
+/**
+ * Trạng thái tài khoản ChatGPT do Codex App Server quản lý.
+ *
+ * Không type nào ở đây chứa auth URL, access token hay refresh token: renderer không có lý do
+ * hợp lệ để nhìn thấy những giá trị đó.
+ */
+export interface ChatGptAccountStatus {
+  readonly appServerAvailable: boolean
+  readonly authenticated: boolean
+  readonly email: string | null
+  readonly planType: string | null
+  readonly rateLimit: ChatGptRateLimitWindow | null
+}
+
+export interface ChatGptReasoningEffort {
+  /** Giữ dạng chuỗi để tương thích khi Codex bổ sung mức reasoning mới. */
+  readonly reasoningEffort: string
+  readonly description: string | null
+}
+
+/** Metadata model picker-visible đã được main process lọc từ Codex App Server. */
+export interface ChatGptModel {
+  readonly id: string
+  readonly modelId: string
+  readonly displayName: string
+  readonly isDefault: boolean
+  readonly defaultReasoningEffort: string | null
+  readonly supportedReasoningEfforts: readonly ChatGptReasoningEffort[]
+  readonly inputModalities: readonly string[]
+}
+
 export interface ModelConfig {
   readonly id: string
   /** Provider sẽ nhận request cho model này. */
@@ -381,3 +729,8 @@ export const memoryFactScopeSchema = z.enum(MEMORY_FACT_SCOPES)
 export const memorySharingPolicySchema = z.enum(MEMORY_SHARING_POLICIES)
 export const memoryFactStatusSchema = z.enum(MEMORY_FACT_STATUSES)
 export const commitmentStatusSchema = z.enum(COMMITMENT_STATUSES)
+export const baKnowledgeCategorySchema = z.enum(BA_KNOWLEDGE_CATEGORIES)
+export const baKnowledgeStatusSchema = z.enum(BA_KNOWLEDGE_STATUSES)
+export const baKnowledgeSourceKindSchema = z.enum(BA_KNOWLEDGE_SOURCE_KINDS)
+export const baKnowledgeLinkKindSchema = z.enum(BA_KNOWLEDGE_LINK_KINDS)
+export const baDocumentKindSchema = z.enum(BA_DOCUMENT_KINDS)

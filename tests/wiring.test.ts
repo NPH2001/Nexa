@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NEXA_EVENTS, IPC_CHANNEL_NAMES, IPC_SCHEMAS, featureFlagsSchema } from '@nexa/shared-types'
 import { buildToolRegistry } from '@nexa/atlassian-mcp-manager'
@@ -53,6 +54,32 @@ describe('channel IPC', () => {
   })
 })
 
+describe('bundler biết mọi workspace package', () => {
+  /**
+   * Package trong repo này là source-only TypeScript. Thiếu tên trong `WORKSPACE_PACKAGES` của
+   * electron-vite thì import bị coi là external, Node không nạp được file .ts, và **main process
+   * chết trước cả khi logger kịp mở file** — không có log, không có DB, chỉ có một cửa sổ không
+   * bao giờ hiện ra. Unit test vẫn xanh vì vitest có alias riêng.
+   *
+   * Test này là chốt chặn cho đúng lỗi đó.
+   */
+  it('WORKSPACE_PACKAGES liệt kê đủ mọi package trong packages/', () => {
+    const config = read('apps/desktop/electron.vite.config.ts')
+    const declared = new Set(
+      [...config.matchAll(/^\s+'([a-z0-9-]+)',$/gm)].map((match) => match[1]),
+    )
+
+    const onDisk = readdirSync(join(root, 'packages'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      // ui-components có trong tsconfig paths nhưng chưa tồn tại; chỉ kiểm cái đã có trên đĩa.
+      .filter((name) => existsSync(join(root, 'packages', name, 'src/index.ts')))
+
+    const missing = onDisk.filter((name) => !declared.has(name))
+    expect(missing, 'package chưa được bundler biết tới').toEqual([])
+  })
+})
+
 describe('feature flag', () => {
   const flags = Object.keys(featureFlagsSchema.parse({}))
   const registry = buildToolRegistry({
@@ -77,6 +104,10 @@ describe('feature flag', () => {
         'autoUpdate',
         'storeExtractedText',
         'storeHistory',
+        // Gate cả một bề mặt sản phẩm (đích Nghiệp vụ, IPC `ba:*`, registry tool `nexa_ba_*`),
+        // không gate tool Atlassian nào. Tool BA nằm ở registry cục bộ trong main, không có
+        // `requiredFeature` vì chúng không thuộc `ToolDefinition` (openspec `add-ba-workbench`).
+        'baWorkbench',
         // Điều khiển việc gửi BAO NHIÊU tool cho model, không điều khiển tool nào cụ thể
         // (ADR 0009). Nó gate preset, và preset là hợp của các cờ khác trong danh sách này —
         // nên nó không bao giờ xuất hiện trong `requiredFeature` của một tool.

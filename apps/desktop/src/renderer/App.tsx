@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AppSettings,
+  ChatGptModel,
+  ChatModelProvider,
   ConfirmationRequest,
   Conversation,
-  LlmProvider,
   McpStatusEvent,
   Message,
   ModelConfig,
@@ -16,6 +17,7 @@ import { ChatView } from './components/ChatView.js'
 import { TodayView } from './components/TodayView.js'
 import { GoalPanel } from './components/GoalPanel.js'
 import { ActivityTimelineView } from './components/ActivityTimelineView.js'
+import { BaWorkbenchView } from './components/BaWorkbenchView.js'
 import { SettingsView } from './components/SettingsView.js'
 import { ConfirmationDialog } from './components/ConfirmationDialog.js'
 import { DestructiveActionDialog } from './components/DestructiveActionDialog.js'
@@ -29,7 +31,7 @@ import {
 } from './chat-activity.js'
 import { commitThenRefresh } from './committed-mutation.js'
 
-export type View = 'today' | 'goals' | 'activity' | 'chat' | 'settings'
+export type View = 'today' | 'goals' | 'activity' | 'ba' | 'chat' | 'settings'
 
 const TITLE_LIMIT = 60
 
@@ -45,11 +47,12 @@ function deriveTitleFromMessage(content: string): string {
 
 export function App(): React.JSX.Element {
   const [view, setView] = useState<View>('today')
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'litellm' | 'memory'>('litellm')
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'litellm' | 'memory' | 'data'>('litellm')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [models, setModels] = useState<ModelConfig[]>([])
+  const [chatGptModels, setChatGptModels] = useState<ChatGptModel[]>([])
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [policy, setPolicy] = useState<OrgPolicy | null>(null)
   const [mcpStatus, setMcpStatus] = useState<McpStatusEvent | null>(null)
@@ -140,16 +143,22 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void (async () => {
       try {
-        const [conversationList, modelList, settingsResult, policyResult, status] =
+        const [conversationList, modelList, settingsResult, policyResult, status, chatGptStatus] =
           await Promise.all([
             api.conversations.list(),
             api.models.list(),
             api.settings.get(),
             api.settings.policy(),
             api.mcp.status().catch(() => null),
+            api.chatgpt.status().catch(() => null),
           ])
+        const managedModels =
+          policyResult.allowDirectOpenAi && chatGptStatus?.authenticated === true
+            ? await api.chatgpt.models().catch(() => [])
+            : []
         setConversations(conversationList)
         setModels(modelList)
+        setChatGptModels(managedModels)
         setSettings(settingsResult.settings)
         setPolicy(policyResult)
         setMcpStatus(status)
@@ -162,7 +171,12 @@ export function App(): React.JSX.Element {
         // Chưa có kết nối LiteLLM thì đưa thẳng vào Settings — không để người dùng
         // gõ câu hỏi rồi mới nhận lỗi cấu hình.
         const connections = await api.connections.list()
-        if (!connections.some((c) => c.type === 'litellm' && c.hasCredential)) {
+        if (
+          !connections.some(
+            (c) => (c.type === 'litellm' || c.type === 'openai') && c.hasCredential,
+          ) &&
+          managedModels.length === 0
+        ) {
           setView('settings')
         }
       } catch (error) {
@@ -274,6 +288,8 @@ export function App(): React.JSX.Element {
       model.provider === 'litellm' ||
       (policy !== null && isProviderAllowedByPolicy(model.provider, policy)),
   )
+  const usableChatGptModels =
+    policy?.allowDirectOpenAi === true ? chatGptModels : ([] as ChatGptModel[])
 
   const selectConversation = async (id: string): Promise<void> => {
     setView('chat')
@@ -285,11 +301,15 @@ export function App(): React.JSX.Element {
   const createConversation = async (): Promise<void> => {
     try {
       const defaultModel = usableModels.find((m) => m.isDefault) ?? usableModels[0]
+      const defaultChatGptModel =
+        usableChatGptModels.find((model) => model.isDefault) ?? usableChatGptModels[0]
       const created = await api.conversations.create(
         'Hội thoại mới',
-        defaultModel === undefined
-          ? null
-          : { modelId: defaultModel.modelId, provider: defaultModel.provider },
+        defaultModel !== undefined
+          ? { modelId: defaultModel.modelId, provider: defaultModel.provider }
+          : defaultChatGptModel === undefined
+            ? null
+            : { modelId: defaultChatGptModel.modelId, provider: 'chatgpt' },
       )
       setConversations((prev) => [created, ...prev])
       messageLoadSequence.current += 1
@@ -304,7 +324,7 @@ export function App(): React.JSX.Element {
   const sendMessage = async (
     content: string,
     fileTokens: string[],
-    model?: { modelId: string; provider: LlmProvider },
+    model?: { modelId: string; provider: ChatModelProvider; reasoningEffort?: string },
   ): Promise<void> => {
     if (activeId === null || chatActivity !== null) return
     const conversationId = activeId
@@ -315,7 +335,15 @@ export function App(): React.JSX.Element {
         conversationId,
         content,
         fileTokens,
-        ...(model !== undefined ? { modelId: model.modelId, modelProvider: model.provider } : {}),
+        ...(model !== undefined
+          ? {
+              modelId: model.modelId,
+              modelProvider: model.provider,
+              ...(model.reasoningEffort === undefined
+                ? {}
+                : { reasoningEffort: model.reasoningEffort }),
+            }
+          : {}),
       })
       const alreadyCompleted = completedChatRequests.current.delete(requestId)
       setChatActivity((current) =>
@@ -455,6 +483,7 @@ export function App(): React.JSX.Element {
     <div className="app">
       <Sidebar
         view={view}
+        baEnabled={settings?.features.baWorkbench === true}
         conversations={conversations}
         activeId={activeId}
         mcpStatus={mcpStatus}
@@ -525,11 +554,22 @@ export function App(): React.JSX.Element {
           />
         ) : view === 'activity' ? (
           <ActivityTimelineView onError={reportError} />
+        ) : view === 'ba' ? (
+          <BaWorkbenchView
+            enabled={settings?.features.baWorkbench === true}
+            onOpenSettings={() => {
+              setSettingsInitialTab('data')
+              setView('settings')
+            }}
+            onError={reportError}
+            onToast={pushToast}
+          />
         ) : view === 'chat' ? (
           <ChatView
             conversation={conversations.find((c) => c.id === activeId) ?? null}
             messages={messages}
             models={usableModels}
+            chatGptModels={usableChatGptModels}
             settings={settings}
             busy={chatActivity !== null}
             streaming={chatActivity?.conversationId === activeId}
@@ -549,6 +589,7 @@ export function App(): React.JSX.Element {
             settings={settings}
             policy={policy}
             onModelsChanged={setModels}
+            onChatGptModelsChanged={setChatGptModels}
             onSettingsChanged={setSettings}
             onError={reportError}
             onToast={pushToast}

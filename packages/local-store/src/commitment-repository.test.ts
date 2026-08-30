@@ -30,6 +30,7 @@ describe('commitment migration', () => {
       'source_conversation_id',
       'created_at',
       'updated_at',
+      'created_by',
     ])
 
     const indexes = ctx.store.handle.prepare('PRAGMA index_list(commitments)').all()
@@ -46,6 +47,36 @@ describe('commitment migration', () => {
       .all()
       .find((foreignKey) => String(foreignKey['from']) === 'source_conversation_id')
     expect(sourceFk).toMatchObject({ table: 'conversations', on_delete: 'SET NULL' })
+  })
+
+  it('adds commitment provenance in v8 without touching encrypted content', () => {
+    ctx = makeTempStore()
+    const store = ctx.store
+
+    const createdBy = store.handle
+      .prepare('PRAGMA table_info(commitments)')
+      .all()
+      .find((column) => String(column['name']) === 'created_by')
+    expect(createdBy).toMatchObject({ notnull: 1, dflt_value: "'user'" })
+
+    const actor = store.handle
+      .prepare('PRAGMA table_info(local_audit)')
+      .all()
+      .find((column) => String(column['name']) === 'actor')
+    expect(actor).toBeDefined()
+
+    // Record ghi theo schema cũ (không nêu created_by) phải rơi về 'user' — trước v8 agent
+    // không có đường nào tạo commitment, nên đó là sự thật lịch sử chứ không phải phỏng đoán.
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    store.handle
+      .prepare(
+        `INSERT INTO commitments (id, profile_id, title_ciphertext, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', ?, ?)`,
+      )
+      .run(id, ctx.profileId, 'ciphertext', now, now)
+    const row = store.handle.prepare('SELECT created_by FROM commitments WHERE id = ?').get(id)
+    expect(String(row?.['created_by'])).toBe('user')
   })
 })
 
@@ -120,6 +151,57 @@ describe('commitments', () => {
       ctx.store.handle.prepare('SELECT COUNT(*) AS c FROM commitments').get()?.['c'],
     )
     expect(count).toBe(0)
+  })
+
+  it('records provenance and keeps user as the default creator', () => {
+    ctx = makeTempStore()
+    const commitments = new CommitmentRepository(ctx.store)
+
+    expect(commitments.create({ profileId: ctx.profileId, title: 'Tay' }).createdBy).toBe('user')
+    expect(
+      commitments.create({ profileId: ctx.profileId, title: 'Đề xuất', createdBy: 'agent' })
+        .createdBy,
+    ).toBe('agent')
+  })
+
+  it('orders context commitments by overdue, then nearest deadline, then undated', () => {
+    ctx = makeTempStore()
+    const commitments = new CommitmentRepository(ctx.store)
+    const nowIso = '2026-08-30T10:00:00.000Z'
+
+    const undated = commitments.create({ profileId: ctx.profileId, title: 'Không có mốc' })
+    const soon = commitments.create({
+      profileId: ctx.profileId,
+      title: 'Sắp tới',
+      dueAt: '2026-08-31T10:00:00.000Z',
+    })
+    const later = commitments.create({
+      profileId: ctx.profileId,
+      title: 'Xa hơn',
+      checkInAt: '2026-09-05T10:00:00.000Z',
+    })
+    const overdue = commitments.create({
+      profileId: ctx.profileId,
+      title: 'Quá hạn',
+      dueAt: '2026-08-28T10:00:00.000Z',
+    })
+    // paused/completed là việc người dùng đã gác lại — không được lọt vào context.
+    const paused = commitments.create({
+      profileId: ctx.profileId,
+      title: 'Tạm dừng',
+      status: 'paused',
+      dueAt: '2026-08-27T10:00:00.000Z',
+    })
+
+    const ordered = commitments.listForContext(ctx.profileId, { limit: 10, nowIso })
+    expect(ordered.map((item) => item.id)).toEqual([overdue.id, soon.id, later.id, undated.id])
+    expect(ordered.map((item) => item.id)).not.toContain(paused.id)
+
+    // Trần cắt từ đuôi: cái ít cấp bách nhất rụng trước.
+    expect(
+      commitments.listForContext(ctx.profileId, { limit: 2, nowIso }).map((item) => item.id),
+    ).toEqual([overdue.id, soon.id])
+    expect(commitments.listForContext(ctx.profileId, { limit: 0, nowIso })).toEqual([])
   })
 
   it('rejects empty repository updates even outside IPC', () => {

@@ -90,12 +90,44 @@ export const featureFlagsSchema = z.object({
    * tổ chức không cần build lại.
    */
   toolScoping: z.boolean().default(true),
+  /**
+   * Business Analyst workbench: kho tri thức nghiệp vụ, tài liệu có cấu trúc và tool `nexa_ba_*`
+   * (openspec `add-ba-workbench`).
+   *
+   * Mặc định TẮT. Đây là một bề mặt sản phẩm mới, không phải một tinh chỉnh — cùng lập trường
+   * với `proactiveCheckInsEnabled` và `agentCommitmentToolsEnabled`.
+   *
+   * Cờ này nằm trong `features` chứ không nằm ở tầng `AppSettings` để IT khoá được toàn tổ chức
+   * qua `forcedFeatures` trong `resources/policy.json` mà không phải build lại — đúng đường mà
+   * `toolScoping` đang dùng.
+   *
+   * TẮT ⇒ đích Nghiệp vụ không hiện, IPC `ba:*` từ chối, và registry tool BA không được nối vào
+   * khối `tools`. Cờ không nới lỏng Confirmation Guard: bật rồi thì mọi tool ghi vẫn phải qua
+   * preview và xác nhận.
+   */
+  baWorkbench: z.boolean().default(false),
 })
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>
 
 export const appSettingsSchema = z.object({
   /** Opt-in hoàn toàn cho proactive check-ins; mặc định không chạy nền. */
   proactiveCheckInsEnabled: z.boolean().default(false),
+  /**
+   * Cho phép agent ĐỀ XUẤT tạo/cập nhật cam kết từ hội thoại.
+   *
+   * Mặc định TẮT vì đây là quyền ghi mới cho agent, cùng lập trường với
+   * `proactiveCheckInsEnabled`. Tắt cờ ⇒ tool cam kết không có trong khối `tools`, nên model
+   * không đề xuất được. Cờ này không nới lỏng Confirmation Guard: bật rồi thì mọi lời gọi vẫn
+   * phải qua preview và xác nhận.
+   */
+  agentCommitmentToolsEnabled: z.boolean().default(false),
+  /**
+   * Nạp cam kết đang hoạt động vào context để model biết người dùng đang treo việc gì.
+   *
+   * Mặc định BẬT: đây là quyền ĐỌC để trả lời sát hơn, khác mức rủi ro với quyền ghi ở trên.
+   * Với provider ngoài, nội dung cam kết còn phải qua cổng chia sẻ như memory.
+   */
+  commitmentContextEnabled: z.boolean().default(true),
   /** §14: giới hạn MVP 20–30 MB/file. Phụ lục A chốt 30. */
   maxFileSizeMb: z.number().int().min(1).max(100).default(30),
   maxFilesPerRequest: z.number().int().min(1).max(20).default(5),

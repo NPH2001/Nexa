@@ -1,12 +1,25 @@
 import type {
   ChatErrorEvent,
   ActivityEvent,
+  ActivityActor,
   ActivityStatus,
   ActivityType,
   AppSettings,
+  BaDocumentView,
+  BaErrorCodePageView,
+  BaItemSummaryView,
+  BaKnowledgeStatsView,
+  BaKnowledgeView,
+  BaProjectionsView,
+  BaReviewReportView,
+  BaTemplateCatalogView,
+  BaWordingSuggestionView,
   ChatDeltaEvent,
   ChatDoneEvent,
   ConfirmationRequest,
+  ChatGptAccountStatus,
+  ChatGptModel,
+  ChatModelProvider,
   CheckInSuggestion,
   CheckInsChangedEvent,
   Commitment,
@@ -100,6 +113,13 @@ export const api = {
     remove: (type: ConnectionType) => call<{ deleted: boolean }>('connection:delete', { type }),
   },
 
+  chatgpt: {
+    status: () => call<ChatGptAccountStatus>('chatgpt:status'),
+    models: () => call<ChatGptModel[]>('chatgpt:models'),
+    login: () => call<ChatGptAccountStatus>('chatgpt:login'),
+    logout: () => call<ChatGptAccountStatus>('chatgpt:logout'),
+  },
+
   models: {
     list: () => call<ModelConfig[]>('model:list'),
     add: (input: {
@@ -117,7 +137,7 @@ export const api = {
   conversations: {
     list: (includeArchived = false) =>
       call<Conversation[]>('conversation:list', { includeArchived, limit: 100, offset: 0 }),
-    create: (title: string, model: { modelId: string; provider: LlmProvider } | null) =>
+    create: (title: string, model: { modelId: string; provider: ChatModelProvider } | null) =>
       call<Conversation>('conversation:create', {
         title,
         modelId: model?.modelId ?? null,
@@ -199,6 +219,102 @@ export const api = {
     remove: (id: string) => call<{ ok: boolean }>('commitment:delete', { id }),
   },
 
+  /**
+   * Business Analyst workbench (openspec `add-ba-workbench`).
+   *
+   * Mọi channel ở đây đều bị main từ chối khi cờ `features.baWorkbench` tắt — renderer ẩn đích
+   * Nghiệp vụ là để đỡ khó hiểu, không phải là hàng rào.
+   */
+  ba: {
+    knowledge: {
+      list: (filter: { status?: BaKnowledgeView['status']; category?: BaKnowledgeView['category'] } = {}) =>
+        call<BaKnowledgeView[]>('ba:knowledge:list', filter),
+      create: (input: {
+        title: string
+        body: string
+        category: BaKnowledgeView['category']
+        sourceKind?: BaKnowledgeView['sourceKind']
+        sourceRef?: string | null
+        sourceConversationId?: string | null
+      }) => call<BaKnowledgeView>('ba:knowledge:create', input),
+      update: (
+        id: string,
+        patch: {
+          title?: string
+          body?: string
+          category?: BaKnowledgeView['category']
+          sourceRef?: string | null
+        },
+      ) => call<BaKnowledgeView>('ba:knowledge:update', { id, ...patch }),
+      confirm: (id: string) => call<BaKnowledgeView>('ba:knowledge:confirm', { id }),
+      supersede: (id: string, replacementId: string) =>
+        call<BaKnowledgeView>('ba:knowledge:supersede', { id, replacementId }),
+      remove: (id: string) => call<{ ok: boolean }>('ba:knowledge:delete', { id }),
+      link: (fromId: string, toId: string, kind: 'supports' | 'conflicts' | 'supersedes') =>
+        call<{ id: string }>('ba:knowledge:link', { fromId, toId, kind }),
+      unlink: (linkId: string) => call<{ ok: boolean }>('ba:knowledge:unlink', { linkId }),
+      stats: () => call<BaKnowledgeStatsView>('ba:knowledge:stats'),
+    },
+    documents: {
+      list: () => call<BaDocumentView[]>('ba:document:list'),
+      create: (input: {
+        title: string
+        kind: BaDocumentView['kind']
+        sourceConversationId?: string | null
+      }) => call<BaDocumentView>('ba:document:create', input),
+      remove: (id: string) => call<{ ok: boolean }>('ba:document:delete', { id }),
+      read: (id: string) =>
+        call<{ document: BaDocumentView; items: BaItemSummaryView[]; linkCount: number }>(
+          'ba:document:read',
+          { id },
+        ),
+      /** Đúng một trong hai: `text` đã có, hoặc `fileToken` do `files.pick` cấp. */
+      extract: (id: string, source: { text: string } | { fileToken: string }) =>
+        call<{
+          items: BaItemSummaryView[]
+          nearDuplicates: { a: string; b: string; similarity: number }[]
+          potentialContradictions: { a: string; b: string; similarity: number }[]
+          mergedCount: number
+          needsReviewCount: number
+          sectionCount: number
+          cached: boolean
+        }>('ba:document:extract', { id, ...source }),
+      errorCodes: (id: string) => call<BaErrorCodePageView>('ba:document:errorCodes', { id }),
+      setTemplate: (id: string, templateId: string | null) =>
+        call<BaDocumentView>('ba:document:setTemplate', { id, templateId }),
+      /** Mọi phép chiếu chỉ-đọc trong một lượt: Markdown, sơ đồ, ma trận, đối chiếu validate. */
+      projections: (id: string) => call<BaProjectionsView>('ba:document:projections', { id }),
+      /** Gộp hai item gần-trùng. Người dùng chọn giữ cái nào — hệ thống không tự gộp. */
+      mergeItems: (id: string, keepItemId: string, dropItemId: string) =>
+        call<{ items: BaItemSummaryView[] }>('ba:document:mergeItems', {
+          id,
+          keepItemId,
+          dropItemId,
+        }),
+      /** Chạy bộ luật và lưu báo cáo. Không gọi model — phán quyết do code trả (ADR 0010). */
+      review: (id: string) => call<BaReviewReportView>('ba:document:review', { id }),
+      reviewHistory: (id: string) => call<BaReviewReportView[]>('ba:document:reviewHistory', { id }),
+      /**
+       * Xin câu chữ cho MỘT finding đã có trong báo cáo mới nhất.
+       *
+       * Gửi con trỏ tới finding chứ không gửi nội dung: main tự tra lại trong báo cáo đã lưu, nên
+       * renderer không mớm được cho model một finding nó tự bịa.
+       */
+      suggestWording: (id: string, ruleId: string, itemId: string | null) =>
+        call<BaWordingSuggestionView>('ba:document:suggestWording', { id, ruleId, itemId }),
+      /** Áp một câu chữ lên đúng một ô của đúng một item. Từng chỗ một, không có áp dụng hàng loạt. */
+      applyFinding: (
+        id: string,
+        itemId: string,
+        field: string,
+        value: string,
+      ) => call<{ items: BaItemSummaryView[] }>('ba:document:applyFinding', { id, itemId, field, value }),
+    },
+    templates: {
+      list: () => call<BaTemplateCatalogView>('ba:template:list'),
+    },
+  },
+
   checkIns: {
     list: () => call<{ enabled: boolean; suggestions: CheckInSuggestion[] }>('checkin:list'),
     setEnabled: (enabled: boolean) =>
@@ -223,6 +339,7 @@ export const api = {
     list: (filters: {
       type?: ActivityType
       status?: ActivityStatus
+      actor?: ActivityActor
       limit?: number
       offset?: number
     }) =>
@@ -239,7 +356,8 @@ export const api = {
       content: string
       fileTokens: string[]
       modelId?: string
-      modelProvider?: LlmProvider
+      modelProvider?: ChatModelProvider
+      reasoningEffort?: string
     }) => call<{ requestId: string; messageId: string }>('chat:send', input),
     cancel: (requestId: string) => call<{ ok: boolean }>('chat:cancel', { requestId }),
   },

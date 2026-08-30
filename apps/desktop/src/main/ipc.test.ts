@@ -52,7 +52,10 @@ vi.mock('electron', () => ({
 
 const { registerIpc } = await import('./ipc.js')
 
-function registerHarness(getWindow: () => unknown = () => null): {
+function registerHarness(
+  getWindow: () => unknown = () => null,
+  allowDirectOpenAi = true,
+): {
   readonly handlers: Map<string, RegisteredHandler>
   readonly chatSend: ReturnType<typeof vi.fn>
   readonly chatCancel: ReturnType<typeof vi.fn>
@@ -62,6 +65,11 @@ function registerHarness(getWindow: () => unknown = () => null): {
   readonly modelResolve: ReturnType<typeof vi.fn>
   readonly connectionSave: ReturnType<typeof vi.fn>
   readonly connectionDelete: ReturnType<typeof vi.fn>
+  readonly chatGptStatus: ReturnType<typeof vi.fn>
+  readonly chatGptModels: ReturnType<typeof vi.fn>
+  readonly chatGptLogin: ReturnType<typeof vi.fn>
+  readonly chatGptLogout: ReturnType<typeof vi.fn>
+  readonly chatGptResolveModel: ReturnType<typeof vi.fn>
   readonly memoryGet: ReturnType<typeof vi.fn>
   readonly memoryList: ReturnType<typeof vi.fn>
   readonly memoryCreate: ReturnType<typeof vi.fn>
@@ -85,6 +93,7 @@ function registerHarness(getWindow: () => unknown = () => null): {
   readonly settingsUpdate: ReturnType<typeof vi.fn>
   readonly purgeProfile: ReturnType<typeof vi.fn>
   readonly purgeAllSecrets: ReturnType<typeof vi.fn>
+  readonly searchClear: ReturnType<typeof vi.fn>
   readonly mcpStop: ReturnType<typeof vi.fn>
   readonly mcp: { isLifecycleBusy: boolean; stop: ReturnType<typeof vi.fn> }
   readonly sink: MemorySink
@@ -98,6 +107,47 @@ function registerHarness(getWindow: () => unknown = () => null): {
   const modelResolve = vi.fn((modelId: string, provider: string) => ({ modelId, provider }))
   const connectionSave = vi.fn((input) => input)
   const connectionDelete = vi.fn()
+  const chatGptStatus = vi.fn(() => ({
+    appServerAvailable: true,
+    authenticated: false,
+    email: null,
+    planType: null,
+    rateLimit: null,
+  }))
+  const chatGptModels = vi.fn(() => [
+    {
+      id: 'gpt-5.6-sol',
+      modelId: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6 Sol',
+      isDefault: true,
+      defaultReasoningEffort: 'low',
+      supportedReasoningEfforts: [{ reasoningEffort: 'low', description: 'Fast' }],
+      inputModalities: ['text', 'image'],
+    },
+  ])
+  const chatGptLogin = vi.fn(() => ({
+    appServerAvailable: true,
+    authenticated: true,
+    email: 'user@example.com',
+    planType: 'plus',
+    rateLimit: null,
+  }))
+  const chatGptLogout = vi.fn(() => ({
+    appServerAvailable: true,
+    authenticated: false,
+    email: null,
+    planType: null,
+    rateLimit: null,
+  }))
+  const chatGptResolveModel = vi.fn((modelId: string) => ({
+    id: modelId,
+    modelId,
+    displayName: modelId,
+    isDefault: true,
+    defaultReasoningEffort: 'low',
+    supportedReasoningEfforts: [],
+    inputModalities: ['text'],
+  }))
   const memoryGet = vi.fn()
   const memoryList = vi.fn(() => [])
   const memoryCreate = vi.fn((input) => ({ ...makeMemoryFact(), ...input }))
@@ -127,11 +177,20 @@ function registerHarness(getWindow: () => unknown = () => null): {
   const settingsUpdate = vi.fn((patch) => patch)
   const purgeProfile = vi.fn()
   const purgeAllSecrets = vi.fn()
+  const searchClear = vi.fn()
   const mcpStop = vi.fn()
   const mcp = { isLifecycleBusy: false, stop: mcpStop }
   const services = {
     logger: new Logger({ sink, minLevel: 'debug' }),
     profileId: 'profile-test',
+    policy: { allowDirectOpenAi },
+    chatgpt: {
+      status: chatGptStatus,
+      models: chatGptModels,
+      login: chatGptLogin,
+      logout: chatGptLogout,
+      resolveModel: chatGptResolveModel,
+    },
     conversations: { create: conversationCreate, delete: conversationDelete },
     memory: {
       get: memoryGet,
@@ -165,6 +224,7 @@ function registerHarness(getWindow: () => unknown = () => null): {
     models: { resolveForConversation: modelResolve },
     connections: { save: connectionSave, delete: connectionDelete, get: vi.fn(() => null) },
     store: { purgeProfile },
+    search: { clear: searchClear },
     security: { purgeAllSecrets },
     mcp,
   } as unknown as NexaServices
@@ -186,6 +246,11 @@ function registerHarness(getWindow: () => unknown = () => null): {
     modelResolve,
     connectionSave,
     connectionDelete,
+    chatGptStatus,
+    chatGptModels,
+    chatGptLogin,
+    chatGptLogout,
+    chatGptResolveModel,
     memoryGet,
     memoryList,
     memoryCreate,
@@ -209,6 +274,7 @@ function registerHarness(getWindow: () => unknown = () => null): {
     settingsUpdate,
     purgeProfile,
     purgeAllSecrets,
+    searchClear,
     mcpStop,
     mcp,
     sink,
@@ -376,6 +442,35 @@ describe('registerIpc', () => {
     expect(result).toMatchObject({ data: input })
   })
 
+  it('định tuyến đăng nhập ChatGPT qua service main-process', async () => {
+    const h = registerHarness()
+
+    const result = await h.handlers.get('chatgpt:login')?.({}, {})
+    const models = await h.handlers.get('chatgpt:models')?.({}, {})
+
+    expect(h.chatGptLogin).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({ data: { authenticated: true, planType: 'plus' } })
+    expect(h.chatGptModels).toHaveBeenCalledOnce()
+    expect(models).toMatchObject({ data: [{ modelId: 'gpt-5.6-sol', isDefault: true }] })
+  })
+
+  it('chặn đăng nhập ChatGPT theo policy nhưng vẫn cho đăng xuất', async () => {
+    const h = registerHarness(() => null, false)
+
+    const login = await h.handlers.get('chatgpt:login')?.({}, {})
+    const models = await h.handlers.get('chatgpt:models')?.({}, {})
+    const logout = await h.handlers.get('chatgpt:logout')?.({}, {})
+
+    expect(h.chatGptLogin).not.toHaveBeenCalled()
+    expect(login).toMatchObject({ error: { code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY } })
+    expect(h.chatGptModels).not.toHaveBeenCalled()
+    expect(models).toMatchObject({ error: { code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY } })
+    expect(h.chatGptLogout).toHaveBeenCalledOnce()
+    expect(logout).toMatchObject({
+      data: { authenticated: false },
+    })
+  })
+
   it('không restart MCP thủ công khi lifecycle đang bận', async () => {
     const h = registerHarness()
     h.mcp.isLifecycleBusy = true
@@ -431,6 +526,38 @@ describe('registerIpc', () => {
     )
 
     expect(h.modelResolve).toHaveBeenCalledWith('gpt-blocked', 'openai')
+    expect(h.conversationCreate).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY } })
+  })
+
+  it('xác thực catalog Plus trước khi tạo hội thoại ChatGPT', async () => {
+    const h = registerHarness()
+
+    const result = await h.handlers.get('conversation:create')?.(
+      {},
+      { title: 'Chat Plus', modelId: 'gpt-5.6-sol', modelProvider: 'chatgpt' },
+    )
+
+    expect(h.chatGptResolveModel).toHaveBeenCalledWith('gpt-5.6-sol')
+    expect(h.modelResolve).not.toHaveBeenCalled()
+    expect(h.conversationCreate).toHaveBeenCalledWith('profile-test', 'Chat Plus', {
+      modelId: 'gpt-5.6-sol',
+      provider: 'chatgpt',
+    })
+    expect(result).toMatchObject({
+      data: ['profile-test', 'Chat Plus', { modelId: 'gpt-5.6-sol', provider: 'chatgpt' }],
+    })
+  })
+
+  it('chặn tạo hội thoại Plus khi policy tắt provider ngoài', async () => {
+    const h = registerHarness(() => null, false)
+
+    const result = await h.handlers.get('conversation:create')?.(
+      {},
+      { title: 'Blocked Plus', modelId: 'gpt-5.6-sol', modelProvider: 'chatgpt' },
+    )
+
+    expect(h.chatGptResolveModel).not.toHaveBeenCalled()
     expect(h.conversationCreate).not.toHaveBeenCalled()
     expect(result).toMatchObject({ error: { code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY } })
   })
@@ -732,6 +859,7 @@ describe('registerIpc', () => {
     )
 
     expect(h.purgeProfile).toHaveBeenCalledWith('profile-test')
+    expect(h.searchClear).toHaveBeenCalledOnce()
     expect(h.purgeAllSecrets).toHaveBeenCalledOnce()
     expect(result).toMatchObject({ data: { purged: true } })
   })

@@ -1,0 +1,119 @@
+{
+  "_comment": "Bộ mẫu tài liệu BA chuẩn của tổ chức. IT ghi đè file này lúc phân phối, giống policy.json. Người dùng cuối KHÔNG sửa được — quyền định nghĩa chuẩn thuộc về tổ chức, không thuộc từng máy. Xem openspec/changes/add-ba-workbench/design.md quyết định D12.",
+  "_comment_version": "Tăng 'version' của một mẫu khi đổi bố cục. Tài liệu lưu lại phiên bản nó được viết theo, nên tài liệu cũ vẫn nói được nó theo bản nào thay vì âm thầm bị đo bằng thước đo mới.",
+  "_comment_itemTypes": "Một kiểu item được liệt kê ở hai mục thì mục ĐẦU TIÊN thắng — không nhân bản item vào cả hai.",
+  "templates": [
+    {
+      "id": "us-standard",
+      "version": "1",
+      "name": "User Story chuẩn",
+      "documentKind": "us",
+      "description": "Mẫu mặc định cho một user story: tác nhân, use case, luồng, quy tắc, trường dữ liệu và mã lỗi.",
+      "sections": [
+        {
+          "key": "actors",
+          "title": "Tác nhân",
+          "required": true,
+          "itemTypes": ["actor"],
+          "guidance": "Ai thực hiện, ai chịu tác động."
+        },
+        {
+          "key": "use-cases",
+          "title": "Use case",
+          "required": true,
+          "itemTypes": ["use_case"],
+          "guidance": "Mỗi use case một mục tiêu. Luồng chính quá 12 bước nghĩa là cần tách."
+        },
+        {
+          "key": "flow",
+          "title": "Luồng nghiệp vụ",
+          "required": false,
+          "itemTypes": ["flow_step"],
+          "guidance": "Các bước nối thành sơ đồ. Bước nào cũng nên được một use case phủ."
+        },
+        {
+          "key": "fields",
+          "title": "Trường dữ liệu",
+          "required": false,
+          "itemTypes": ["field"],
+          "guidance": "Trường nào không cần validate thì phải nói rõ lý do."
+        },
+        {
+          "key": "rules",
+          "title": "Quy tắc nghiệp vụ",
+          "required": true,
+          "itemTypes": ["rule"],
+          "guidance": "Mỗi quy tắc là MỘT mệnh đề và gắn với một use case hoặc một trường."
+        },
+        {
+          "key": "errors",
+          "title": "Mã lỗi",
+          "required": true,
+          "itemTypes": ["error_code"],
+          "guidance": "Mọi mã được nhắc trong luồng đều phải có mặt ở đây."
+        }
+      ]
+    },
+    {
+      "id": "uc-detail",
+      "version": "1",
+      "name": "Đặc tả use case chi tiết",
+      "documentKind": "srs",
+      "description": "Dùng khi một use case đủ phức tạp để tách thành tài liệu riêng.",
+      "sections": [
+        { "key": "actors", "title": "Tác nhân", "required": true, "itemTypes": ["actor"] },
+        {
+          "key": "use-cases",
+          "title": "Đặc tả use case",
+          "required": true,
+          "itemTypes": ["use_case"],
+          "guidance": "Đủ điều kiện trước, luồng chính, luồng thay thế, luồng ngoại lệ và điều kiện sau."
+        },
+        {
+          "key": "rules",
+          "title": "Ràng buộc nghiệp vụ",
+          "required": true,
+          "itemTypes": ["rule"]
+        },
+        { "key": "errors", "title": "Mã lỗi", "required": true, "itemTypes": ["error_code"] },
+        {
+          "key": "flow",
+          "title": "Sơ đồ luồng",
+          "required": false,
+          "itemTypes": ["flow_step"]
+        },
+        { "key": "fields", "title": "Trường dữ liệu", "required": false, "itemTypes": ["field"] }
+      ]
+    },
+    {
+      "id": "field-spec",
+      "version": "1",
+      "name": "Đặc tả trường và validate",
+      "documentKind": "srs",
+      "description": "Dùng cho màn hình nhập liệu: liệt kê trường, kiểu và validate theo chuẩn tổ chức.",
+      "sections": [
+        {
+          "key": "fields",
+          "title": "Danh sách trường",
+          "required": true,
+          "itemTypes": ["field"],
+          "guidance": "Ghi rõ kiểu trường để Nexa đối chiếu được với chuẩn validate."
+        },
+        {
+          "key": "rules",
+          "title": "Quy tắc validate riêng",
+          "required": false,
+          "itemTypes": ["rule"],
+          "guidance": "Chỉ ghi phần KHÁC chuẩn chung; phần chuẩn đã có trong rulebook."
+        },
+        { "key": "errors", "title": "Mã lỗi hiển thị", "required": true, "itemTypes": ["error_code"] },
+        {
+          "key": "context",
+          "title": "Bối cảnh",
+          "required": false,
+          "itemTypes": ["actor", "use_case", "flow_step"]
+        }
+      ]
+    }
+  ]
+}

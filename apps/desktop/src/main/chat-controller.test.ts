@@ -15,6 +15,7 @@ interface RuntimeDependencies {
     request: ConfirmationRequest,
     requestId: string,
   ): Promise<'approved' | 'cancelled'>
+  readonly localTools: unknown
 }
 
 interface RuntimeInput {
@@ -37,6 +38,7 @@ const runtimeMock = vi.hoisted(() => ({
 }))
 
 vi.mock('@nexa/agent-runtime', () => ({
+  MAX_COMMITMENTS_IN_CONTEXT: 10,
   AgentRuntime: class {
     constructor(deps: RuntimeDependencies) {
       runtimeMock.deps = deps
@@ -68,6 +70,10 @@ interface Harness {
     readonly guardApprove: ReturnType<typeof vi.fn>
     readonly guardCancel: ReturnType<typeof vi.fn>
     readonly listMemoryForContext: ReturnType<typeof vi.fn>
+    readonly listCommitmentsForContext: ReturnType<typeof vi.fn>
+    readonly listMessages: ReturnType<typeof vi.fn>
+    readonly chatGptResolveModel: ReturnType<typeof vi.fn>
+    readonly chatGptRunTurn: ReturnType<typeof vi.fn>
     readonly sendToRenderer: ReturnType<typeof vi.fn>
   }
 }
@@ -86,12 +92,24 @@ function makeHarness(): Harness {
   const guardApprove = vi.fn()
   const guardCancel = vi.fn()
   const listMemoryForContext = vi.fn(() => [])
+  const listCommitmentsForContext = vi.fn(() => [])
+  const listMessages = vi.fn(() => [])
+  const chatGptResolveModel = vi.fn(() => ({
+    modelId: 'gpt-5.6-sol',
+    defaultReasoningEffort: 'low',
+  }))
+  const chatGptRunTurn = vi.fn()
   const sendToRenderer = vi.fn()
   const sink = new MemorySink()
 
   const services = {
     logger: new Logger({ sink, minLevel: 'debug' }),
     profileId: 'profile-1',
+    policy: { allowDirectOpenAi: true },
+    chatgpt: {
+      resolveModel: chatGptResolveModel,
+      runTurn: chatGptRunTurn,
+    },
     conversations: {
       get: vi.fn(() => ({
         id: CONVERSATION_ID,
@@ -105,6 +123,7 @@ function makeHarness(): Harness {
         { role: 'user', content: 'Xin chào' },
         { role: 'assistant', content: '' },
       ]),
+      listMessages,
       finalizeMessage,
       recordToolCall: vi.fn(() => ({ id: 'tool-call-1' })),
       updateToolCall: vi.fn(),
@@ -118,6 +137,7 @@ function makeHarness(): Harness {
     },
     settings: { get: vi.fn(() => DEFAULT_APP_SETTINGS) },
     memory: { listForContext: listMemoryForContext },
+    commitments: { listForContext: listCommitmentsForContext },
     documents: { process: processDocuments },
     files: {
       resolve: vi.fn(() => [{ path: '/tmp/document.txt' }]),
@@ -155,6 +175,10 @@ function makeHarness(): Harness {
       guardApprove,
       guardCancel,
       listMemoryForContext,
+      listCommitmentsForContext,
+      listMessages,
+      chatGptResolveModel,
+      chatGptRunTurn,
       sendToRenderer,
     },
   }
@@ -230,6 +254,84 @@ describe('ChatController', () => {
     )
   })
 
+  it('định tuyến model Plus qua App Server và stream vào hội thoại hiện tại', async () => {
+    const h = makeHarness()
+    h.mocks.listMessages.mockReturnValueOnce([
+      {
+        role: 'user',
+        content: 'Câu trước',
+        status: 'complete',
+        deletedAt: undefined,
+      },
+      {
+        role: 'assistant',
+        content: 'Trả lời trước',
+        status: 'complete',
+        deletedAt: undefined,
+      },
+      { role: 'assistant', content: 'Bỏ qua lỗi cũ', status: 'error', deletedAt: undefined },
+    ])
+    h.mocks.chatGptRunTurn.mockImplementationOnce(
+      async (turn: { onDelta(delta: string): void }) => {
+        turn.onDelta('Phản hồi từ Plus')
+      },
+    )
+
+    const result = await h.controller.send({
+      ...input(),
+      modelId: 'gpt-5.6-sol',
+      modelProvider: 'chatgpt',
+      reasoningEffort: 'max',
+    })
+
+    await vi.waitFor(() => {
+      expect(h.mocks.finalizeMessage).toHaveBeenCalledWith(
+        'message-assistant',
+        'Phản hồi từ Plus',
+        'complete',
+      )
+    })
+    expect(h.mocks.chatGptResolveModel).toHaveBeenCalledWith('gpt-5.6-sol')
+    expect(h.mocks.setModel).toHaveBeenCalledWith(CONVERSATION_ID, {
+      modelId: 'gpt-5.6-sol',
+      provider: 'chatgpt',
+    })
+    expect(h.mocks.chatGptRunTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'gpt-5.6-sol',
+        reasoningEffort: 'max',
+        prompt: 'Xin chào',
+        history: [
+          { role: 'user', content: 'Câu trước' },
+          { role: 'assistant', content: 'Trả lời trước' },
+        ],
+      }),
+    )
+    expect(h.services.connections.buildLlmClient).not.toHaveBeenCalled()
+    expect(runtimeMock.runTurn).not.toHaveBeenCalled()
+    expect(h.mocks.sendToRenderer).toHaveBeenCalledWith(
+      NEXA_EVENTS.chatDone,
+      expect.objectContaining({ requestId: result.requestId, truncatedContextCount: 0 }),
+    )
+  })
+
+  it('chặn file trước khi ghi message khi model Plus đang được chọn', async () => {
+    const h = makeHarness()
+    const tokens = ['00000000-0000-4000-8000-000000000003']
+
+    await expect(
+      h.controller.send({
+        ...input(tokens),
+        modelId: 'gpt-5.6-sol',
+        modelProvider: 'chatgpt',
+      }),
+    ).rejects.toMatchObject({ code: ERROR_CODES.EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS })
+
+    expect(h.mocks.releaseAll).toHaveBeenCalledWith(tokens)
+    expect(h.mocks.appendMessage).not.toHaveBeenCalled()
+    expect(h.mocks.chatGptRunTurn).not.toHaveBeenCalled()
+  })
+
   it('chọn memory theo profile, conversation và provider trước khi gọi runtime', async () => {
     const h = makeHarness()
     h.mocks.listMemoryForContext.mockReturnValueOnce([
@@ -259,6 +361,69 @@ describe('ChatController', () => {
         ],
       }),
     )
+  })
+
+  it('nạp cam kết đang treo vào context cho model nội bộ', async () => {
+    const h = makeHarness()
+    h.mocks.listCommitmentsForContext.mockReturnValueOnce([
+      {
+        id: 'c1',
+        profileId: 'profile-1',
+        title: 'Gửi báo cáo quý',
+        nextAction: 'Xin số liệu',
+        status: 'blocked',
+        dueAt: '2026-09-11T10:00:00.000Z',
+        checkInAt: null,
+        completedAt: null,
+        sourceConversationId: null,
+        createdBy: 'user',
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    ])
+    runtimeMock.runTurn.mockResolvedValueOnce({ text: 'Đã hiểu', truncatedContextCount: 0 })
+
+    await h.controller.send(input())
+
+    await vi.waitFor(() => expect(runtimeMock.runTurn).toHaveBeenCalledOnce())
+    expect(runtimeMock.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commitments: [
+          {
+            title: 'Gửi báo cáo quý',
+            nextAction: 'Xin số liệu',
+            status: 'blocked',
+            dueAt: '2026-09-11T10:00:00.000Z',
+            checkInAt: null,
+          },
+        ],
+      }),
+    )
+  })
+
+  it('không gửi cam kết khi người dùng đã tắt nạp context', async () => {
+    const h = makeHarness()
+    vi.mocked(h.services.settings.get).mockReturnValue({
+      ...DEFAULT_APP_SETTINGS,
+      commitmentContextEnabled: false,
+    })
+    runtimeMock.runTurn.mockResolvedValueOnce({ text: 'Đã hiểu', truncatedContextCount: 0 })
+
+    await h.controller.send(input())
+
+    await vi.waitFor(() => expect(runtimeMock.runTurn).toHaveBeenCalledOnce())
+    expect(h.mocks.listCommitmentsForContext).not.toHaveBeenCalled()
+    expect(runtimeMock.runTurn.mock.calls[0]?.[0]).not.toHaveProperty('commitments')
+  })
+
+  it('không công bố tool cam kết khi setting chưa bật', async () => {
+    const h = makeHarness()
+    runtimeMock.runTurn.mockResolvedValueOnce({ text: 'Đã hiểu', truncatedContextCount: 0 })
+
+    await h.controller.send(input())
+
+    await vi.waitFor(() => expect(runtimeMock.runTurn).toHaveBeenCalledOnce())
+    expect(runtimeMock.deps?.localTools).toBeNull()
   })
 
   it('abort đúng lượt chat và giữ phần text đã stream', async () => {

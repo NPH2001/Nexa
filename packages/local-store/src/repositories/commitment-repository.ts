@@ -3,6 +3,7 @@ import {
   ERROR_CODES,
   NexaError,
   type Commitment,
+  type CommitmentCreator,
   type CommitmentStatus,
 } from '@nexa/shared-types'
 import { n } from '../driver.js'
@@ -21,6 +22,8 @@ export interface CreateCommitmentInput {
   readonly dueAt?: string | null
   readonly checkInAt?: string | null
   readonly sourceConversationId?: string | null
+  /** Mặc định `user`: mọi đường tạo hiện có đều là thao tác tay của người dùng. */
+  readonly createdBy?: CommitmentCreator
 }
 
 export interface UpdateCommitmentInput {
@@ -34,6 +37,13 @@ export interface UpdateCommitmentInput {
 
 export interface ListCommitmentsOptions {
   readonly includeCompleted?: boolean
+}
+
+export interface ListForContextOptions {
+  /** Trần số commitment trả về. Sắp xếp quyết định cái nào bị cắt. */
+  readonly limit: number
+  /** Mốc "bây giờ" để phân loại quá hạn. Truyền vào để test được. */
+  readonly nowIso: string
 }
 
 export class CommitmentRepository {
@@ -50,8 +60,8 @@ export class CommitmentRepository {
         .prepare(
           `INSERT INTO commitments
              (id, profile_id, title_ciphertext, next_action_ciphertext, status, due_at, check_in_at,
-              completed_at, source_conversation_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              completed_at, source_conversation_id, created_at, updated_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -67,11 +77,13 @@ export class CommitmentRepository {
           n(input.sourceConversationId),
           now,
           now,
+          input.createdBy ?? 'user',
         )
       this.store.log.info('commitment-created', {
         commitmentId: id,
         profileId: input.profileId,
         status,
+        createdBy: input.createdBy ?? 'user',
       })
       return this.getOrThrow(id)
     })
@@ -101,6 +113,39 @@ export class CommitmentRepository {
            rowid DESC`,
       )
       .all(profileId)
+      .map((row) => this.mapCommitment(row))
+  }
+
+  /**
+   * Commitment đủ điều kiện đi vào context model.
+   *
+   * Chỉ `active`/`blocked` — `paused` là việc người dùng đã chủ động gác lại, `completed` thì
+   * không còn là việc đang treo; nhắc model về chúng chỉ làm nhiễu câu trả lời.
+   *
+   * Thứ tự quyết định cái gì bị cắt khi vượt `limit`, nên nó phải xác định: quá hạn trước, rồi
+   * mốc gần nhất, commitment không có mốc xếp cuối. `rowid` là tie-break cuối để hai record
+   * cùng `updated_at` không đổi chỗ giữa các lần gọi.
+   */
+  listForContext(profileId: string, opts: ListForContextOptions): Commitment[] {
+    if (opts.limit <= 0) return []
+    return this.store.handle
+      .prepare(
+        `SELECT *,
+                COALESCE(MIN(check_in_at, due_at), check_in_at, due_at) AS effective_at
+         FROM commitments
+         WHERE profile_id = ? AND status IN ('active','blocked')
+         ORDER BY
+           CASE
+             WHEN effective_at IS NULL THEN 2
+             WHEN effective_at <= ? THEN 0
+             ELSE 1
+           END,
+           effective_at ASC,
+           updated_at DESC,
+           rowid DESC
+         LIMIT ?`,
+      )
+      .all(profileId, opts.nowIso, opts.limit)
       .map((row) => this.mapCommitment(row))
   }
 
@@ -220,6 +265,7 @@ export class CommitmentRepository {
       completedAt: row['completed_at'] === null ? null : String(row['completed_at']),
       sourceConversationId:
         row['source_conversation_id'] === null ? null : String(row['source_conversation_id']),
+      createdBy: row['created_by'] === 'agent' ? 'agent' : 'user',
       createdAt: String(row['created_at']),
       updatedAt: String(row['updated_at']),
     }

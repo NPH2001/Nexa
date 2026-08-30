@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@nexa/ba-kit": "workspace:*",
     "@nexa/observability": "workspace:*",
     "@nexa/shared-types": "workspace:*"
   }

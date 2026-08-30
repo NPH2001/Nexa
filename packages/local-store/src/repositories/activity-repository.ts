@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   type ActivityAction,
+  type ActivityActor,
   type ActivityEvent,
   type ActivityStatus,
   type ActivitySubjectType,
@@ -18,11 +19,14 @@ export interface RecordActivityInput {
   readonly subjectId: string
   readonly requestId?: string
   readonly operationId?: string
+  /** Mặc định `user`: mọi đường ghi có trước cột này đều do người dùng khởi xướng. */
+  readonly actor?: ActivityActor
 }
 
 export interface ListActivityOptions {
   readonly type?: ActivityType
   readonly status?: ActivityStatus
+  readonly actor?: ActivityActor
   readonly limit: number
   readonly offset: number
 }
@@ -37,8 +41,8 @@ export class ActivityRepository {
       .prepare(
         `INSERT INTO local_audit
            (id, profile_id, event_type, request_id, operation_id, status, error_code, created_at,
-            activity_type, activity_action, subject_type, subject_id)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+            activity_type, activity_action, subject_type, subject_id, actor)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -52,6 +56,7 @@ export class ActivityRepository {
         input.action,
         input.subjectType,
         input.subjectId,
+        input.actor ?? 'user',
       )
     return this.getById(id)
   }
@@ -67,11 +72,15 @@ export class ActivityRepository {
       clauses.push('status = ?')
       params.push(opts.status)
     }
+    if (opts.actor !== undefined) {
+      clauses.push('actor = ?')
+      params.push(opts.actor)
+    }
     params.push(opts.limit, opts.offset)
 
     return this.store.handle
       .prepare(
-        `SELECT id, activity_type, activity_action, status, subject_type, subject_id, request_id, operation_id, created_at
+        `SELECT id, activity_type, activity_action, status, subject_type, subject_id, actor, request_id, operation_id, created_at
          FROM local_audit
          WHERE ${clauses.join(' AND ')}
          ORDER BY created_at DESC, id DESC
@@ -84,7 +93,7 @@ export class ActivityRepository {
   private getById(id: string): ActivityEvent {
     const row = this.store.handle
       .prepare(
-        `SELECT id, activity_type, activity_action, status, subject_type, subject_id, request_id, operation_id, created_at
+        `SELECT id, activity_type, activity_action, status, subject_type, subject_id, actor, request_id, operation_id, created_at
          FROM local_audit WHERE id = ? LIMIT 1`,
       )
       .get(id)
@@ -101,6 +110,7 @@ function mapActivity(row: Record<string, unknown>): ActivityEvent {
     type: String(row['activity_type']) as ActivityType,
     action: String(row['activity_action']) as ActivityAction,
     status: String(row['status']) as ActivityStatus,
+    actor: row['actor'] === null || row['actor'] === undefined ? null : (String(row['actor']) as ActivityActor),
     subjectType: String(row['subject_type']) as ActivitySubjectType,
     subjectId: String(row['subject_id']),
     subjectLabel: null,

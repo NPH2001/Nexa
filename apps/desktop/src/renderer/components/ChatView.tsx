@@ -3,8 +3,9 @@ import {
   PROVIDER_LABELS,
   isExternalProvider,
   type AppSettings,
+  type ChatGptModel,
+  type ChatModelProvider,
   type Conversation,
-  type LlmProvider,
   type ModelConfig,
   type Message,
 } from '@nexa/shared-types/renderer'
@@ -17,10 +18,22 @@ interface Attachment {
   readonly sizeBytes: number
 }
 
+interface ChatModelOption {
+  readonly key: string
+  readonly source: 'configured' | 'chatgpt'
+  readonly provider: ChatModelProvider
+  readonly modelId: string
+  readonly displayName: string
+  readonly isDefault: boolean
+  readonly verified: boolean
+  readonly defaultReasoningEffort?: string
+}
+
 export function ChatView(props: {
   conversation: Conversation | null
   messages: readonly Message[]
   models: readonly ModelConfig[]
+  chatGptModels: readonly ChatGptModel[]
   settings: AppSettings | null
   busy: boolean
   streaming: boolean
@@ -28,7 +41,11 @@ export function ChatView(props: {
   onSend: (
     content: string,
     fileTokens: string[],
-    model?: { modelId: string; provider: LlmProvider },
+    model?: {
+      modelId: string
+      provider: ChatModelProvider
+      reasoningEffort?: string
+    },
   ) => void
   onCancel: () => void
   onCreateConversation: () => void
@@ -42,6 +59,34 @@ export function ChatView(props: {
   // Model chọn ở dropdown áp cho lượt gửi KẾ TIẾP; các lượt đã xong giữ nguyên model của chúng.
   const [modelOverride, setModelOverride] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const composerIsComposing = useRef(false)
+
+  const modelOptions = useMemo<ChatModelOption[]>(
+    () => [
+      ...props.models.map((model) => ({
+        key: `${model.provider}:${model.modelId}`,
+        source: 'configured' as const,
+        provider: model.provider,
+        modelId: model.modelId,
+        displayName: model.displayName,
+        isDefault: model.isDefault,
+        verified: model.verified,
+      })),
+      ...props.chatGptModels.map((model) => ({
+        key: `chatgpt:${model.modelId}`,
+        source: 'chatgpt' as const,
+        provider: 'chatgpt' as const,
+        modelId: model.modelId,
+        displayName: model.displayName,
+        isDefault: model.isDefault,
+        verified: true,
+        ...(model.defaultReasoningEffort === null
+          ? {}
+          : { defaultReasoningEffort: model.defaultReasoningEffort }),
+      })),
+    ],
+    [props.chatGptModels, props.models],
+  )
 
   /**
    * Model đang chọn, xác định bằng khoá tổng hợp `provider:modelId`.
@@ -49,17 +94,27 @@ export function ChatView(props: {
    * Không dùng riêng model id: cùng một id có thể tồn tại ở LiteLLM và ở OpenAI, và hai lựa
    * chọn đó gửi dữ liệu tới hai nơi khác nhau. Nhầm ở đây là gửi sai đích.
    */
-  const modelKey = (m: ModelConfig): string => `${m.provider}:${m.modelId}`
   const conversationKey =
     props.conversation?.modelId !== null &&
     props.conversation?.modelId !== undefined &&
     props.conversation.modelProvider !== null
       ? `${props.conversation.modelProvider}:${props.conversation.modelId}`
       : null
-  const defaultModel = props.models.find((m) => m.isDefault) ?? props.models[0]
+  const configuredDefault = modelOptions.find(
+    (model) => model.source === 'configured' && model.isDefault,
+  )
+  const configuredFirst = modelOptions.find((model) => model.source === 'configured')
+  const chatGptDefault = modelOptions.find((model) => model.source === 'chatgpt' && model.isDefault)
+  const chatGptFirst = modelOptions.find((model) => model.source === 'chatgpt')
+  const defaultModel = configuredDefault ?? configuredFirst ?? chatGptDefault ?? chatGptFirst
   const selectedKey =
-    modelOverride ?? conversationKey ?? (defaultModel === undefined ? '' : modelKey(defaultModel))
-  const selectedModel = props.models.find((m) => modelKey(m) === selectedKey) ?? null
+    modelOverride ?? conversationKey ?? (defaultModel === undefined ? '' : defaultModel.key)
+  const selectedModel = modelOptions.find((model) => model.key === selectedKey) ?? null
+  const selectedModelUnavailable = selectedKey !== '' && selectedModel === null
+
+  useEffect(() => {
+    setModelOverride(null)
+  }, [props.conversation?.id])
 
   useEffect(() => {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -77,6 +132,13 @@ export function ChatView(props: {
    */
   const documentPolicy = useMemo(() => {
     if (selectedModel === null) return { blocked: false, reason: '' }
+    if (selectedModel.provider === 'chatgpt') {
+      return {
+        blocked: true,
+        reason:
+          'Chat bằng tài khoản ChatGPT Plus hiện chỉ hỗ trợ văn bản. Hãy bỏ file hoặc chọn model API đã cấu hình.',
+      }
+    }
     const allowlist = props.settings?.documentAllowedModels ?? []
     if (isExternalProvider(selectedModel.provider)) {
       // Danh sách RIÊNG và fail-closed — xem document-policy.ts.
@@ -141,13 +203,17 @@ export function ChatView(props: {
 
   const submit = (): void => {
     const content = draft.trim()
-    if (content === '' || props.busy) return
+    if (content === '' || props.busy || selectedModel === null) return
     props.onSend(
       content,
       attachments.map((a) => a.token),
-      selectedModel === null
-        ? undefined
-        : { modelId: selectedModel.modelId, provider: selectedModel.provider },
+      {
+        modelId: selectedModel.modelId,
+        provider: selectedModel.provider,
+        ...(selectedModel.defaultReasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: selectedModel.defaultReasoningEffort }),
+      },
     )
     setDraft('')
     setAttachments([])
@@ -170,11 +236,11 @@ export function ChatView(props: {
             </span>
           )}
           <ModelSelector
-            models={props.models}
+            models={modelOptions}
             value={selectedKey}
             onChange={(key) => {
               setModelOverride(key)
-              const picked = props.models.find((m) => modelKey(m) === key)
+              const picked = modelOptions.find((model) => model.key === key)
               props.onToast({
                 kind:
                   picked !== undefined && isExternalProvider(picked.provider) ? 'warning' : 'info',
@@ -202,6 +268,13 @@ export function ChatView(props: {
       </div>
 
       <div className="composer">
+        {selectedModelUnavailable && (
+          <p className="error-inline">
+            Model đã lưu cho hội thoại này hiện không còn khả dụng. Hãy đăng nhập lại trong Cài đặt
+            hoặc chọn một model khác.
+          </p>
+        )}
+
         {attachments.length > 0 && (
           <div className="attachments">
             {/* §7.2 bước 4: hiển thị file đã chọn và lượng nội dung dự kiến gửi. */}
@@ -246,21 +319,48 @@ export function ChatView(props: {
         <div className="composer-row">
           <button
             type="button"
-            className="icon-btn"
+            className="btn btn-small"
             aria-label="Đính kèm tài liệu"
-            title="Đính kèm tài liệu"
+            title={
+              selectedModel?.provider === 'chatgpt'
+                ? 'ChatGPT Plus / Codex hiện chỉ hỗ trợ chat văn bản'
+                : 'Đính kèm tài liệu'
+            }
             onClick={pickFiles}
+            disabled={selectedModel === null || selectedModel.provider === 'chatgpt'}
           >
-            📎
+            Tệp
           </button>
           <textarea
             className="composer-input"
             aria-label="Nội dung câu hỏi"
             placeholder="Nhập câu hỏi… (Ctrl+Enter để gửi)"
+            lang="vi"
+            spellCheck
+            autoCorrect="on"
+            autoCapitalize="sentences"
             value={draft}
             rows={3}
             onChange={(e) => setDraft(e.target.value)}
+            onCompositionStart={() => {
+              composerIsComposing.current = true
+            }}
+            onCompositionEnd={() => {
+              composerIsComposing.current = false
+            }}
+            onBlur={() => {
+              composerIsComposing.current = false
+            }}
             onKeyDown={(e) => {
+              // Telex/VNI và các IME có thể phát Enter/keyCode 229 trong lúc đang ghép dấu.
+              // Không preventDefault hay submit cho tới khi compositionend kết thúc.
+              if (
+                composerIsComposing.current ||
+                e.nativeEvent.isComposing ||
+                e.nativeEvent.keyCode === 229
+              ) {
+                return
+              }
               if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault()
                 submit()
@@ -284,6 +384,7 @@ export function ChatView(props: {
               disabled={
                 props.busy ||
                 draft.trim() === '' ||
+                selectedModel === null ||
                 (attachments.length > 0 && documentPolicy.blocked)
               }
             >
@@ -297,13 +398,28 @@ export function ChatView(props: {
 }
 
 function ModelSelector(props: {
-  models: readonly ModelConfig[]
+  models: readonly ChatModelOption[]
   value: string
   onChange: (modelId: string) => void
 }): React.JSX.Element {
   if (props.models.length === 0) {
-    return <span className="muted small">Chưa cấu hình model nào</span>
+    return <span className="muted small">Chưa có model để chat</span>
   }
+  const configuredModels = props.models.filter((model) => model.source === 'configured')
+  const chatGptModels = props.models.filter((model) => model.source === 'chatgpt')
+  const valueExists = props.models.some((model) => model.key === props.value)
+
+  const renderOption = (model: ChatModelOption): React.JSX.Element => (
+    <option key={model.key} value={model.key}>
+      {model.displayName}
+      {model.provider === 'chatgpt' ? ' · Plus' : ''}
+      {model.source === 'configured' && isExternalProvider(model.provider)
+        ? ' ⚠ ngoài tổ chức'
+        : ''}
+      {model.verified ? '' : ' (chưa kiểm chứng)'}
+    </option>
+  )
+
   return (
     <select
       className="input input-compact"
@@ -311,13 +427,17 @@ function ModelSelector(props: {
       onChange={(e) => props.onChange(e.target.value)}
       aria-label="Chọn model"
     >
-      {props.models.map((model) => (
-        <option key={model.id} value={`${model.provider}:${model.modelId}`}>
-          {model.displayName}
-          {isExternalProvider(model.provider) ? ' ⚠ ngoài tổ chức' : ''}
-          {model.verified ? '' : ' (chưa kiểm chứng)'}
+      {!valueExists && props.value !== '' && (
+        <option value={props.value} disabled>
+          Model không còn khả dụng
         </option>
-      ))}
+      )}
+      {configuredModels.length > 0 && (
+        <optgroup label="Model đã cấu hình">{configuredModels.map(renderOption)}</optgroup>
+      )}
+      {chatGptModels.length > 0 && (
+        <optgroup label="ChatGPT Plus / Codex">{chatGptModels.map(renderOption)}</optgroup>
+      )}
     </select>
   )
 }
@@ -418,6 +538,10 @@ function MessageBubble(props: {
           <textarea
             className="composer-input"
             aria-label="Nội dung tin nhắn đang sửa"
+            lang="vi"
+            spellCheck
+            autoCorrect="on"
+            autoCapitalize="sentences"
             value={draft}
             rows={3}
             onChange={(e) => setDraft(e.target.value)}

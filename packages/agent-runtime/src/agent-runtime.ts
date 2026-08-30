@@ -8,6 +8,8 @@ import {
   type AppSettings,
   type ConfirmationRequest,
   type LlmProvider,
+  type LocalToolDefinition,
+  type LocalToolRegistry,
   type MessageRole,
   type OperationStatus,
   type RiskLevel,
@@ -30,6 +32,8 @@ import type { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
 import {
   buildContext,
   toolResultMessage,
+  type BaKnowledgeContextItem,
+  type CommitmentContextItem,
   type ContextBudget,
   type MemoryContextFact,
 } from './context-builder.js'
@@ -37,6 +41,23 @@ import { ConfirmationGuard, type ApprovalDecision } from './confirmation-guard.j
 import { OperationTracker, isUncertainOutcome } from './operation-tracker.js'
 import { assertModelMayReceiveDocuments } from './document-policy.js'
 import { selectPresetForHistory } from './tool-preset-selector.js'
+
+/**
+ * Tool đã phân giải, nhìn từ đường thực thi.
+ *
+ * Đường write ở §7.4 quan tâm bốn thứ: gọi cái gì, rủi ro mức nào, payload đã validate ra sao,
+ * và hai hàm "dựng preview"/"thực thi". Nó KHÔNG cần biết tool nằm trên MCP server hay chạy
+ * thẳng trong main process. Nhờ vậy tool cục bộ không sinh ra một đường ghi thứ hai — và một
+ * đường ghi thứ hai chính là chỗ mà bất biến approval âm thầm biến mất.
+ */
+interface CallableTarget {
+  readonly name: string
+  readonly riskLevel: RiskLevel
+  /** Payload ĐÃ validate — cũng chính là thứ được băm vào `payload_hash`. */
+  readonly payload: Record<string, unknown>
+  buildPreview(): Promise<ToolPreview>
+  execute(): Promise<ToolResultSummary>
+}
 
 /** Sự kiện runtime đẩy ra ngoài cho host (main process) chuyển tiếp tới UI. */
 export type RuntimeEvent =
@@ -88,6 +109,13 @@ export interface AgentRuntimeDeps {
   readonly confluenceBaseUrl: () => string
   /** Đẩy yêu cầu xác nhận lên UI và chờ người dùng quyết (§7.4 bước 3–4). */
   readonly requestConfirmation: (request: ConfirmationRequest) => Promise<ApprovalDecision>
+  /**
+   * Tool chạy thẳng trong main process (ví dụ cam kết). null khi người dùng chưa bật.
+   *
+   * Cổng RIÊNG với `mcp`: tool cục bộ không có hệ thống đích bên ngoài, nên nó phải khả dụng cả
+   * khi Atlassian chưa cấu hình, và không bao giờ được đi qua `mcp.callTool`.
+   */
+  readonly localTools?: LocalToolRegistry | null
 }
 
 export interface RunTurnInput {
@@ -99,6 +127,16 @@ export interface RunTurnInput {
   readonly history: readonly { role: MessageRole; content: string }[]
   readonly documents?: readonly ProcessedDocument[]
   readonly memoryFacts?: readonly RuntimeMemoryFact[]
+  /**
+   * Cam kết đang treo. Host đã quyết định có gửi hay không (setting + chính sách provider) —
+   * runtime chỉ dựng khối context, không tự đi đọc dữ liệu người dùng.
+   */
+  readonly commitments?: readonly CommitmentContextItem[]
+  /**
+   * Tri thức nghiệp vụ đã xác nhận. Host quyết định có nạp hay không (cờ `baWorkbench`), runtime
+   * chỉ dựng khối context — và loại sạch khối này khi provider nằm ngoài tổ chức.
+   */
+  readonly baKnowledge?: readonly BaKnowledgeContextItem[]
   readonly signal?: AbortSignal
   readonly emit: (event: RuntimeEvent) => void
   readonly toolCalls: ToolCallSink
@@ -147,10 +185,15 @@ export class AgentRuntime {
 
     const budget: ContextBudget = { contextWindowTokens: input.contextWindowTokens }
     const memoryFacts = selectMemoryForProvider(input.memoryFacts ?? [], input.modelProvider)
+    const baKnowledge = selectBaKnowledgeForProvider(input.baKnowledge ?? [], input.modelProvider)
     const context = buildContext({
       history: input.history,
       ...(input.documents !== undefined ? { documents: input.documents } : {}),
       ...(memoryFacts.length > 0 ? { memoryFacts } : {}),
+      ...(input.commitments !== undefined && input.commitments.length > 0
+        ? { commitments: input.commitments }
+        : {}),
+      ...(baKnowledge.length > 0 ? { baKnowledge } : {}),
       budget,
     })
     this.log.info('memory-context', {
@@ -160,6 +203,28 @@ export class AgentRuntime {
       includedCount: context.memoryFactsIncluded,
       truncatedCount: context.memoryFactsTruncated,
     })
+    if (input.commitments !== undefined && input.commitments.length > 0) {
+      // Log số lượng, không log nội dung: đây là chỗ để phát hiện cắt bớt im lặng.
+      this.log.info('commitment-context', {
+        requestId: input.requestId,
+        provider: input.modelProvider,
+        eligibleCount: input.commitments.length,
+        includedCount: context.commitmentsIncluded,
+        truncatedCount: context.commitmentsTruncated,
+      })
+    }
+    if (input.baKnowledge !== undefined && input.baKnowledge.length > 0) {
+      // Số lượng, không nội dung. `eligibleCount` là 0 với provider ngoài — đó là bằng chứng
+      // trong log rằng tri thức nghiệp vụ đã bị chặn, chứ không phải im lặng biến mất.
+      this.log.info('ba-knowledge-context', {
+        requestId: input.requestId,
+        provider: input.modelProvider,
+        offeredCount: input.baKnowledge.length,
+        eligibleCount: baKnowledge.length,
+        includedCount: context.baKnowledgeIncluded,
+        truncatedCount: context.baKnowledgeTruncated,
+      })
+    }
     if (context.truncatedCount > 0) {
       input.emit({ type: 'context-truncated', droppedMessages: context.truncatedCount })
     }
@@ -353,6 +418,14 @@ export class AgentRuntime {
     terminalText?: string
     uncertainOperationId?: string
   }> {
+    // Local TRƯỚC MCP. Danh sách tool cục bộ là tập đóng do main process dựng, nên không có
+    // nguy cơ một tool MCP bị che; ngược lại, hỏi MCP trước sẽ chặn tool cục bộ ngay ở cổng
+    // "chưa kết nối Atlassian" bên dưới.
+    const localDefinition = this.deps.localTools?.get(call.function.name)
+    if (localDefinition !== undefined) {
+      return this.executeLocalToolCall(localDefinition, call, input, writesAlreadyThisTurn)
+    }
+
     const mcp = this.deps.mcp
     if (mcp === null || !mcp.isReady) {
       return {
@@ -400,13 +473,112 @@ export class AgentRuntime {
     }
 
     return isWrite
-      ? this.executeWrite(definition, payload, input)
-      : this.executeRead(definition, payload, input)
+      ? this.executeWrite(this.mcpTarget(mcp, definition, payload), input)
+      : this.executeRead(this.mcpTarget(mcp, definition, payload), input)
+  }
+
+  /**
+   * Lời gọi tool cục bộ.
+   *
+   * Đi qua ĐÚNG `executeWrite` của tool ngoài — cùng guard, cùng tracker, cùng `ToolCallSink`,
+   * cùng hạn mức một-write-mỗi-lượt. Chỉ điểm thực thi ở bước 7 là khác.
+   */
+  private async executeLocalToolCall(
+    definition: LocalToolDefinition,
+    call: ChatToolCall,
+    input: RunTurnInput,
+    writesAlreadyThisTurn: number,
+  ): Promise<{
+    resultForModel: string
+    wasWrite: boolean
+    fatal: boolean
+    terminalText?: string
+    uncertainOperationId?: string
+  }> {
+    let payload: Record<string, unknown>
+    try {
+      const parsed: unknown = definition.inputSchema.parse(
+        safeParseArguments(call.function.arguments),
+      )
+      // Tool cục bộ luôn nhận một object tham số. Ràng buộc ở đây để `payload_hash` và
+      // operation tracker nhận đúng kiểu chúng cần, thay vì ép kiểu ở bốn chỗ bên dưới.
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+          safeDetail: `${definition.name} expects an object payload`,
+        })
+      }
+      payload = parsed as Record<string, unknown>
+    } catch (error) {
+      const nexa = NexaError.wrap(error)
+      this.log.tool('tool-rejected', {
+        toolName: definition.name,
+        phase: 'failed',
+        requestId: input.requestId,
+        errorCode: nexa.code,
+      })
+      return {
+        resultForModel: `Lỗi: ${nexa.message}${nexa.safeDetail === undefined ? '' : ` (${nexa.safeDetail})`}`,
+        wasWrite: false,
+        fatal: false,
+      }
+    }
+
+    const isWrite = this.deps.guard.requiresApproval(definition.riskLevel)
+    if (isWrite && writesAlreadyThisTurn >= 1) {
+      return {
+        resultForModel:
+          'Lỗi: mỗi lượt trả lời chỉ được thực hiện một thao tác thay đổi dữ liệu. Hãy đề xuất từng thao tác một để người dùng xác nhận riêng.',
+        wasWrite: false,
+        fatal: false,
+      }
+    }
+
+    const target = this.localTarget(definition, payload)
+    return isWrite ? this.executeWrite(target, input) : this.executeRead(target, input)
+  }
+
+  /**
+   * Cái mà đường write cần biết về một tool — tên, mức rủi ro, payload đã validate, cách dựng
+   * preview và cách thực thi. Guard và tracker không cần biết tool đó là MCP hay cục bộ.
+   */
+  private mcpTarget(
+    mcp: AtlassianMcpManager,
+    definition: ToolDefinition,
+    payload: Record<string, unknown>,
+  ): CallableTarget {
+    return {
+      name: definition.name,
+      riskLevel: definition.riskLevel,
+      payload,
+      buildPreview: () => this.buildPreview(definition, payload),
+      execute: async () => (await mcp.callTool(definition.name, payload)).summary,
+    }
+  }
+
+  private localTarget(
+    definition: LocalToolDefinition,
+    payload: Record<string, unknown>,
+  ): CallableTarget {
+    return {
+      name: definition.name,
+      riskLevel: definition.riskLevel,
+      payload,
+      buildPreview: async () => {
+        if (definition.buildPreview === undefined) {
+          // Fail closed, giống nhánh MCP: thiếu preview builder là lỗi lập trình, nhưng hậu quả
+          // của việc chạy tiếp là ghi dữ liệu mà người dùng chưa thấy gì.
+          throw new NexaError(ERROR_CODES.TOOL_NOT_ALLOWED, {
+            safeDetail: `${definition.name} has no preview builder`,
+          })
+        }
+        return definition.buildPreview(payload, { actingAccount: this.deps.actingAccount() })
+      },
+      execute: () => definition.execute(payload),
+    }
   }
 
   private async executeRead(
-    definition: ToolDefinition,
-    payload: Record<string, unknown>,
+    target: CallableTarget,
     input: RunTurnInput,
   ): Promise<{
     resultForModel: string
@@ -414,6 +586,7 @@ export class AgentRuntime {
     fatal: boolean
     terminalText?: string
   }> {
+    const definition = target
     const recordId = input.toolCalls.begin({
       toolName: definition.name,
       riskLevel: definition.riskLevel,
@@ -428,10 +601,7 @@ export class AgentRuntime {
     })
 
     try {
-      const outcome = await (this.deps.mcp as AtlassianMcpManager).callTool(
-        definition.name,
-        payload,
-      )
+      const outcome = { summary: await target.execute() }
       const resultForUser = formatToolResultForUser(outcome.summary)
       input.toolCalls.update(recordId, {
         operationStatus: 'success',
@@ -482,8 +652,7 @@ export class AgentRuntime {
 
   /** §7.4 — toàn bộ luồng tool thay đổi dữ liệu, tám bước. */
   private async executeWrite(
-    definition: ToolDefinition,
-    payload: Record<string, unknown>,
+    target: CallableTarget,
     input: RunTurnInput,
   ): Promise<{
     resultForModel: string
@@ -492,12 +661,13 @@ export class AgentRuntime {
     terminalText?: string
     uncertainOperationId?: string
   }> {
-    const mcp = this.deps.mcp as AtlassianMcpManager
+    const definition = target
+    const payload = target.payload
 
     // Bước 2: dựng bản xem trước.
     let preview: ToolPreview
     try {
-      preview = await this.buildPreview(definition, payload)
+      preview = await target.buildPreview()
     } catch (error) {
       const nexa = NexaError.wrap(error)
       return {
@@ -589,7 +759,7 @@ export class AgentRuntime {
 
     // Bước 7: thực thi.
     try {
-      const outcome = await mcp.callTool(definition.name, payload)
+      const outcome = { summary: await target.execute() }
       this.deps.tracker.succeed(request.operationId, {
         ...(outcome.summary.targetKey !== undefined ? { key: outcome.summary.targetKey } : {}),
         ...(outcome.summary.targetUrl !== undefined ? { url: outcome.summary.targetUrl } : {}),
@@ -710,12 +880,35 @@ export class AgentRuntime {
    */
   private buildToolSpecs(preset: ToolPreset, includeExpandTool: boolean): ChatToolSpec[] {
     const mcp = this.deps.mcp
-    if (mcp === null || !mcp.isReady) return []
+    const mcpReady = mcp !== null && mcp.isReady
 
     const allowedFlags = new Set<string>(TOOL_PRESET_FLAGS[preset])
-    const specs: ChatToolSpec[] = mcp
-      .availableTools()
-      .filter((definition) => allowedFlags.has(definition.requiredFeature))
+    const specs: ChatToolSpec[] = !mcpReady
+      ? []
+      : mcp
+          .availableTools()
+          .filter((definition) => allowedFlags.has(definition.requiredFeature))
+          .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+          .map((definition) => ({
+            type: 'function' as const,
+            function: {
+              name: definition.name,
+              description: definition.description,
+              parameters: definition.jsonSchema,
+            },
+          }))
+
+    // Không có tool nào thì không có gì để mở rộng — thêm tool meta chỉ gây nhiễu.
+    if (includeExpandTool && specs.length > 0) specs.push(EXPAND_TOOLS_SPEC)
+
+    // Tool cục bộ đứng NGOÀI preset: preset phân hoạch 98 tool Atlassian theo feature flag, còn
+    // tool cục bộ không thuộc cờ nào. Thu hẹp chúng theo preset sẽ khiến model không đề xuất
+    // được cam kết chỉ vì câu hỏi trông giống việc Jira. Chúng cũng không phụ thuộc MCP, nên vẫn
+    // có mặt khi chưa cấu hình Atlassian.
+    //
+    // Sort riêng rồi nối vào cuối, giữ khối `tools` ổn định từng byte cho prompt cache.
+    const localSpecs = (this.deps.localTools?.list() ?? [])
+      .slice()
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .map((definition) => ({
         type: 'function' as const,
@@ -726,9 +919,7 @@ export class AgentRuntime {
         },
       }))
 
-    // Không có tool nào thì không có gì để mở rộng — thêm tool meta chỉ gây nhiễu.
-    if (includeExpandTool && specs.length > 0) specs.push(EXPAND_TOOLS_SPEC)
-    return specs
+    return [...specs, ...localSpecs]
   }
 
   /**
@@ -751,6 +942,21 @@ export class AgentRuntime {
 
     return `Danh mục đầy đủ gồm ${String(lines.length)} công cụ khả dụng. Từ vòng này bạn gọi được mọi công cụ trong danh sách:\n${lines.join('\n')}`
   }
+}
+
+/**
+ * Tri thức nghiệp vụ KHÔNG rời khỏi tổ chức — không có ngoại lệ per-item.
+ *
+ * Khác memory ở đúng chỗ này: memory có `sharing_policy` để người dùng tự quyết, vì đó là
+ * preference cá nhân. Tri thức nghiệp vụ là tài sản tổ chức, nên câu trả lời cho provider ngoài
+ * luôn là mảng rỗng (D6). Đây là lớp lọc thứ hai; repository đã không trả dữ liệu cho lượt như
+ * vậy ngay từ đầu.
+ */
+export function selectBaKnowledgeForProvider(
+  items: readonly BaKnowledgeContextItem[],
+  provider: LlmProvider,
+): readonly BaKnowledgeContextItem[] {
+  return isExternalProvider(provider) ? [] : items
 }
 
 export function selectMemoryForProvider(

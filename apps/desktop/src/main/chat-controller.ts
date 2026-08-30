@@ -14,9 +14,17 @@ import {
 } from '@nexa/shared-types'
 import { newRequestId, type Logger } from '@nexa/observability'
 import { AUDIT_EVENTS } from '@nexa/local-store'
-import { AgentRuntime, type ApprovalDecision, type ToolCallSink } from '@nexa/agent-runtime'
+import {
+  AgentRuntime,
+  MAX_BA_KNOWLEDGE_IN_CONTEXT,
+  MAX_COMMITMENTS_IN_CONTEXT,
+  type ApprovalDecision,
+  type ToolCallSink,
+} from '@nexa/agent-runtime'
 import type { ProcessedDocument } from '@nexa/document-processor'
 import type { NexaServices } from './services.js'
+import { createCommitmentToolRegistry } from './commitment-tools.js'
+import { composeLocalToolRegistries, createBaToolRegistry } from './ba-tools.js'
 
 interface InFlight {
   readonly controller: AbortController
@@ -84,16 +92,43 @@ export class ChatController {
 
       // Người dùng đổi model ở dropdown thì `input` mang cả model id và provider; nếu không,
       // dùng model đang gán cho hội thoại.
-      const model = this.services.models.resolveForConversation(
-        input.modelId ?? conversation.modelId,
-        input.modelProvider ?? conversation.modelProvider,
-      )
+      const selectedProvider = input.modelProvider ?? conversation.modelProvider
+      const selectedModelId = input.modelId ?? conversation.modelId
+      const model =
+        selectedProvider === 'chatgpt'
+          ? await this.resolveChatGptModel(selectedModelId)
+          : this.services.models.resolveForConversation(selectedModelId, selectedProvider)
       if (conversation.modelId !== model.modelId || conversation.modelProvider !== model.provider) {
         this.services.conversations.setModel(conversation.id, {
           modelId: model.modelId,
           provider: model.provider,
         })
       }
+
+      if (model.provider === 'chatgpt' && input.fileTokens.length > 0) {
+        this.services.files.releaseAll(input.fileTokens)
+        throw new NexaError(ERROR_CODES.EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS, {
+          requestId,
+          safeDetail: 'managed ChatGPT text chat does not accept attachments',
+        })
+      }
+
+      const chatGptHistory =
+        model.provider === 'chatgpt'
+          ? this.services.conversations
+              .listMessages(conversation.id, 200)
+              .filter(
+                (message) =>
+                  (message.role === 'user' || message.role === 'assistant') &&
+                  message.status === 'complete' &&
+                  message.deletedAt === undefined &&
+                  message.content !== '',
+              )
+              .map((message) => ({
+                role: message.role as 'user' | 'assistant',
+                content: message.content,
+              }))
+          : []
 
       // §7.2 bước 1–3: đọc và trích xuất file TRƯỚC khi ghi message, để nếu file hỏng thì
       // hội thoại không bị dính một tin nhắn cụt.
@@ -141,17 +176,30 @@ export class ChatController {
       const controller = new AbortController()
       this.inFlight.set(requestId, { controller, conversationId: conversation.id })
 
-      void this.runTurn({
-        requestId,
-        conversationId: conversation.id,
-        assistantMessageId: assistantMessage.id,
-        modelId: model.modelId,
-        modelProvider: model.provider,
-        contextWindowTokens: model.contextWindowTokens,
-        documents,
-        controller,
-        fileTokens: input.fileTokens,
-      })
+      if (model.provider === 'chatgpt') {
+        void this.runChatGptTurn({
+          requestId,
+          conversationId: conversation.id,
+          assistantMessageId: assistantMessage.id,
+          modelId: model.modelId,
+          reasoningEffort: input.reasoningEffort ?? model.defaultReasoningEffort ?? undefined,
+          prompt: input.content,
+          history: chatGptHistory,
+          controller,
+        })
+      } else {
+        void this.runTurn({
+          requestId,
+          conversationId: conversation.id,
+          assistantMessageId: assistantMessage.id,
+          modelId: model.modelId,
+          modelProvider: model.provider,
+          contextWindowTokens: model.contextWindowTokens,
+          documents,
+          controller,
+          fileTokens: input.fileTokens,
+        })
+      }
       backgroundStarted = true
 
       return { requestId, messageId: assistantMessage.id }
@@ -240,6 +288,25 @@ export class ChatController {
 
   // ── Nội bộ ──────────────────────────────────────────────────────────────
 
+  private async resolveChatGptModel(modelId: string | null): Promise<{
+    readonly provider: 'chatgpt'
+    readonly modelId: string
+    readonly defaultReasoningEffort: string | null
+  }> {
+    if (!this.services.policy.allowDirectOpenAi) {
+      throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+        safeDetail: 'managed ChatGPT chat is disabled by organisation policy',
+      })
+    }
+    if (modelId === null) throw new NexaError(ERROR_CODES.CHATGPT_MODEL_UNAVAILABLE)
+    const model = await this.services.chatgpt.resolveModel(modelId)
+    return {
+      provider: 'chatgpt',
+      modelId: model.modelId,
+      defaultReasoningEffort: model.defaultReasoningEffort,
+    }
+  }
+
   private async extractDocuments(
     fileTokens: readonly string[],
     requestId: string,
@@ -258,6 +325,99 @@ export class ChatController {
     } finally {
       // §14.1: giải phóng handle ngay sau khi xử lý, dù thành công hay không.
       this.services.files.releaseAll(fileTokens)
+    }
+  }
+
+  private async runChatGptTurn(params: {
+    requestId: string
+    conversationId: string
+    assistantMessageId: string
+    modelId: string
+    reasoningEffort?: string
+    prompt: string
+    history: readonly { role: 'user' | 'assistant'; content: string }[]
+    controller: AbortController
+  }): Promise<void> {
+    const { requestId, conversationId, assistantMessageId } = params
+    let text = ''
+    try {
+      await this.services.chatgpt.runTurn({
+        modelId: params.modelId,
+        ...(params.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: params.reasoningEffort }),
+        prompt: params.prompt,
+        history: params.history,
+        signal: params.controller.signal,
+        onDelta: (delta) => {
+          text += delta
+          this.emit<ChatDeltaEvent>(NEXA_EVENTS.chatDelta, {
+            requestId,
+            conversationId,
+            messageId: assistantMessageId,
+            delta,
+          })
+        },
+      })
+      if (text.trim() === '') {
+        throw new NexaError(ERROR_CODES.CHATGPT_TURN_FAILED, {
+          safeDetail: 'managed ChatGPT turn completed without an agent message',
+        })
+      }
+
+      this.services.conversations.finalizeMessage(assistantMessageId, text, 'complete')
+      this.services.audit.record({
+        profileId: this.services.profileId,
+        eventType: AUDIT_EVENTS.chatCompleted,
+        status: 'ok',
+        requestId,
+      })
+      this.emit<ChatDoneEvent>(NEXA_EVENTS.chatDone, {
+        requestId,
+        conversationId,
+        messageId: assistantMessageId,
+        truncatedContextCount: 0,
+      })
+    } catch (error) {
+      const nexa = NexaError.wrap(error, ERROR_CODES.CHATGPT_TURN_FAILED)
+      const cancelled = nexa.code === ERROR_CODES.LLM_CANCELLED
+      const persistedText =
+        text.trim() !== ''
+          ? text
+          : cancelled
+            ? 'Đã dừng theo yêu cầu.'
+            : `Mình chưa thể hoàn tất yêu cầu này. ${nexa.message}${
+                nexa.hint === undefined ? '' : ` ${nexa.hint}`
+              }`
+
+      this.services.conversations.finalizeMessage(
+        assistantMessageId,
+        persistedText,
+        cancelled ? 'cancelled' : 'error',
+        { errorCode: nexa.code },
+      )
+      this.services.audit.record({
+        profileId: this.services.profileId,
+        eventType: AUDIT_EVENTS.chatCompleted,
+        status: cancelled ? 'cancelled' : 'error',
+        requestId,
+        errorCode: nexa.code,
+      })
+      this.log.warn('chatgpt-turn-failed', { requestId, errorCode: nexa.code })
+      this.emit<ChatErrorEvent>(NEXA_EVENTS.chatError, {
+        request_id: requestId,
+        conversationId,
+        messageId: assistantMessageId,
+        error: {
+          code: nexa.code,
+          message: nexa.message,
+          retryable: nexa.retryable,
+          ...(nexa.hint === undefined ? {} : { hint: nexa.hint }),
+        },
+      })
+    } finally {
+      this.inFlight.delete(requestId)
+      this.activeConversationId = null
     }
   }
 
@@ -366,6 +526,46 @@ export class ChatController {
         jiraBaseUrl: () => this.services.connections.get('jira')?.baseUrl ?? '',
         confluenceBaseUrl: () => this.services.connections.get('confluence')?.baseUrl ?? '',
         requestConfirmation: (request) => this.askUser(request, requestId),
+        // Dựng theo từng lượt để hội thoại nguồn được gắn cứng vào cam kết agent đề xuất.
+        // Setting tắt ⇒ null ⇒ tool không xuất hiện trong khối `tools`, model không đề xuất được.
+        // Hai registry, hai cờ độc lập, ghép thành một danh sách đóng. Cờ nào tắt thì nhóm tool
+        // của nó không có trong khối `tools`, nên model không đề xuất được.
+        //
+        // Tập prefix `tools` khả dĩ vì thế vẫn hữu hạn và biết trước (ADR 0009): 6 preset nhân
+        // với các tổ hợp bật/tắt của hai cờ. Thêm tool BA vào tập CỐ ĐỊNH thì được; chọn tool BA
+        // theo ngữ cảnh câu hỏi thì không.
+        localTools: composeLocalToolRegistries([
+          this.services.settings.get().agentCommitmentToolsEnabled
+            ? createCommitmentToolRegistry({
+                profileId: this.services.profileId,
+                conversationId,
+                commitments: this.services.commitments,
+                activity: this.services.activity,
+                logger: this.services.logger,
+              })
+            : null,
+          this.services.settings.get().features.baWorkbench
+            ? createBaToolRegistry({
+                profileId: this.services.profileId,
+                knowledge: this.services.baKnowledge,
+                documents: this.services.baDocuments,
+                templates: this.services.baStandards.templates,
+                // Tool chat gọi ĐÚNG job mà màn hình Nghiệp vụ gọi. Không có đường trích xuất
+                // thứ hai với hành vi thứ hai (D4).
+                extract: async (documentId, sourceText) => {
+                  const result = await this.services.baExtraction.run(documentId, sourceText)
+                  return {
+                    itemCount: result.model.items.length,
+                    needsReviewCount: result.needsReviewCount,
+                    cached: result.cached,
+                  }
+                },
+                // Cùng nguyên tắc: một đường chạy bộ luật duy nhất, dùng chung với màn hình.
+                review: (documentId) => this.services.baReview.run(documentId),
+                logger: this.services.logger,
+              })
+            : null,
+        ]),
       })
 
       // Nạp lịch sử SAU khi user message đã ghi, để lượt hiện tại nằm trong context.
@@ -388,6 +588,47 @@ export class ChatController {
           sharingPolicy: fact.sharingPolicy,
         }))
 
+      // Cam kết được chọn ở main process, cùng lý do với memory: renderer không được tự gắn dữ
+      // liệu của profile khác. Provider ngoài áp cùng cổng chia sẻ như memory — nội dung cam kết
+      // là kế hoạch nội bộ, không mặc nhiên được rời máy.
+      const commitmentContext =
+        this.services.settings.get().commitmentContextEnabled &&
+        !isExternalProvider(params.modelProvider)
+          ? this.services.commitments
+              .listForContext(this.services.profileId, {
+                limit: MAX_COMMITMENTS_IN_CONTEXT,
+                nowIso: new Date().toISOString(),
+              })
+              .map((commitment) => ({
+                title: commitment.title,
+                nextAction: commitment.nextAction,
+                status: commitment.status === 'blocked' ? ('blocked' as const) : ('active' as const),
+                dueAt: commitment.dueAt,
+                checkInAt: commitment.checkInAt,
+              }))
+          : []
+
+      // Tri thức nghiệp vụ: chỉ nạp khi cờ BA bật VÀ provider nằm trong tổ chức. Không có
+      // ngoại lệ per-item như memory — xem `selectBaKnowledgeForProvider`.
+      const baKnowledgeItems =
+        this.services.settings.get().features.baWorkbench &&
+        !isExternalProvider(params.modelProvider)
+          ? this.services.baKnowledge.listForContext(
+              this.services.profileId,
+              MAX_BA_KNOWLEDGE_IN_CONTEXT,
+            )
+          : []
+      // Đếm lượt dùng ngay khi item được đưa vào context — đây là nguồn của thống kê "tri thức
+      // chết" trong màn hình Nghiệp vụ.
+      if (baKnowledgeItems.length > 0) {
+        this.services.baKnowledge.recordUsage(baKnowledgeItems.map((item) => item.id))
+      }
+      const baKnowledge = baKnowledgeItems.map((item) => ({
+        title: item.title,
+        body: item.body,
+        category: item.category,
+      }))
+
       const result = await runtime.runTurn({
         requestId,
         conversationId,
@@ -396,6 +637,8 @@ export class ChatController {
         contextWindowTokens: params.contextWindowTokens,
         history,
         ...(memoryFacts.length > 0 ? { memoryFacts } : {}),
+        ...(commitmentContext.length > 0 ? { commitments: commitmentContext } : {}),
+        ...(baKnowledge.length > 0 ? { baKnowledge } : {}),
         ...(params.documents.length > 0 ? { documents: params.documents } : {}),
         signal: params.controller.signal,
         toolCalls: sink,

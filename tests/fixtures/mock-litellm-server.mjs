@@ -10,7 +10,8 @@
  *
  * In ra stdout đúng một dòng `LISTENING <port>` để tiến trình cha đọc được cổng.
  *
- * Kịch bản qua env `MOCK_SCENARIO`: ok | no-models-endpoint | auth-failed | tool-call | slow | length
+ * Kịch bản qua env `MOCK_SCENARIO`: ok | no-models-endpoint | auth-failed | tool-call |
+ *                                   commitment-tool | slow | length
  */
 
 import { createServer } from 'node:http'
@@ -51,6 +52,38 @@ function textStream(text, finishReason = 'stop') {
     'data: [DONE]\n\n',
   ]
 }
+
+/**
+ * Kết quả trích xuất BA mẫu.
+ *
+ * Cố ý có một mã lỗi được nhắc trong luồng ngoại lệ (E404) mà KHÔNG khai báo — để E2E khẳng định
+ * trang mã lỗi bắt được thiếu sót, chứ không chỉ liệt kê được thứ đã có.
+ */
+const BA_EXTRACTION_JSON = JSON.stringify({
+  items: [
+    {
+      itemType: 'error_code',
+      id: 'e-1',
+      ordinal: 0,
+      code: 'E001',
+      message: 'Giỏ hàng trống',
+    },
+    {
+      itemType: 'use_case',
+      id: 'uc-1',
+      ordinal: 0,
+      name: 'Khách hàng đặt đơn',
+      actor: 'Khách hàng',
+      precondition: 'Đã đăng nhập',
+      mainFlow: ['Chọn sản phẩm', 'Xác nhận đơn'],
+      postcondition: 'Đơn được tạo',
+      role: 'customer',
+      dataEffects: ['create'],
+      exceptionFlows: [{ name: 'Hết hàng', steps: ['Báo lỗi hết hàng'], errorCode: 'E404' }],
+    },
+  ],
+  links: [],
+})
 
 const server = createServer((req, res) => {
   const chunks = []
@@ -104,6 +137,37 @@ const server = createServer((req, res) => {
       }
 
       if (body?.stream !== true) {
+        // Job trích xuất BA gọi non-stream và đòi JSON đúng schema `ba-kit`. Nhận ra nó bằng
+        // system prompt, vì đây là đường duy nhất trong app gửi request non-stream có prompt đó.
+        const systemPrompt = (body?.messages ?? []).find((m) => m.role === 'system')?.content ?? ''
+        if (systemPrompt.includes('bộ trích xuất tài liệu nghiệp vụ')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: BA_EXTRACTION_JSON } }] }))
+          return
+        }
+        // Bước gợi ý câu chữ của review. Output CỐ Ý kèm những khoá mà model không được phép
+        // dùng — E2E khẳng định chúng bị bỏ, chứ không chỉ khẳng định phần gợi ý chạy được.
+        if (systemPrompt.includes('diễn đạt lại MỘT chỗ trong tài liệu nghiệp vụ')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: 'stop',
+                  message: {
+                    content: JSON.stringify({
+                      goi_y: 'Use case này chỉ có một đường duyệt duy nhất theo quy trình hiện hành.',
+                      bo_qua: true,
+                      severity: 'info',
+                      findings: [],
+                    }),
+                  },
+                },
+              ],
+            }),
+          )
+          return
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(
           JSON.stringify({
@@ -129,6 +193,33 @@ const server = createServer((req, res) => {
                         name: 'jira_create_issue',
                         arguments:
                           '{"project_key":"PRJ","summary":"Task từ E2E","issue_type":"Task"}',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
+          'data: [DONE]\n\n',
+        ])
+        return
+      }
+
+      if (scenario === 'commitment-tool' && !alreadyRanTool) {
+        sse(res, [
+          `data: ${JSON.stringify({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_e2e_commitment',
+                      function: {
+                        name: 'nexa_tao_cam_ket',
+                        arguments:
+                          '{"title":"Gửi báo cáo quý cho sếp","next_action":"Xin số liệu kế toán","due_at":"thứ 6 tuần sau"}',
                       },
                     },
                   ],

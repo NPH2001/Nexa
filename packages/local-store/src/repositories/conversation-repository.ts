@@ -5,7 +5,7 @@ import type {
   Conversation,
   Message,
   MessageRole,
-  LlmProvider,
+  ChatModelProvider,
   MessageStatus,
   OperationStatus,
   RiskLevel,
@@ -80,7 +80,7 @@ export class ConversationRepository {
   create(
     profileId: string,
     title: string,
-    model: { modelId: string; provider: LlmProvider } | null,
+    model: { modelId: string; provider: ChatModelProvider } | null,
   ): Conversation {
     const now = this.store.nowIso()
     const id = randomUUID()
@@ -144,7 +144,7 @@ export class ConversationRepository {
       .run(this.store.cipher.encrypt(CTX.title, title), this.store.nowIso(), id)
   }
 
-  setModel(id: string, model: { modelId: string; provider: LlmProvider } | null): void {
+  setModel(id: string, model: { modelId: string; provider: ChatModelProvider } | null): void {
     this.store.handle
       .prepare(
         'UPDATE conversations SET model_id = ?, model_provider = ?, updated_at = ? WHERE id = ?',
@@ -261,9 +261,7 @@ export class ConversationRepository {
 
   listMessages(conversationId: string, limit: number): Message[] {
     const rows = this.store.handle
-      .prepare(
-        `SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT ?`)
       .all(conversationId, limit)
       .reverse()
 
@@ -405,7 +403,10 @@ export class ConversationRepository {
     if (patch.approvalStatus !== undefined) push('approval_status', patch.approvalStatus)
     if (patch.operationStatus !== undefined) push('operation_status', patch.operationStatus)
     if (patch.resultSummary !== undefined) {
-      push('result_summary_ciphertext', this.store.cipher.encrypt(CTX.resultSummary, patch.resultSummary))
+      push(
+        'result_summary_ciphertext',
+        this.store.cipher.encrypt(CTX.resultSummary, patch.resultSummary),
+      )
     }
     if (patch.targetKey !== undefined) push('target_key', patch.targetKey)
     if (patch.targetUrl !== undefined) push('target_url', patch.targetUrl)
@@ -414,7 +415,9 @@ export class ConversationRepository {
 
     push('updated_at', this.store.nowIso())
     params.push(id)
-    this.store.handle.prepare(`UPDATE tool_calls SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    this.store.handle
+      .prepare(`UPDATE tool_calls SET ${sets.join(', ')} WHERE id = ?`)
+      .run(...params)
   }
 
   findByOperationId(operationId: string): ToolCallRecord | null {
@@ -471,7 +474,7 @@ export class ConversationRepository {
       modelProvider:
         row['model_provider'] === null || row['model_provider'] === undefined
           ? null
-          : (String(row['model_provider']) as LlmProvider),
+          : (String(row['model_provider']) as ChatModelProvider),
       createdAt: String(row['created_at']),
       updatedAt: String(row['updated_at']),
       archivedAt: row['archived_at'] === null ? null : String(row['archived_at']),

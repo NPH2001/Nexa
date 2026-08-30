@@ -35,6 +35,7 @@
       "@nexa/connection-config": ["packages/connection-config/src/index.ts"],
       "@nexa/document-processor": ["packages/document-processor/src/index.ts"],
       "@nexa/agent-runtime": ["packages/agent-runtime/src/index.ts"],
+      "@nexa/ba-kit": ["packages/ba-kit/src/index.ts"],
       "@nexa/observability": ["packages/observability/src/index.ts"],
       "@nexa/ui-components": ["packages/ui-components/src/index.ts"]
     }

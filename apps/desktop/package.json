@@ -13,6 +13,7 @@
   "dependencies": {
     "@nexa/agent-runtime": "workspace:*",
     "@nexa/atlassian-mcp-manager": "workspace:*",
+    "@nexa/ba-kit": "workspace:*",
     "@nexa/connection-config": "workspace:*",
     "@nexa/document-processor": "workspace:*",
     "@nexa/llm-client": "workspace:*",

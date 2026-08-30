@@ -8,7 +8,7 @@ import {
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { electronEnvironment } from '../support/electron-env.js'
 
@@ -62,7 +62,7 @@ function startMockLiteLlm(
 }
 
 async function launch(
-  opts: { litellmScenario?: string; mcpScenario?: string } = {},
+  opts: { litellmScenario?: string; mcpScenario?: string; codexScenario?: string } = {},
 ): Promise<Harness> {
   const { proc, port } = await startMockLiteLlm(opts.litellmScenario ?? 'ok')
   const userDataDir = mkdtempSync(join(tmpdir(), 'nexa-e2e-'))
@@ -74,6 +74,11 @@ async function launch(
       NEXA_MCP_COMMAND: process.execPath,
       NEXA_MCP_ARGS: join(ROOT, 'tests/fixtures/mock-mcp-server.mjs'),
       MOCK_SCENARIO: opts.mcpScenario ?? 'ok',
+      // Không dùng phiên Codex thật của máy chạy test. Mock CLI vẫn đi qua đúng stdio JSON-RPC.
+      PATH: `${join(ROOT, 'tests/fixtures/mock-codex-bin')}${delimiter}${process.env['PATH'] ?? ''}`,
+      NEXA_E2E_NODE: process.execPath,
+      NEXA_E2E_CODEX_FIXTURE: join(ROOT, 'tests/fixtures/mock-codex-app-server.mjs'),
+      MOCK_CODEX_SCENARIO: opts.codexScenario ?? 'unauthenticated',
     }),
   })
 
@@ -127,6 +132,77 @@ async function configureLiteLlm(h: Harness, apiKey = 'sk-e2e-0123456789abcdef'):
 }
 
 test.describe('E2E — cấu hình và chat', () => {
+  test('hiển thị model Plus ngoài màn hình Chat, chọn được và nhận streaming', async () => {
+    const h = await launch({ codexScenario: 'authenticated' })
+    try {
+      await expect(
+        h.page.getByRole('heading', { name: 'Mình tiếp tục việc gì hôm nay?' }),
+      ).toBeVisible()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+
+      const selector = h.page.getByLabel('Chọn model')
+      await expect(selector).toBeVisible()
+      await expect(selector.locator('optgroup[label="ChatGPT Plus / Codex"]')).toHaveCount(1)
+      await expect(selector.locator('option')).toContainText([
+        'GPT-5.6 Sol · Plus',
+        'GPT-5.6 Terra · Plus',
+      ])
+      await selector.selectOption('chatgpt:gpt-5.6-terra')
+      await expect(selector).toHaveValue('chatgpt:gpt-5.6-terra')
+      await expect(h.page.getByLabel('Đính kèm tài liệu')).toBeDisabled()
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({ path: join(captureDir, 'chat-plus-default.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({ path: join(captureDir, 'chat-plus-narrow.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Xin chào từ Nexa')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+
+      await expect(
+        h.page.getByText('Xin chào, đây là câu trả lời từ mock ChatGPT Plus.'),
+      ).toBeVisible({ timeout: 20_000 })
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('ô chat giữ nguyên tiếng Việt và không gửi khi IME còn ghép dấu', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+
+      const composer = h.page.getByLabel('Nội dung câu hỏi')
+      const vietnameseText = 'Tôi đang nhập tiếng Việt có đầy đủ dấu.'
+      await expect(composer).toHaveAttribute('lang', 'vi')
+      await expect(composer).toHaveAttribute('spellcheck', 'true')
+      await composer.fill(vietnameseText)
+
+      await composer.dispatchEvent('compositionstart', { data: 'ấ' })
+      await composer.press('Control+Enter')
+      await expect(composer).toHaveValue(vietnameseText)
+      await expect(h.page.locator('.message-user')).toHaveCount(0)
+
+      await composer.dispatchEvent('compositionend', { data: 'ấ' })
+      await composer.press('Control+Enter')
+      await expect(h.page.locator('.message-user').getByText(vietnameseText)).toBeVisible()
+      await expect(h.page.getByText(/câu trả lời từ mock LiteLLM/)).toBeVisible({
+        timeout: 20_000,
+      })
+    } finally {
+      await h.close()
+    }
+  })
+
   test('điều hướng tab cài đặt bằng bàn phím', async () => {
     const h = await launch()
     try {
@@ -143,6 +219,11 @@ test.describe('E2E — cấu hình và chat', () => {
         'aria-labelledby',
         'settings-tab-openai',
       )
+      await expect(h.page.getByRole('heading', { name: 'Đăng nhập bằng ChatGPT' })).toBeVisible()
+      await expect(h.page.getByRole('heading', { name: 'Model Codex khả dụng' })).toBeVisible()
+      await expect(
+        h.page.getByRole('heading', { name: 'Kết nối bằng OpenAI API key' }),
+      ).toBeVisible()
     } finally {
       await h.close()
     }
@@ -651,6 +732,58 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
   })
 })
 
+test.describe('E2E — cam kết từ hội thoại', () => {
+  test('Nexa đề xuất cam kết, người dùng xác nhận rồi thấy nó trong Mục tiêu và Hoạt động', async () => {
+    const h = await launch({ litellmScenario: 'commitment-tool' })
+    try {
+      await configureLiteLlm(h)
+
+      // Quyền ghi mới ⇒ mặc định tắt. Không bật thì model không có tool để gọi.
+      await h.page.getByRole('tab', { name: 'Dữ liệu & quyền riêng tư' }).click()
+      const commitmentToolToggle = h.page.getByRole('checkbox', {
+        name: /Cho Nexa đề xuất tạo và cập nhật cam kết/,
+      })
+      // Checkbox là controlled và chỉ lật sau khi main lưu xong setting, nên dùng click + assert
+      // có retry thay vì `check()` (check() kiểm tra state ngay sau cú click, chưa kịp round-trip).
+      await commitmentToolToggle.click()
+      await expect(commitmentToolToggle).toBeChecked()
+
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page
+        .getByPlaceholder(/Nhập câu hỏi/)
+        .fill('Thứ 6 tuần sau tôi phải gửi báo cáo quý cho sếp')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+
+      const dialog = h.page.getByRole('dialog')
+      await expect(dialog).toBeVisible({ timeout: 25_000 })
+      // Đích phải nói rõ là dữ liệu cục bộ, không mượn nhãn Jira.
+      await expect(dialog.getByText('Dữ liệu trên máy bạn')).toBeVisible()
+      await expect(dialog.getByText('Gửi báo cáo quý cho sếp')).toBeVisible()
+      // Mốc tương đối đã được phân giải thành ngày giờ tuyệt đối để người dùng bắt lỗi.
+      await expect(dialog.locator('dl')).toContainText(/\d{4}/)
+      await expect(dialog.locator('dl')).not.toContainText('thứ 6 tuần sau')
+
+      await dialog.getByRole('button', { name: 'Xác nhận' }).click()
+      await expect(dialog).toBeHidden({ timeout: 15_000 })
+
+      await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
+      const activeList = h.page.getByRole('list', { name: 'Đang theo dõi' })
+      await expect(
+        activeList.getByRole('heading', { name: 'Gửi báo cáo quý cho sếp' }),
+      ).toBeVisible()
+      await expect(activeList.getByText('Nexa đề xuất')).toBeVisible()
+
+      await h.page.getByRole('button', { name: 'Hoạt động' }).click()
+      await h.page.getByLabel('Nguồn').selectOption('agent')
+      const timeline = h.page.getByRole('list', { name: 'Timeline hoạt động' })
+      await expect(timeline.getByText('Nexa đề xuất').first()).toBeVisible()
+    } finally {
+      await h.close()
+    }
+  })
+})
+
 test.describe('E2E — thu hẹp danh mục tool theo ngữ cảnh (ADR 0009)', () => {
   test('câu hỏi Confluence chỉ gửi tool Confluence, kèm đường mở rộng', async () => {
     const h = await launch()
@@ -756,7 +889,7 @@ test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
    */
   async function configureOpenAi(h: Harness): Promise<void> {
     await h.page.getByRole('tab', { name: 'OpenAI' }).click()
-    await expect(h.page.getByRole('heading', { name: 'Kết nối OpenAI (ChatGPT)' })).toBeVisible()
+    await expect(h.page.getByRole('heading', { name: 'Kết nối bằng OpenAI API key' })).toBeVisible()
 
     // Endpoint được điền sẵn https://api.openai.com — thay bằng mock để không gọi ra Internet.
     await h.page
@@ -834,6 +967,196 @@ test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
 
       // Chính sách chặn TÀI LIỆU, không kiểm duyệt chat — người dùng vẫn tự gõ được gì họ muốn.
       await expect(h.page.getByText(/câu trả lời từ mock/)).toBeVisible({ timeout: 20_000 })
+    } finally {
+      await h.close()
+    }
+  })
+})
+
+test.describe('E2E — không gian Nghiệp vụ (BA)', () => {
+  /**
+   * Cờ `baWorkbench` mặc định TẮT — bật qua đúng ô người dùng bấm, không đi đường tắt IPC.
+   *
+   * Dùng `click()` rồi assert chứ không dùng `check()`: ô này là controlled checkbox, trạng thái
+   * chỉ đổi sau khi IPC lưu xong và App nhận lại settings mới. `check()` khẳng định trạng thái
+   * ngay sau cú click nên nó thua cuộc đua đó.
+   */
+  async function enableBaWorkbench(h: Harness): Promise<void> {
+    await h.page.getByRole('tab', { name: 'Dữ liệu & quyền riêng tư' }).click()
+    const toggle = h.page.getByLabel('Bật không gian Nghiệp vụ')
+    await toggle.click()
+    await expect(toggle).toBeChecked()
+    await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+  }
+
+  test('đích Nghiệp vụ chỉ hiện khi cờ được bật', async () => {
+    const h = await launch()
+    try {
+      await expect(h.page.getByRole('button', { name: 'Nghiệp vụ' })).toHaveCount(0)
+
+      // App chưa có kết nối LiteLLM nên nó đã tự mở thẳng Cài đặt.
+      await enableBaWorkbench(h)
+
+      await expect(h.page.getByRole('button', { name: 'Nghiệp vụ' })).toBeVisible()
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('IPC ba:* bị từ chối khi cờ tắt, kể cả khi renderer gọi thẳng', async () => {
+    const h = await launch()
+    try {
+      const result = await h.page.evaluate(async () => {
+        const api = (
+          window as unknown as { nexa: { invoke: (c: string, p?: unknown) => Promise<unknown> } }
+        ).nexa
+        return api.invoke('ba:knowledge:list', {})
+      })
+      // Ẩn nút trong sidebar chỉ là chuyện dễ hiểu; hàng rào thật nằm ở main process.
+      expect(JSON.stringify(result)).toContain('VALIDATION_FAILED')
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('nhập tài liệu rồi trích xuất ra trang mã lỗi, kèm mã còn thiếu khai báo', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await enableBaWorkbench(h)
+
+      await h.page.getByRole('button', { name: 'Nghiệp vụ' }).click()
+      await h.page.getByRole('tab', { name: 'Tài liệu' }).click()
+
+      await h.page.getByLabel('Tên tài liệu').fill('US-01 Đặt đơn')
+      await h.page.getByRole('button', { name: 'Tạo tài liệu' }).click()
+
+      await h.page
+        .getByLabel('Nội dung tài liệu nguồn')
+        .fill('# 1. Luồng đặt đơn\nKhách hàng chọn sản phẩm rồi xác nhận đơn.')
+      await h.page.getByRole('button', { name: 'Trích xuất' }).click()
+
+      await expect(h.page.getByRole('heading', { name: 'Trang mã lỗi' })).toBeVisible({
+        timeout: 20_000,
+      })
+      // Khoanh vào chính trang mã lỗi: mã E001 còn xuất hiện ở danh sách item phía trên.
+      const errorPage = h.page.getByLabel('Trang mã lỗi')
+      await expect(errorPage.getByText('E001')).toBeVisible()
+      await expect(errorPage).toContainText('Giỏ hàng trống')
+      // Mã được nhắc trong luồng ngoại lệ nhưng chưa khai báo — thứ một bản tổng hợp bằng văn
+      // xuôi sẽ im lặng bỏ qua.
+      await expect(errorPage.getByRole('heading', { name: /chưa khai báo/ })).toBeVisible()
+      await expect(errorPage.getByText('E404')).toBeVisible()
+
+      // G2: chọn mẫu chuẩn do IT phân phối, rồi kiểm bản Markdown sinh từ chính mô hình đó.
+      await h.page.getByLabel('Mẫu tài liệu').selectOption('us-standard')
+      await expect(h.page.getByRole('heading', { name: 'Bản theo mẫu' })).toBeVisible()
+      const rendered = h.page.getByLabel('Bản tài liệu theo mẫu')
+      await expect(rendered).toContainText('Khách hàng đặt đơn')
+      // Mẫu us-standard có mục Tác nhân bắt buộc mà tài liệu chưa có ⇒ phải báo, không giấu.
+      await expect(h.page.getByText(/mục bắt buộc còn trống/)).toBeVisible()
+    } finally {
+      await h.close()
+    }
+  })
+
+  /**
+   * G3: chạy bộ luật, đọc báo cáo, áp dụng đúng một gợi ý.
+   *
+   * Ba điều test này khoanh vào, và cả ba đều là quyết định gốc chứ không phải chi tiết giao diện:
+   * báo cáo nói rõ đã kiểm bộ luật nào và bao nhiêu luật; nó KHÔNG bao giờ nói tài liệu "đầy đủ";
+   * và áp dụng là một thao tác của người dùng lên đúng một mục, xong thì phát hiện đó biến mất ở
+   * lần chạy sau — chứ không phải hệ thống tự sửa rồi báo đã xong.
+   */
+  test('chạy bộ luật, báo cáo nói rõ đã kiểm gì, rồi áp dụng đúng một gợi ý', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await enableBaWorkbench(h)
+
+      await h.page.getByRole('button', { name: 'Nghiệp vụ' }).click()
+      await h.page.getByRole('tab', { name: 'Tài liệu' }).click()
+      await h.page.getByLabel('Tên tài liệu').fill('US-02 Kiểm tra')
+      await h.page.getByRole('button', { name: 'Tạo tài liệu' }).click()
+      await h.page
+        .getByLabel('Nội dung tài liệu nguồn')
+        .fill('# 1. Luồng đặt đơn\nKhách hàng chọn sản phẩm rồi xác nhận đơn.')
+      await h.page.getByRole('button', { name: 'Trích xuất' }).click()
+      await expect(h.page.getByRole('heading', { name: 'Trang mã lỗi' })).toBeVisible({
+        timeout: 20_000,
+      })
+
+      const review = h.page.getByLabel('Kiểm tra tài liệu')
+      await review.getByRole('button', { name: 'Chạy kiểm tra' }).click()
+
+      // Báo cáo phải nói đã kiểm BỘ LUẬT NÀO và bao nhiêu luật — con số "đạt" cần có đơn vị.
+      await expect(review).toContainText('nexa-ba', { timeout: 20_000 })
+      await expect(review).toContainText(/Đã kiểm \d+\/15 luật/)
+      // Và không bao giờ tuyên bố tài liệu đầy đủ (ADR 0010).
+      await expect(review).not.toContainText('đầy đủ')
+      await expect(review).toContainText('không biết một yêu cầu nghiệp vụ chưa ai nghĩ tới')
+
+      // Mã lỗi được nhắc trong luồng ngoại lệ nhưng chưa khai báo là một phát hiện phải sửa.
+      await expect(review.locator('.ba-card').filter({ hasText: 'R-ERR-01' }).first()).toBeVisible()
+
+      // Áp dụng cho MỘT phát hiện: use case chưa có luồng thay thế và chưa nói vì sao.
+      const card = review.locator('.ba-card').filter({ hasText: 'R-UC-02' })
+      await expect(card).toBeVisible()
+      await card.getByRole('button', { name: 'Gợi ý câu chữ' }).click()
+      // Model chỉ đóng góp câu chữ; các khoá đòi bỏ finding trong output của nó bị bỏ qua.
+      await expect(card.getByLabel('Câu chữ thay thế cho R-UC-02')).toHaveValue(
+        /chỉ có một đường duyệt/,
+        { timeout: 20_000 },
+      )
+      await expect(card).toContainText('R-UC-02')
+
+      await card.getByLabel('Ô cần sửa cho R-UC-02').selectOption('noAlternateReason')
+      await card.getByRole('button', { name: 'Áp dụng cho mục này' }).click()
+
+      // Chạy lại là một cú bấm có ý thức — báo cáo KHÔNG tự làm mới sau khi sửa.
+      await expect(card).toBeVisible()
+      await review.getByRole('button', { name: 'Chạy lại kiểm tra' }).click()
+      await expect(review.locator('.ba-card').filter({ hasText: 'R-UC-02' })).toHaveCount(0, {
+        timeout: 20_000,
+      })
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('bộ mẫu chuẩn chỉ để xem — không có đường tạo hay sửa mẫu', async () => {
+    const h = await launch()
+    try {
+      await enableBaWorkbench(h)
+      await h.page.getByRole('button', { name: 'Nghiệp vụ' }).click()
+      await h.page.getByRole('tab', { name: 'Mẫu' }).click()
+
+      await expect(h.page.getByText('User Story chuẩn')).toBeVisible()
+      await expect(h.page.getByText(/liên hệ IT/)).toBeVisible()
+      // Quyền định nghĩa chuẩn thuộc về tổ chức, không thuộc từng máy (D12).
+      await expect(h.page.getByRole('button', { name: /Tạo mẫu|Sửa mẫu|Xoá mẫu/ })).toHaveCount(0)
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('tri thức mới luôn ở trạng thái chờ xác nhận cho tới khi người dùng chốt', async () => {
+    const h = await launch()
+    try {
+      // App chưa có kết nối LiteLLM nên nó đã tự mở thẳng Cài đặt.
+      await enableBaWorkbench(h)
+      await h.page.getByRole('button', { name: 'Nghiệp vụ' }).click()
+
+      await h.page.getByLabel('Tiêu đề tri thức').fill('Ngưỡng miễn phí giao hàng')
+      await h.page.getByLabel('Nội dung tri thức').fill('Đơn trên 500k miễn phí nội thành')
+      await h.page.getByRole('button', { name: 'Thêm' }).click()
+
+      // Khoanh vào đúng thẻ của mục vừa tạo: chữ "Chờ xác nhận" còn xuất hiện ở thống kê, ở
+      // dropdown lọc và ở toast, nên tìm theo text trên cả trang là locator quá rộng.
+      const card = h.page.locator('.ba-list .ba-card').filter({ hasText: 'Ngưỡng miễn phí giao hàng' })
+      await expect(card).toContainText('Chờ xác nhận')
+      await card.getByRole('button', { name: 'Xác nhận' }).click()
+      await expect(card).toContainText('Đã xác nhận')
     } finally {
       await h.close()
     }

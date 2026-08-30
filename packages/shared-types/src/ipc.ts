@@ -1,13 +1,19 @@
 import { z } from 'zod'
 import { IPC_CHANNEL_NAMES, type IpcChannelName } from './channels.js'
 import {
+  ACTIVITY_ACTORS,
   ACTIVITY_STATUSES,
   ACTIVITY_TYPES,
   ACTIVITY_SUBJECT_TYPES,
   ACTIVITY_ACTIONS,
   CHECK_IN_STATES,
   CHECK_IN_TRIGGER_KINDS,
+  CHAT_MODEL_PROVIDERS,
   LLM_PROVIDERS,
+  baDocumentKindSchema,
+  baKnowledgeCategorySchema,
+  baKnowledgeLinkKindSchema,
+  baKnowledgeSourceKindSchema,
   commitmentStatusSchema,
   connectionTypeSchema,
   memoryFactKindSchema,
@@ -45,6 +51,7 @@ export const connectionRefSchema = z.object({ type: connectionTypeSchema })
 // ── Model registry (EPIC-03) ──────────────────────────────────────────────
 
 export const llmProviderSchema = z.enum(LLM_PROVIDERS)
+export const chatModelProviderSchema = z.enum(CHAT_MODEL_PROVIDERS)
 
 export const modelAddSchema = z.object({
   provider: llmProviderSchema,
@@ -60,7 +67,7 @@ export const modelRefSchema = z.object({ id: z.string().uuid() })
 export const conversationCreateSchema = z.object({
   title: z.string().max(200).default('Hội thoại mới'),
   modelId: z.string().max(200).nullable().default(null),
-  modelProvider: llmProviderSchema.nullable().default(null),
+  modelProvider: chatModelProviderSchema.nullable().default(null),
 })
 
 export const conversationRefSchema = z.object({ id: z.string().uuid() })
@@ -257,11 +264,173 @@ export const activityActionSchema = z.enum(ACTIVITY_ACTIONS)
 export const checkInTriggerKindSchema = z.enum(CHECK_IN_TRIGGER_KINDS)
 export const checkInStateSchema = z.enum(CHECK_IN_STATES)
 
+export const activityActorSchema = z.enum(ACTIVITY_ACTORS)
+
 export const activityListSchema = z.object({
   type: activityTypeSchema.optional(),
   status: activityStatusSchema.optional(),
+  actor: activityActorSchema.optional(),
   limit: z.number().int().min(1).max(500).default(200),
   offset: z.number().int().min(0).default(0),
+})
+
+// ── Business Analyst workbench (openspec `add-ba-workbench`) ──────────────
+
+const baTitleSchema = z.string().trim().min(1).max(200)
+const baBodySchema = z.string().trim().min(1).max(5_000)
+const baSourceRefSchema = z.string().trim().min(1).max(500)
+
+export const baKnowledgeListSchema = z.object({
+  status: z.enum(['draft', 'confirmed', 'outdated']).optional(),
+  category: baKnowledgeCategorySchema.optional(),
+})
+
+/**
+ * Renderer tạo tri thức qua màn hình Nghiệp vụ, nên nó luôn là `manual` + `user`.
+ *
+ * `status` KHÔNG có mặt ở đây có chủ ý: item mới luôn là `draft`, và việc chốt là một channel
+ * riêng (`ba:knowledge:confirm`). Gộp hai việc vào một payload sẽ khiến "tạo" và "chốt tri thức
+ * của tổ chức" trở thành cùng một thao tác — chúng không phải.
+ */
+export const baKnowledgeCreateSchema = z.object({
+  title: baTitleSchema,
+  body: baBodySchema,
+  category: baKnowledgeCategorySchema,
+  sourceKind: baKnowledgeSourceKindSchema.default('manual'),
+  sourceRef: baSourceRefSchema.nullable().default(null),
+  sourceConversationId: z.string().uuid().nullable().default(null),
+})
+
+export const baKnowledgeUpdateSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: baTitleSchema.optional(),
+    body: baBodySchema.optional(),
+    category: baKnowledgeCategorySchema.optional(),
+    sourceRef: baSourceRefSchema.nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasChange = [value.title, value.body, value.category, value.sourceRef].some(
+      (field) => field !== undefined,
+    )
+    if (!hasChange) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At least one editable knowledge field must be provided.',
+      })
+    }
+  })
+
+export const baKnowledgeRefSchema = z.object({ id: z.string().uuid() })
+
+export const baKnowledgeSupersedeSchema = z.object({
+  id: z.string().uuid(),
+  replacementId: z.string().uuid(),
+})
+
+export const baKnowledgeLinkSchema = z.object({
+  fromId: z.string().uuid(),
+  toId: z.string().uuid(),
+  kind: baKnowledgeLinkKindSchema,
+})
+
+export const baKnowledgeUnlinkSchema = z.object({ linkId: z.string().uuid() })
+
+export const baDocumentListSchema = z.object({})
+
+export const baDocumentCreateSchema = z.object({
+  title: baTitleSchema,
+  kind: baDocumentKindSchema,
+  sourceConversationId: z.string().uuid().nullable().default(null),
+})
+
+export const baDocumentRefSchema = z.object({ id: z.string().uuid() })
+
+/**
+ * Trích xuất nhận **text đã có** hoặc một `fileToken` do `file:pick` cấp — không bao giờ nhận
+ * đường dẫn (§5.3). Đây là lý do channel này không có trường `path`.
+ */
+export const baDocumentExtractSchema = z
+  .object({
+    id: z.string().uuid(),
+    text: z.string().min(1).max(500_000).optional(),
+    fileToken: z.string().uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const provided = [value.text, value.fileToken].filter((field) => field !== undefined).length
+    if (provided !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide exactly one of text or fileToken.',
+      })
+    }
+  })
+
+export const baDocumentSetTemplateSchema = z.object({
+  id: z.string().uuid(),
+  /** `null` gỡ mẫu khỏi tài liệu; tài liệu vẫn giữ nguyên item. */
+  templateId: z.string().trim().min(1).max(64).nullable(),
+})
+
+/**
+ * Gộp hai item gần-trùng.
+ *
+ * Người dùng quyết định giữ cái nào — hệ thống chỉ đề xuất (D5). Không có đường nào để gộp tự
+ * động, kể cả khi similarity bằng 1.
+ */
+export const baDocumentMergeItemsSchema = z
+  .object({
+    id: z.string().uuid(),
+    keepItemId: z.string().trim().min(1).max(64),
+    dropItemId: z.string().trim().min(1).max(64),
+  })
+  .superRefine((value, ctx) => {
+    if (value.keepItemId === value.dropItemId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dropItemId'],
+        message: 'Cannot merge an item into itself.',
+      })
+    }
+  })
+
+/**
+ * Xin gợi ý câu chữ cho **một finding đã có trong báo cáo mới nhất**.
+ *
+ * Renderer gửi con trỏ tới finding (`ruleId` + `itemId`), không gửi nội dung finding. Đó là điều
+ * làm cho model không thể được mớm một finding do renderer bịa ra: main tự tra lại trong báo cáo
+ * đã lưu, và tra hụt thì từ chối.
+ */
+export const baDocumentSuggestWordingSchema = z.object({
+  id: z.string().uuid(),
+  ruleId: z.string().trim().min(1).max(32),
+  itemId: z.string().trim().min(1).max(64).nullable(),
+})
+
+/**
+ * Áp một câu chữ đã sửa lên đúng một ô của đúng một item.
+ *
+ * Từng finding một, không có "áp dụng tất cả": review không tự sửa tài liệu, và một nút gộp mọi
+ * thay đổi lại thành một cú bấm chính là cách biến nó thành tự sửa (D2).
+ */
+export const baDocumentApplyFindingSchema = z.object({
+  id: z.string().uuid(),
+  itemId: z.string().trim().min(1).max(64),
+  field: z.enum([
+    'name',
+    'label',
+    'actor',
+    'role',
+    'precondition',
+    'postcondition',
+    'statement',
+    'message',
+    'meaning',
+    'description',
+    'noAlternateReason',
+    'noValidationReason',
+  ]),
+  value: z.string().trim().min(1).max(500),
 })
 
 export const chatSendSchema = z.object({
@@ -274,7 +443,8 @@ export const chatSendSchema = z.object({
    * Có `modelId` thì BẮT BUỘC có `provider` — cùng model id tồn tại ở hai provider.
    */
   modelId: z.string().max(200).optional(),
-  modelProvider: llmProviderSchema.optional(),
+  modelProvider: chatModelProviderSchema.optional(),
+  reasoningEffort: z.string().min(1).max(40).optional(),
 })
 export type ChatSendInput = z.infer<typeof chatSendSchema>
 
@@ -324,6 +494,11 @@ export const IPC_SCHEMAS = {
   'connection:test': connectionRefSchema,
   'connection:delete': connectionRefSchema,
 
+  'chatgpt:status': emptySchema,
+  'chatgpt:models': emptySchema,
+  'chatgpt:login': emptySchema,
+  'chatgpt:logout': emptySchema,
+
   'model:list': emptySchema,
   'model:add': modelAddSchema,
   'model:remove': modelRefSchema,
@@ -356,6 +531,30 @@ export const IPC_SCHEMAS = {
   'checkin:respond': checkInRespondSchema,
   'checkin:unmute': checkInUnmuteSchema,
   'activity:list': activityListSchema,
+
+  'ba:knowledge:list': baKnowledgeListSchema,
+  'ba:knowledge:create': baKnowledgeCreateSchema,
+  'ba:knowledge:update': baKnowledgeUpdateSchema,
+  'ba:knowledge:confirm': baKnowledgeRefSchema,
+  'ba:knowledge:supersede': baKnowledgeSupersedeSchema,
+  'ba:knowledge:delete': baKnowledgeRefSchema,
+  'ba:knowledge:link': baKnowledgeLinkSchema,
+  'ba:knowledge:unlink': baKnowledgeUnlinkSchema,
+  'ba:knowledge:stats': emptySchema,
+  'ba:document:list': baDocumentListSchema,
+  'ba:document:create': baDocumentCreateSchema,
+  'ba:document:delete': baDocumentRefSchema,
+  'ba:document:read': baDocumentRefSchema,
+  'ba:document:extract': baDocumentExtractSchema,
+  'ba:document:errorCodes': baDocumentRefSchema,
+  'ba:document:setTemplate': baDocumentSetTemplateSchema,
+  'ba:document:projections': baDocumentRefSchema,
+  'ba:document:mergeItems': baDocumentMergeItemsSchema,
+  'ba:document:review': baDocumentRefSchema,
+  'ba:document:reviewHistory': baDocumentRefSchema,
+  'ba:document:suggestWording': baDocumentSuggestWordingSchema,
+  'ba:document:applyFinding': baDocumentApplyFindingSchema,
+  'ba:template:list': emptySchema,
 
   'chat:send': chatSendSchema,
   'chat:cancel': chatCancelSchema,

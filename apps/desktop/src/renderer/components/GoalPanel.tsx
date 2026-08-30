@@ -492,6 +492,11 @@ function CommitmentSection(props: {
                           : attention.label}
                       </span>
                       {muted && <span className="tag">Đã tắt nhắc</span>}
+                      {commitment.createdBy === 'agent' && (
+                        <span className="tag" title="Nexa đề xuất, bạn đã xác nhận">
+                          Nexa đề xuất
+                        </span>
+                      )}
                     </div>
                     <h3>{commitment.title}</h3>
                   </div>

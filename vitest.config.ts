@@ -15,6 +15,7 @@ export default defineConfig({
       '@nexa/connection-config': r('./packages/connection-config/src/index.ts'),
       '@nexa/document-processor': r('./packages/document-processor/src/index.ts'),
       '@nexa/agent-runtime': r('./packages/agent-runtime/src/index.ts'),
+      '@nexa/ba-kit': r('./packages/ba-kit/src/index.ts'),
       '@nexa/observability': r('./packages/observability/src/index.ts'),
     },
   },

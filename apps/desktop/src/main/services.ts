@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, safeStorage } from 'electron'
+import { app, safeStorage, shell } from 'electron'
 import type { AppSettings, McpStatusEvent, OrgPolicy } from '@nexa/shared-types'
 import {
   FileSink,
@@ -19,6 +19,9 @@ import {
 import {
   ActivityRepository,
   AuditRepository,
+  BaDocumentRepository,
+  BaKnowledgeRepository,
+  BaReviewRepository,
   CheckInRepository,
   CommitmentRepository,
   ConfigRepository,
@@ -48,8 +51,12 @@ import {
   WorkerThreadRunner,
   type ExtractionRunner,
 } from '@nexa/document-processor'
+import { BaExtractionJob } from './ba-extraction.js'
+import { BaReviewService } from './ba-review.js'
+import { createResourceReader, loadBaStandards, type BaStandards } from './ba-standards.js'
 import { FileBroker } from './file-broker.js'
 import { ProactiveCheckInService } from './proactive-check-in-service.js'
+import { ChatGptAccountService } from './chatgpt-account-service.js'
 
 /**
  * Composition root.
@@ -67,6 +74,7 @@ export interface NexaServices {
   readonly security: SecurityService
   readonly policy: OrgPolicy
   readonly settings: SettingsService
+  readonly chatgpt: ChatGptAccountService
   readonly connections: ConnectionService
   readonly models: ModelService
   readonly conversations: ConversationRepository
@@ -75,6 +83,13 @@ export interface NexaServices {
   readonly activity: ActivityRepository
   readonly checkIns: ProactiveCheckInService
   readonly memory: MemoryRepository
+  readonly baKnowledge: BaKnowledgeRepository
+  readonly baDocuments: BaDocumentRepository
+  readonly baExtraction: BaExtractionJob
+  readonly baReviews: BaReviewRepository
+  readonly baReview: BaReviewService
+  /** Mẫu tài liệu và rulebook validate do IT phân phối — chỉ đọc, nạp một lần lúc khởi động. */
+  readonly baStandards: BaStandards
   readonly config: ConfigRepository
   readonly audit: AuditRepository
   readonly search: ConversationSearch
@@ -157,10 +172,16 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   const commitments = new CommitmentRepository(store)
   const checkInState = new CheckInRepository(store)
   const memory = new MemoryRepository(store)
+  const baKnowledge = new BaKnowledgeRepository(store)
+  const baDocuments = new BaDocumentRepository(store)
+  const baReviews = new BaReviewRepository(store)
   const search = new ConversationSearch(store, conversations)
   const retention = new RetentionService(store, audit)
 
   const policy = loadOrgPolicy(readPolicyFile(logger), logger)
+  // Nạp một lần lúc khởi động: chuẩn của tổ chức không đổi giữa chừng, và đọc lại mỗi lần dùng
+  // chỉ mở đường cho hai lượt xuất tài liệu cùng phiên lại theo hai bản mẫu khác nhau.
+  const baStandards = loadBaStandards(createResourceReader(app.getAppPath(), logger), logger)
   const settings = new SettingsService(config, profile.id, policy, logger)
   const models = new ModelService(config, profile.id, logger, policy)
   const checkIns = new ProactiveCheckInService({
@@ -195,6 +216,14 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
 
   const guard = new ConfirmationGuard({ logger, ttlSeconds: settings.get().approvalTtlSeconds })
   const tracker = new OperationTracker(logger)
+  const codexChatDir = join(userData, 'codex-chat-workspace')
+  mkdirSync(codexChatDir, { recursive: true, mode: 0o700 })
+  const chatgpt = new ChatGptAccountService({
+    logger,
+    appVersion: app.getVersion(),
+    openExternal: (url) => shell.openExternal(url),
+    chatCwd: codexChatDir,
+  })
 
   const services: NexaServices = {
     logger,
@@ -206,6 +235,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     security,
     policy,
     settings,
+    chatgpt,
     connections: new ConnectionService({
       repo: config,
       audit,
@@ -252,6 +282,37 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     activity,
     checkIns,
     memory,
+    baKnowledge,
+    baDocuments,
+    baReviews,
+    /**
+     * Job trích xuất nhận model và LLM client qua closure vì cả hai chỉ tồn tại sau khi
+     * `services` được dựng xong — cùng cách `connections.testAtlassian` đọc `services.mcp`.
+     */
+    baExtraction: new BaExtractionJob({
+      documents: baDocuments,
+      resolveModel: () => models.resolveForConversation(null, null),
+      buildLlmClient: (provider, timeoutMs) => services.connections.buildLlmClient(provider, timeoutMs),
+      settings: () => settings.get(),
+      logger,
+    }),
+    /**
+     * Cùng cách nhận model qua closure như job trích xuất — và cũng chỉ dùng tới model ở đúng một
+     * chỗ: bước gợi ý câu chữ. Việc chạy bộ luật hoàn toàn cục bộ.
+     */
+    baReview: new BaReviewService({
+      profileId: profile.id,
+      documents: baDocuments,
+      knowledge: baKnowledge,
+      reviews: baReviews,
+      activity,
+      standards: () => baStandards,
+      resolveModel: () => models.resolveForConversation(null, null),
+      buildLlmClient: (provider, timeoutMs) => services.connections.buildLlmClient(provider, timeoutMs),
+      settings: () => settings.get(),
+      logger,
+    }),
+    baStandards,
     config,
     audit,
     search,
@@ -265,6 +326,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     mcp: null,
     dispose: async () => {
       checkIns.stop()
+      await chatgpt.dispose()
       await services.mcp?.stop()
       await extractionRunner.dispose()
       tempWorkspace.releaseAll()

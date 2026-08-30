@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityAction,
+  ActivityActor,
   ActivityEvent,
   ActivityStatus,
   ActivityType,
@@ -17,6 +18,12 @@ const TYPE_OPTIONS: Array<{ value: ActivityType | 'all'; label: string }> = [
   { value: 'tool_result', label: 'Kết quả tool' },
   { value: 'uncertain_operation', label: 'Tác vụ chưa chắc chắn' },
 ] as const
+
+const ACTOR_OPTIONS: Array<{ value: ActivityActor | 'all'; label: string }> = [
+  { value: 'all', label: 'Tất cả nguồn' },
+  { value: 'user', label: 'Bạn thực hiện' },
+  { value: 'agent', label: 'Nexa đề xuất' },
+]
 
 const STATUS_OPTIONS: Array<{ value: ActivityStatus | 'all'; label: string }> = [
   { value: 'all', label: 'Tất cả trạng thái' },
@@ -64,6 +71,7 @@ export function labelForActivityType(type: ActivityType): string {
     confirmation: 'Xác nhận',
     tool_result: 'Kết quả tool',
     uncertain_operation: 'Tác vụ chưa chắc chắn',
+    ba_document_mutation: 'Tài liệu nghiệp vụ',
   }
   return labels[type]
 }
@@ -92,11 +100,19 @@ function formatActivityTimestamp(value: string): string {
   })
 }
 
+/** Record ghi trước khi có cột actor không có nguồn để hiển thị — nói vậy, đừng đoán là "bạn". */
+export function labelForActivityActor(actor: ActivityActor | null): string {
+  if (actor === 'agent') return 'Nexa đề xuất'
+  if (actor === 'user') return 'Bạn thực hiện'
+  return 'Không rõ'
+}
+
 function formatSubject(event: ActivityEvent): string {
   if (event.subjectLabel !== null) return event.subjectLabel
   if (event.subjectType === 'memory') return 'Memory'
   if (event.subjectType === 'commitment') return 'Cam kết'
   if (event.subjectType === 'tool') return event.subjectId ?? 'Tool'
+  if (event.subjectType === 'ba_document') return event.subjectLabel ?? 'Tài liệu nghiệp vụ'
   return 'Hoạt động hệ thống'
 }
 
@@ -106,6 +122,7 @@ export function ActivityTimelineView(props: {
   const { onError } = props
   const [typeFilter, setTypeFilter] = useState<ActivityType | 'all'>('all')
   const [statusFilter, setStatusFilter] = useState<ActivityStatus | 'all'>('all')
+  const [actorFilter, setActorFilter] = useState<ActivityActor | 'all'>('all')
   const [items, setItems] = useState<ActivityEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
@@ -122,6 +139,7 @@ export function ActivityTimelineView(props: {
       const next = await api.activity.list({
         ...(typeFilter === 'all' ? {} : { type: typeFilter }),
         ...(statusFilter === 'all' ? {} : { status: statusFilter }),
+        ...(actorFilter === 'all' ? {} : { actor: actorFilter }),
         limit: 200,
         offset: 0,
       })
@@ -135,7 +153,7 @@ export function ActivityTimelineView(props: {
     } finally {
       if (loadSequence === loadSequenceRef.current) setLoading(false)
     }
-  }, [onError, statusFilter, typeFilter])
+  }, [actorFilter, onError, statusFilter, typeFilter])
 
   useEffect(() => {
     void load()
@@ -177,6 +195,20 @@ export function ActivityTimelineView(props: {
             onChange={(event) => setStatusFilter(event.target.value as ActivityStatus | 'all')}
           >
             {STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Nguồn</span>
+          <select
+            className="input"
+            value={actorFilter}
+            onChange={(event) => setActorFilter(event.target.value as ActivityActor | 'all')}
+          >
+            {ACTOR_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -227,6 +259,10 @@ export function ActivityTimelineView(props: {
                   <div>
                     <dt>Đối tượng</dt>
                     <dd>{formatSubject(event)}</dd>
+                  </div>
+                  <div>
+                    <dt>Nguồn</dt>
+                    <dd>{labelForActivityActor(event.actor)}</dd>
                   </div>
                   <div>
                     <dt>Request ID</dt>
