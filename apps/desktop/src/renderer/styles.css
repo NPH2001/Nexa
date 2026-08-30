@@ -1268,6 +1268,73 @@ code {
   color: var(--warning);
 }
 
+.tag-success {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  color: var(--success);
+}
+
+.tag-danger {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+}
+
+.checklist-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.8fr);
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.checklist-sidebar,
+.checklist-detail {
+  min-width: 0;
+}
+
+.checklist-create {
+  grid-template-columns: 1fr;
+}
+
+.checklist-case {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.checklist-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.checklist-heading h3,
+.checklist-heading h4 {
+  margin: 0;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.checklist-table {
+  min-width: 720px;
+}
+
+.checklist-evidence {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 900px) {
+  .checklist-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 760px) {
   .ba-form {
     grid-template-columns: minmax(0, 1fr);

@@ -60,9 +60,15 @@ importers:
       '@nexa/atlassian-mcp-manager':
         specifier: workspace:*
         version: link:../../packages/atlassian-mcp-manager
+      '@nexa/ba-kit':
+        specifier: workspace:*
+        version: link:../../packages/ba-kit
       '@nexa/connection-config':
         specifier: workspace:*
         version: link:../../packages/connection-config
+      '@nexa/document-checklist':
+        specifier: workspace:*
+        version: link:../../packages/document-checklist
       '@nexa/document-processor':
         specifier: workspace:*
         version: link:../../packages/document-processor
@@ -182,6 +188,12 @@ importers:
         specifier: workspace:*
         version: link:../shared-types
 
+  packages/document-checklist:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
   packages/document-processor:
     dependencies:
       '@nexa/observability':
@@ -217,6 +229,9 @@ importers:
       '@nexa/ba-kit':
         specifier: workspace:*
         version: link:../ba-kit
+      '@nexa/document-checklist':
+        specifier: workspace:*
+        version: link:../document-checklist
       '@nexa/observability':
         specifier: workspace:*
         version: link:../observability

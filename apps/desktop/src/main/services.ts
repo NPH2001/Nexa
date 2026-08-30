@@ -22,6 +22,7 @@ import {
   BaDocumentRepository,
   BaKnowledgeRepository,
   BaReviewRepository,
+  BankChecklistRepository,
   CheckInRepository,
   CommitmentRepository,
   ConfigRepository,
@@ -54,6 +55,8 @@ import {
 import { BaExtractionJob } from './ba-extraction.js'
 import { BaReviewService } from './ba-review.js'
 import { createResourceReader, loadBaStandards, type BaStandards } from './ba-standards.js'
+import { BankChecklistService, loadBankChecklistTemplates } from './bank-checklist.js'
+import type { BankChecklistTemplate } from '@nexa/document-checklist'
 import { FileBroker } from './file-broker.js'
 import { ProactiveCheckInService } from './proactive-check-in-service.js'
 import { ChatGptAccountService } from './chatgpt-account-service.js'
@@ -90,6 +93,9 @@ export interface NexaServices {
   readonly baReview: BaReviewService
   /** Mẫu tài liệu và rulebook validate do IT phân phối — chỉ đọc, nạp một lần lúc khởi động. */
   readonly baStandards: BaStandards
+  readonly bankChecklists: BankChecklistRepository
+  readonly bankChecklist: BankChecklistService
+  readonly bankChecklistTemplates: readonly BankChecklistTemplate[]
   readonly config: ConfigRepository
   readonly audit: AuditRepository
   readonly search: ConversationSearch
@@ -175,13 +181,16 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   const baKnowledge = new BaKnowledgeRepository(store)
   const baDocuments = new BaDocumentRepository(store)
   const baReviews = new BaReviewRepository(store)
+  const bankChecklists = new BankChecklistRepository(store)
   const search = new ConversationSearch(store, conversations)
   const retention = new RetentionService(store, audit)
 
   const policy = loadOrgPolicy(readPolicyFile(logger), logger)
   // Nạp một lần lúc khởi động: chuẩn của tổ chức không đổi giữa chừng, và đọc lại mỗi lần dùng
   // chỉ mở đường cho hai lượt xuất tài liệu cùng phiên lại theo hai bản mẫu khác nhau.
-  const baStandards = loadBaStandards(createResourceReader(app.getAppPath(), logger), logger)
+  const resourceReader = createResourceReader(app.getAppPath(), logger)
+  const baStandards = loadBaStandards(resourceReader, logger)
+  const bankChecklistTemplates = loadBankChecklistTemplates(resourceReader, logger)
   const settings = new SettingsService(config, profile.id, policy, logger)
   const models = new ModelService(config, profile.id, logger, policy)
   const checkIns = new ProactiveCheckInService({
@@ -292,7 +301,8 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     baExtraction: new BaExtractionJob({
       documents: baDocuments,
       resolveModel: () => models.resolveForConversation(null, null),
-      buildLlmClient: (provider, timeoutMs) => services.connections.buildLlmClient(provider, timeoutMs),
+      buildLlmClient: (provider, timeoutMs) =>
+        services.connections.buildLlmClient(provider, timeoutMs),
       settings: () => settings.get(),
       logger,
     }),
@@ -308,11 +318,23 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
       activity,
       standards: () => baStandards,
       resolveModel: () => models.resolveForConversation(null, null),
-      buildLlmClient: (provider, timeoutMs) => services.connections.buildLlmClient(provider, timeoutMs),
+      buildLlmClient: (provider, timeoutMs) =>
+        services.connections.buildLlmClient(provider, timeoutMs),
       settings: () => settings.get(),
       logger,
     }),
     baStandards,
+    bankChecklists,
+    bankChecklist: new BankChecklistService({
+      repository: bankChecklists,
+      templates: bankChecklistTemplates,
+      resolveModel: () => models.resolveForConversation(null, null),
+      buildLlmClient: (provider, timeoutMs) =>
+        services.connections.buildLlmClient(provider, timeoutMs),
+      settings: () => settings.get(),
+      logger,
+    }),
+    bankChecklistTemplates,
     config,
     audit,
     search,

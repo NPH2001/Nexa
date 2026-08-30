@@ -14,6 +14,10 @@ import type {
   BaReviewReportView,
   BaTemplateCatalogView,
   BaWordingSuggestionView,
+  BankChecklistCaseView,
+  BankChecklistReportView,
+  BankChecklistTemplateView,
+  BankDocumentEvidenceView,
   ChatDeltaEvent,
   ChatDoneEvent,
   ConfirmationRequest,
@@ -227,8 +231,9 @@ export const api = {
    */
   ba: {
     knowledge: {
-      list: (filter: { status?: BaKnowledgeView['status']; category?: BaKnowledgeView['category'] } = {}) =>
-        call<BaKnowledgeView[]>('ba:knowledge:list', filter),
+      list: (
+        filter: { status?: BaKnowledgeView['status']; category?: BaKnowledgeView['category'] } = {},
+      ) => call<BaKnowledgeView[]>('ba:knowledge:list', filter),
       create: (input: {
         title: string
         body: string
@@ -293,7 +298,8 @@ export const api = {
         }),
       /** Chạy bộ luật và lưu báo cáo. Không gọi model — phán quyết do code trả (ADR 0010). */
       review: (id: string) => call<BaReviewReportView>('ba:document:review', { id }),
-      reviewHistory: (id: string) => call<BaReviewReportView[]>('ba:document:reviewHistory', { id }),
+      reviewHistory: (id: string) =>
+        call<BaReviewReportView[]>('ba:document:reviewHistory', { id }),
       /**
        * Xin câu chữ cho MỘT finding đã có trong báo cáo mới nhất.
        *
@@ -303,15 +309,32 @@ export const api = {
       suggestWording: (id: string, ruleId: string, itemId: string | null) =>
         call<BaWordingSuggestionView>('ba:document:suggestWording', { id, ruleId, itemId }),
       /** Áp một câu chữ lên đúng một ô của đúng một item. Từng chỗ một, không có áp dụng hàng loạt. */
-      applyFinding: (
-        id: string,
-        itemId: string,
-        field: string,
-        value: string,
-      ) => call<{ items: BaItemSummaryView[] }>('ba:document:applyFinding', { id, itemId, field, value }),
+      applyFinding: (id: string, itemId: string, field: string, value: string) =>
+        call<{ items: BaItemSummaryView[] }>('ba:document:applyFinding', {
+          id,
+          itemId,
+          field,
+          value,
+        }),
     },
     templates: {
       list: () => call<BaTemplateCatalogView>('ba:template:list'),
+    },
+    checklists: {
+      templates: () => call<BankChecklistTemplateView[]>('ba:checklist:templates'),
+      list: () => call<BankChecklistCaseView[]>('ba:checklist:list'),
+      create: (title: string, templateId: string) =>
+        call<BankChecklistCaseView>('ba:checklist:create', { title, templateId }),
+      remove: (id: string) => call<{ ok: boolean }>('ba:checklist:delete', { id }),
+      read: (id: string) =>
+        call<{
+          item: BankChecklistCaseView
+          documents: BankDocumentEvidenceView[]
+          latestReport: BankChecklistReportView | null
+        }>('ba:checklist:read', { id }),
+      ingest: (id: string, fileToken: string) =>
+        call<BankDocumentEvidenceView>('ba:checklist:ingest', { id, fileToken }),
+      review: (id: string) => call<BankChecklistReportView>('ba:checklist:review', { id }),
     },
   },
 

@@ -13,6 +13,7 @@ import type {
 } from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
 import { DestructiveActionDialog } from './DestructiveActionDialog.js'
+import { BankChecklistPanel } from './BankChecklistPanel.js'
 import type { Toast } from './Toasts.js'
 import {
   ITEM_TYPE_LABELS,
@@ -37,11 +38,11 @@ import {
 /**
  * Đích **Nghiệp vụ** — bề mặt BA duy nhất (openspec `add-ba-workbench` D9).
  *
- * Giai đoạn 1 có hai tab: Tri thức và Tài liệu. Không có gì của BA rò sang Chat, Hôm nay hay
+ * Các công cụ nằm trong bốn tab của đích này. Không có gì của BA rò sang Chat, Hôm nay hay
  * Mục tiêu — ranh giới UI là một trong sáu ranh giới giữ tính năng BA nằm gọn một chỗ.
  */
 
-type Tab = 'knowledge' | 'documents' | 'templates'
+type Tab = 'knowledge' | 'documents' | 'checklists' | 'templates'
 
 const CATEGORY_OPTIONS: readonly BaKnowledgeCategoryName[] = [
   'domain',
@@ -91,6 +92,15 @@ export function BaWorkbenchView(props: {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === 'checklists'}
+          className={`tab ${tab === 'checklists' ? 'active' : ''}`}
+          onClick={() => setTab('checklists')}
+        >
+          Hồ sơ
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === 'knowledge'}
           className={`tab ${tab === 'knowledge' ? 'active' : ''}`}
           onClick={() => setTab('knowledge')}
@@ -121,6 +131,8 @@ export function BaWorkbenchView(props: {
         <KnowledgeTab onError={props.onError} onToast={props.onToast} />
       ) : tab === 'documents' ? (
         <DocumentsTab onError={props.onError} onToast={props.onToast} />
+      ) : tab === 'checklists' ? (
+        <BankChecklistPanel onError={props.onError} onToast={props.onToast} />
       ) : (
         <TemplatesTab onError={props.onError} />
       )}
@@ -145,7 +157,10 @@ function KnowledgeTab(props: {
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [list, overview] = await Promise.all([api.ba.knowledge.list(), api.ba.knowledge.stats()])
+      const [list, overview] = await Promise.all([
+        api.ba.knowledge.list(),
+        api.ba.knowledge.stats(),
+      ])
       setItems(list)
       setStats(overview)
       setLoadError(false)
@@ -309,8 +324,8 @@ function KnowledgeTab(props: {
             <div className="ba-card-main">
               <span className="ba-title">{item.title}</span>
               <span className="muted small">
-                {KNOWLEDGE_CATEGORY_LABELS[item.category]} ·{' '}
-                {KNOWLEDGE_STATUS_LABELS[item.status]} · {formatUsage(item)}
+                {KNOWLEDGE_CATEGORY_LABELS[item.category]} · {KNOWLEDGE_STATUS_LABELS[item.status]}{' '}
+                · {formatUsage(item)}
               </span>
               <p className="ba-body">{item.body}</p>
             </div>
@@ -470,7 +485,10 @@ function DocumentsTab(props: {
       try {
         const result = await api.ba.documents.applyFinding(activeId, itemId, field, value)
         setItems(result.items)
-        props.onToast({ kind: 'info', title: 'Đã áp dụng cho một mục. Chạy lại kiểm tra để soát lại.' })
+        props.onToast({
+          kind: 'info',
+          title: 'Đã áp dụng cho một mục. Chạy lại kiểm tra để soát lại.',
+        })
       } catch (error) {
         onError(error, 'Không áp dụng được gợi ý cho mục này.')
       } finally {
@@ -529,8 +547,8 @@ function DocumentsTab(props: {
       )}
       {!loading && !loadError && documents.length === 0 && (
         <p className="muted">
-          Chưa có tài liệu nào. Tạo một tài liệu rồi dán nội dung US vào để Nexa dựng mô hình có
-          cấu trúc và trang mã lỗi.
+          Chưa có tài liệu nào. Tạo một tài liệu rồi dán nội dung US vào để Nexa dựng mô hình có cấu
+          trúc và trang mã lỗi.
         </p>
       )}
 
@@ -705,9 +723,7 @@ function ErrorCodePage(props: { page: BaErrorCodePageView }): React.JSX.Element 
   return (
     <section aria-label="Trang mã lỗi">
       <h3>Trang mã lỗi</h3>
-      <p className={headline.tone === 'warning' ? 'error-inline' : 'muted'}>
-        {headline.text}
-      </p>
+      <p className={headline.tone === 'warning' ? 'error-inline' : 'muted'}>{headline.text}</p>
 
       {props.page.declared.length > 0 && (
         <table className="table">
@@ -839,8 +855,7 @@ function TemplatesTab(props: {
             <li key={template.id} className="ba-card">
               <div className="ba-card-main">
                 <span className="ba-title">
-                  {template.name}{' '}
-                  <span className="tag">phiên bản {template.version}</span>
+                  {template.name} <span className="tag">phiên bản {template.version}</span>
                 </span>
                 {template.description !== undefined && (
                   <span className="muted small">{template.description}</span>
@@ -1068,7 +1083,9 @@ function ReviewPanel(props: {
         </p>
       ) : (
         <>
-          <p className={headline?.tone === 'warning' ? 'error-inline' : 'muted'}>{headline?.text}</p>
+          <p className={headline?.tone === 'warning' ? 'error-inline' : 'muted'}>
+            {headline?.text}
+          </p>
           <p className="muted small">{REVIEW_SCOPE_NOTE}</p>
           {packChange !== null && <p className="error-inline">{packChange}</p>}
           {skipped !== null && <p className="muted small">{skipped}</p>}
@@ -1094,7 +1111,9 @@ function ReviewPanel(props: {
           ))}
 
           <details>
-            <summary className="muted small">Đã kiểm những luật nào ({report.rules.length})</summary>
+            <summary className="muted small">
+              Đã kiểm những luật nào ({report.rules.length})
+            </summary>
             <table className="table">
               <thead>
                 <tr>

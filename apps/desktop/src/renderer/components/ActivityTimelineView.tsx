@@ -17,6 +17,8 @@ const TYPE_OPTIONS: Array<{ value: ActivityType | 'all'; label: string }> = [
   { value: 'confirmation', label: 'Xác nhận' },
   { value: 'tool_result', label: 'Kết quả tool' },
   { value: 'uncertain_operation', label: 'Tác vụ chưa chắc chắn' },
+  { value: 'ba_document_mutation', label: 'Tài liệu nghiệp vụ' },
+  { value: 'document_checklist_mutation', label: 'Checklist chứng từ' },
 ] as const
 
 const ACTOR_OPTIONS: Array<{ value: ActivityActor | 'all'; label: string }> = [
@@ -72,6 +74,7 @@ export function labelForActivityType(type: ActivityType): string {
     tool_result: 'Kết quả tool',
     uncertain_operation: 'Tác vụ chưa chắc chắn',
     ba_document_mutation: 'Tài liệu nghiệp vụ',
+    document_checklist_mutation: 'Checklist chứng từ',
   }
   return labels[type]
 }
@@ -113,6 +116,7 @@ function formatSubject(event: ActivityEvent): string {
   if (event.subjectType === 'commitment') return 'Cam kết'
   if (event.subjectType === 'tool') return event.subjectId ?? 'Tool'
   if (event.subjectType === 'ba_document') return event.subjectLabel ?? 'Tài liệu nghiệp vụ'
+  if (event.subjectType === 'document_checklist') return 'Checklist chứng từ'
   return 'Hoạt động hệ thống'
 }
 

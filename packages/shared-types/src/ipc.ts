@@ -346,6 +346,18 @@ export const baDocumentCreateSchema = z.object({
 
 export const baDocumentRefSchema = z.object({ id: z.string().uuid() })
 
+export const bankChecklistCreateSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  templateId: z.string().trim().min(1).max(64),
+})
+
+export const bankChecklistRefSchema = z.object({ id: z.string().uuid() })
+
+export const bankChecklistIngestSchema = z.object({
+  id: z.string().uuid(),
+  fileToken: z.string().uuid(),
+})
+
 /**
  * Trích xuất nhận **text đã có** hoặc một `fileToken` do `file:pick` cấp — không bao giờ nhận
  * đường dẫn (§5.3). Đây là lý do channel này không có trường `path`.
@@ -555,6 +567,13 @@ export const IPC_SCHEMAS = {
   'ba:document:suggestWording': baDocumentSuggestWordingSchema,
   'ba:document:applyFinding': baDocumentApplyFindingSchema,
   'ba:template:list': emptySchema,
+  'ba:checklist:templates': emptySchema,
+  'ba:checklist:list': emptySchema,
+  'ba:checklist:create': bankChecklistCreateSchema,
+  'ba:checklist:delete': bankChecklistRefSchema,
+  'ba:checklist:read': bankChecklistRefSchema,
+  'ba:checklist:ingest': bankChecklistIngestSchema,
+  'ba:checklist:review': bankChecklistRefSchema,
 
   'chat:send': chatSendSchema,
   'chat:cancel': chatCancelSchema,

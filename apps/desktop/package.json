@@ -16,6 +16,7 @@
     "@nexa/ba-kit": "workspace:*",
     "@nexa/connection-config": "workspace:*",
     "@nexa/document-processor": "workspace:*",
+    "@nexa/document-checklist": "workspace:*",
     "@nexa/llm-client": "workspace:*",
     "@nexa/local-store": "workspace:*",
     "@nexa/mcp-client": "workspace:*",

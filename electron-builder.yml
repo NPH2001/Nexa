@@ -36,6 +36,9 @@ extraResources:
     to: ba-templates.json
   - from: apps/desktop/resources/ba-rulebook.json
     to: ba-rulebook.json
+  # Checklist chứng từ ngân hàng versioned; cùng cơ chế chuẩn chỉ-đọc do IT phân phối.
+  - from: apps/desktop/resources/bank-checklist-templates.json
+    to: bank-checklist-templates.json
 
 asar: true
 

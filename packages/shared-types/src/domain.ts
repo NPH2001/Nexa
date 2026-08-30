@@ -118,13 +118,7 @@ export interface CheckInSuggestion {
 
 // ── Business Analyst workbench (openspec `add-ba-workbench`) ──────────────
 
-export const BA_KNOWLEDGE_CATEGORIES = [
-  'domain',
-  'rule',
-  'term',
-  'constraint',
-  'decision',
-] as const
+export const BA_KNOWLEDGE_CATEGORIES = ['domain', 'rule', 'term', 'constraint', 'decision'] as const
 export type BaKnowledgeCategoryName = (typeof BA_KNOWLEDGE_CATEGORIES)[number]
 
 /**
@@ -208,7 +202,10 @@ export interface BaErrorCodeEntryView {
 
 export interface BaErrorCodePageView {
   readonly declared: readonly BaErrorCodeEntryView[]
-  readonly undeclared: readonly { readonly code: string; readonly referencedBy: readonly string[] }[]
+  readonly undeclared: readonly {
+    readonly code: string
+    readonly referencedBy: readonly string[]
+  }[]
   readonly unreferenced: readonly BaErrorCodeEntryView[]
   readonly inconsistent: readonly {
     readonly code: string
@@ -250,8 +247,16 @@ export interface BaFieldAuditView {
   readonly fieldId: string
   readonly fieldName: string
   readonly fieldType: string
-  readonly expected: readonly { readonly key: string; readonly label: string; readonly rationale?: string }[]
-  readonly missing: readonly { readonly key: string; readonly label: string; readonly rationale?: string }[]
+  readonly expected: readonly {
+    readonly key: string
+    readonly label: string
+    readonly rationale?: string
+  }[]
+  readonly missing: readonly {
+    readonly key: string
+    readonly label: string
+    readonly rationale?: string
+  }[]
   readonly unknownKeys: readonly string[]
   readonly exemptReason?: string
 }
@@ -263,7 +268,11 @@ export interface BaSimilarPairView {
 }
 
 export interface BaTraceabilityView {
-  readonly steps: readonly { readonly id: string; readonly label: string; readonly coveredBy: readonly string[] }[]
+  readonly steps: readonly {
+    readonly id: string
+    readonly label: string
+    readonly coveredBy: readonly string[]
+  }[]
   readonly useCases: readonly {
     readonly id: string
     readonly name: string
@@ -394,6 +403,89 @@ export interface BaDocumentView {
   readonly updatedAt: string
 }
 
+// ── Bank document checklist (openspec `add-bank-document-checklists`) ─────
+
+export type BankDocumentTypeName =
+  | 'national_id'
+  | 'passport'
+  | 'application_form'
+  | 'proof_of_residence'
+  | 'proof_of_income'
+  | 'bank_statement'
+  | 'other'
+
+export type BankChecklistStatusName =
+  'passed' | 'missing' | 'expired' | 'mismatch' | 'unreadable' | 'needs_review'
+
+export interface BankChecklistCaseView {
+  readonly id: string
+  readonly title: string
+  readonly templateId: string
+  readonly templateVersion: string
+  readonly status: 'draft' | 'reviewed'
+  readonly documentCount: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface BankExtractedFieldView {
+  readonly key: string
+  readonly value: string
+  readonly sourceLabel: string
+  readonly needsReview: boolean
+}
+
+export interface BankDocumentEvidenceView {
+  readonly id: string
+  readonly fileName: string
+  readonly documentType: BankDocumentTypeName
+  readonly fields: readonly BankExtractedFieldView[]
+  readonly needsReview: boolean
+  readonly suspectedScan: boolean
+  readonly truncated: boolean
+}
+
+export interface BankChecklistTemplateView {
+  readonly id: string
+  readonly version: string
+  readonly name: string
+  readonly caseType: string
+  readonly requirements: readonly {
+    readonly id: string
+    readonly label: string
+    readonly acceptedDocumentTypes: readonly BankDocumentTypeName[]
+  }[]
+}
+
+export interface BankChecklistEvidenceRefView {
+  readonly documentId: string
+  readonly fileName: string
+  readonly fieldKey?: string
+  readonly value?: string
+  readonly sourceLabel?: string
+}
+
+export interface BankChecklistItemView {
+  readonly id: string
+  readonly label: string
+  readonly ruleId: string
+  readonly status: BankChecklistStatusName
+  readonly message: string
+  readonly fix: string
+  readonly evidence: readonly BankChecklistEvidenceRefView[]
+}
+
+export interface BankChecklistReportView {
+  readonly reviewId: string
+  readonly rulePackId: string
+  readonly rulePackVersion: string
+  readonly templateId: string
+  readonly templateVersion: string
+  readonly reviewedAt: string
+  readonly items: readonly BankChecklistItemView[]
+  readonly counts: Readonly<Record<BankChecklistStatusName, number>>
+}
+
 export const ACTIVITY_TYPES = [
   'suggestion',
   'memory_mutation',
@@ -409,6 +501,7 @@ export const ACTIVITY_TYPES = [
    * riêng (D2). Dòng activity chỉ có id tài liệu và enum — nội dung sửa không đi vào đây.
    */
   'ba_document_mutation',
+  'document_checklist_mutation',
 ] as const
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
@@ -424,7 +517,13 @@ export const ACTIVITY_STATUSES = [
 ] as const
 export type ActivityStatus = (typeof ACTIVITY_STATUSES)[number]
 
-export const ACTIVITY_SUBJECT_TYPES = ['memory', 'commitment', 'tool', 'ba_document'] as const
+export const ACTIVITY_SUBJECT_TYPES = [
+  'memory',
+  'commitment',
+  'tool',
+  'ba_document',
+  'document_checklist',
+] as const
 export type ActivitySubjectType = (typeof ACTIVITY_SUBJECT_TYPES)[number]
 
 export const ACTIVITY_ACTIONS = [

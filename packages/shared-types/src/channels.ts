@@ -72,6 +72,13 @@ export const IPC_CHANNEL_NAMES = [
   'ba:document:suggestWording',
   'ba:document:applyFinding',
   'ba:template:list',
+  'ba:checklist:templates',
+  'ba:checklist:list',
+  'ba:checklist:create',
+  'ba:checklist:delete',
+  'ba:checklist:read',
+  'ba:checklist:ingest',
+  'ba:checklist:review',
 
   'chat:send',
   'chat:cancel',

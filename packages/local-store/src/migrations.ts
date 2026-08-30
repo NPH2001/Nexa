@@ -665,6 +665,69 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS ba_knowledge;
     `,
   },
+  {
+    version: 10,
+    name: 'bank-document-checklists',
+    /**
+     * Hồ sơ kiểm chứng từ ngân hàng (openspec `add-bank-document-checklists`).
+     *
+     * Không lưu file, đường dẫn hay text trích xuất. Tên hồ sơ, tên file, các trường AI trích
+     * xuất và báo cáo rule đều là ciphertext. Hash đường dẫn chỉ dùng chống đính kèm trùng trong
+     * cùng hồ sơ; không thể dùng để mở lại file.
+     */
+    up: `
+      CREATE TABLE bank_checklist_cases (
+        id                    TEXT PRIMARY KEY,
+        profile_id            TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        title_ciphertext      TEXT NOT NULL,
+        template_id           TEXT NOT NULL,
+        template_version      TEXT NOT NULL,
+        status                TEXT NOT NULL CHECK (status IN ('draft','reviewed')),
+        created_at            TEXT NOT NULL,
+        updated_at            TEXT NOT NULL
+      );
+      CREATE INDEX idx_bank_checklist_cases_profile_updated
+        ON bank_checklist_cases(profile_id, updated_at DESC);
+
+      CREATE TABLE bank_case_documents (
+        id                    TEXT PRIMARY KEY,
+        case_id               TEXT NOT NULL REFERENCES bank_checklist_cases(id) ON DELETE CASCADE,
+        file_name_ciphertext  TEXT NOT NULL,
+        source_path_hash      TEXT NOT NULL,
+        document_type         TEXT NOT NULL CHECK (document_type IN (
+          'national_id','passport','application_form','proof_of_residence',
+          'proof_of_income','bank_statement','other'
+        )),
+        needs_review          INTEGER NOT NULL DEFAULT 0,
+        suspected_scan        INTEGER NOT NULL DEFAULT 0,
+        truncated             INTEGER NOT NULL DEFAULT 0,
+        payload_ciphertext    TEXT NOT NULL,
+        created_at            TEXT NOT NULL,
+        updated_at            TEXT NOT NULL,
+        UNIQUE (case_id, source_path_hash)
+      );
+      CREATE INDEX idx_bank_case_documents_case_created
+        ON bank_case_documents(case_id, created_at ASC);
+
+      CREATE TABLE bank_checklist_reviews (
+        id                    TEXT PRIMARY KEY,
+        case_id               TEXT NOT NULL REFERENCES bank_checklist_cases(id) ON DELETE CASCADE,
+        rule_pack_id          TEXT NOT NULL,
+        rule_pack_version     TEXT NOT NULL,
+        template_id           TEXT NOT NULL,
+        template_version      TEXT NOT NULL,
+        result_ciphertext     TEXT NOT NULL,
+        created_at            TEXT NOT NULL
+      );
+      CREATE INDEX idx_bank_checklist_reviews_case_created
+        ON bank_checklist_reviews(case_id, created_at DESC);
+    `,
+    down: `
+      DROP TABLE IF EXISTS bank_checklist_reviews;
+      DROP TABLE IF EXISTS bank_case_documents;
+      DROP TABLE IF EXISTS bank_checklist_cases;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@nexa/ba-kit": "workspace:*",
+    "@nexa/document-checklist": "workspace:*",
     "@nexa/observability": "workspace:*",
     "@nexa/shared-types": "workspace:*"
   }

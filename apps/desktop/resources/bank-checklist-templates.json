@@ -1,0 +1,45 @@
+{
+  "templates": [
+    {
+      "id": "retail-kyc-basic",
+      "version": "1.0",
+      "name": "KYC khách hàng cá nhân — mẫu minh họa",
+      "caseType": "retail_kyc",
+      "requirements": [
+        {
+          "id": "identity-document",
+          "label": "Giấy tờ định danh còn hiệu lực",
+          "acceptedDocumentTypes": ["national_id", "passport"],
+          "requiredFields": ["full_name", "identity_number", "expiry_date"],
+          "expiryField": "expiry_date"
+        },
+        {
+          "id": "application-form",
+          "label": "Phiếu đề nghị mở quan hệ",
+          "acceptedDocumentTypes": ["application_form"],
+          "requiredFields": ["full_name", "identity_number"]
+        },
+        {
+          "id": "proof-of-residence",
+          "label": "Chứng từ địa chỉ",
+          "acceptedDocumentTypes": ["proof_of_residence"],
+          "requiredFields": ["full_name", "address"]
+        }
+      ],
+      "crossChecks": [
+        {
+          "id": "full-name-match",
+          "label": "Họ tên thống nhất giữa các chứng từ",
+          "fieldKey": "full_name",
+          "documentTypes": ["national_id", "passport", "application_form", "proof_of_residence"]
+        },
+        {
+          "id": "identity-number-match",
+          "label": "Số định danh thống nhất",
+          "fieldKey": "identity_number",
+          "documentTypes": ["national_id", "passport", "application_form"]
+        }
+      ]
+    }
+  ]
+}

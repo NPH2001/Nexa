@@ -160,6 +160,17 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     return document
   }
 
+  const requireBankChecklistForCurrentProfile = (id: string) => {
+    requireBaWorkbench()
+    const item = services.bankChecklists.get(id)
+    if (item === null || item.profileId !== services.profileId) {
+      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+        safeDetail: 'bank checklist case not found for current profile',
+      })
+    }
+    return item
+  }
+
   /** Bỏ `profileId` trước khi ra renderer — renderer không cần và không được biết profile nào. */
   const toKnowledgeView = (item: ReturnType<typeof requireBaKnowledgeForCurrentProfile>) => {
     const { profileId: _profileId, ...view } = item
@@ -646,6 +657,117 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
               },
       }
     },
+    'ba:checklist:templates': () => {
+      requireBaWorkbench()
+      return services.bankChecklistTemplates.map((template) => ({
+        id: template.id,
+        version: template.version,
+        name: template.name,
+        caseType: template.caseType,
+        requirements: template.requirements.map((requirement) => ({
+          id: requirement.id,
+          label: requirement.label,
+          acceptedDocumentTypes: requirement.acceptedDocumentTypes,
+        })),
+      }))
+    },
+    'ba:checklist:list': () => {
+      requireBaWorkbench()
+      return services.bankChecklists
+        .list(services.profileId)
+        .map(({ profileId: _, ...item }) => item)
+    },
+    'ba:checklist:create': (input) => {
+      requireBaWorkbench()
+      const template = services.bankChecklist.findTemplate(input.templateId)
+      const item = services.bankChecklists.create({
+        profileId: services.profileId,
+        title: input.title,
+        templateId: template.id,
+        templateVersion: template.version,
+      })
+      services.activity.record({
+        profileId: services.profileId,
+        type: 'document_checklist_mutation',
+        action: 'created',
+        status: 'success',
+        subjectType: 'document_checklist',
+        subjectId: item.id,
+      })
+      const { profileId: _, ...view } = item
+      return view
+    },
+    'ba:checklist:delete': (input) => {
+      const item = requireBankChecklistForCurrentProfile(input.id)
+      services.bankChecklists.delete(item.id)
+      services.activity.record({
+        profileId: services.profileId,
+        type: 'document_checklist_mutation',
+        action: 'deleted',
+        status: 'success',
+        subjectType: 'document_checklist',
+        subjectId: item.id,
+      })
+      return { ok: true }
+    },
+    'ba:checklist:read': (input) => {
+      const item = requireBankChecklistForCurrentProfile(input.id)
+      const { profileId: _, ...view } = item
+      const latest = services.bankChecklists.latestReview(item.id)
+      return {
+        item: view,
+        documents: services.bankChecklists
+          .listDocuments(item.id)
+          .map(({ sourcePathHash: _sourcePathHash, ...document }) => document),
+        latestReport: latest === null ? null : { reviewId: latest.id, ...latest.report },
+      }
+    },
+    'ba:checklist:ingest': async (input) => {
+      const item = requireBankChecklistForCurrentProfile(input.id)
+      const tokens = [input.fileToken]
+      try {
+        const [document] = await services.documents.process(services.files.resolve(tokens))
+        if (document === undefined) {
+          throw new NexaError(ERROR_CODES.FILE_UNSUPPORTED, {
+            safeDetail: 'no document could be extracted from the picked file',
+          })
+        }
+        const output = await services.bankChecklist.extract(document)
+        const evidence = services.bankChecklists.addDocument({
+          caseId: item.id,
+          fileName: document.fileName,
+          sourcePathHash: document.sourcePathHash,
+          output,
+          suspectedScan: document.suspectedScan === true,
+          truncated: document.truncated,
+        })
+        services.activity.record({
+          profileId: services.profileId,
+          type: 'document_checklist_mutation',
+          action: 'updated',
+          status: 'success',
+          subjectType: 'document_checklist',
+          subjectId: item.id,
+        })
+        const { sourcePathHash: _, ...view } = evidence
+        return view
+      } finally {
+        services.files.releaseAll(tokens)
+      }
+    },
+    'ba:checklist:review': (input) => {
+      const item = requireBankChecklistForCurrentProfile(input.id)
+      const result = services.bankChecklist.review(item.id)
+      services.activity.record({
+        profileId: services.profileId,
+        type: 'document_checklist_mutation',
+        action: 'completed',
+        status: 'success',
+        subjectType: 'document_checklist',
+        subjectId: item.id,
+      })
+      return { reviewId: result.reviewId, ...result.report }
+    },
     'ba:document:setTemplate': (input) => {
       requireBaDocumentForCurrentProfile(input.id)
       if (input.templateId === null) {
@@ -653,9 +775,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
           services.baDocuments.update(input.id, { templateId: null, templateVersion: null }),
         )
       }
-      const template = services.baStandards.templates.find(
-        (entry) => entry.id === input.templateId,
-      )
+      const template = services.baStandards.templates.find((entry) => entry.id === input.templateId)
       if (template === undefined) {
         throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
           safeDetail: `unknown ba template: ${input.templateId}`,
@@ -680,7 +800,12 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       const mermaid = renderMermaid(model)
 
       return {
-        mermaid: { code: mermaid.code, isolatedSteps: mermaid.isolatedSteps, stepCount: mermaid.stepCount, edgeCount: mermaid.edgeCount },
+        mermaid: {
+          code: mermaid.code,
+          isolatedSteps: mermaid.isolatedSteps,
+          stepCount: mermaid.stepCount,
+          edgeCount: mermaid.edgeCount,
+        },
         matrix: buildTraceabilityMatrix(model),
         fieldAudits: rulebook === null ? [] : auditFields(itemsOfType(model, 'field'), rulebook),
         nearDuplicates: similarity.nearDuplicates,
@@ -895,7 +1020,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
 
 function resolveActivitySubjectLabel(
   services: NexaServices,
-  subjectType: 'memory' | 'commitment' | 'tool' | 'ba_document' | null,
+  subjectType: 'memory' | 'commitment' | 'tool' | 'ba_document' | 'document_checklist' | null,
   subjectId: string | null,
 ): string {
   if (subjectType === null || subjectId === null) return 'Hoạt động hệ thống'
@@ -909,6 +1034,12 @@ function resolveActivitySubjectLabel(
     return document !== null && document.profileId === services.profileId
       ? document.title
       : 'Tài liệu đã xoá'
+  }
+  if (subjectType === 'document_checklist') {
+    const item = services.bankChecklists.get(subjectId)
+    return item !== null && item.profileId === services.profileId
+      ? item.title
+      : 'Checklist chứng từ đã xoá'
   }
 
   const commitment = services.commitments.get(subjectId)
