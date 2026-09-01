@@ -946,3 +946,54 @@ KHÔNG chứng minh được là file TCVN3 sẽ ổn.
 
 **Việc còn lại trước pilot:** thử thêm `.xls` cũ (chưa có mẫu thật nào trên máy) và một `.doc` mã
 TCVN3 nếu tổ chức còn lưu. Cùng nhóm với C2.
+
+---
+
+## K. Bản tin công việc cá nhân (2026-09-01, openspec `add-daily-briefing`)
+
+### K1. 🔴 Bản tin buổi sáng chưa có lịch họp, và sẽ chưa có cho tới khi chốt connector
+
+**Bối cảnh:** yêu cầu gốc là "mỗi sáng tổng hợp lịch họp, việc cần chú ý, báo cáo sắp đến hạn,
+việc trên Jira, quá hạn". Bốn phần sau đã làm. **Lịch họp thì không**, vì Nexa chưa có bất kỳ
+nguồn lịch nào — câu hỏi "Calendar/Tasks connector nào trước" vẫn để ngỏ trong `DESIGN.md` từ
+2026-08-30 và chưa ai trả lời.
+
+**Đã làm gì với chỗ thiếu đó:** bản tin nói thẳng trên bề mặt là nó chưa gồm lịch họp, và spec có
+một requirement riêng bắt nó phải nói. Đây là lựa chọn có chủ ý: một bản tin im lặng về phạm vi
+của mình sẽ được đọc thành "hôm nay không có gì" — đúng kiểu sai âm thầm nguy hiểm nhất với một
+mặt phẳng mà người ta nhìn vào để quyết định làm gì trước.
+
+**Câu hỏi cần Product owner + IT trả lời:** nguồn lịch đầu tiên là Outlook/Exchange (EWS hay
+Graph), Google Calendar, hay import `.ics` thủ công? Ba lựa chọn khác nhau ở cái giá: hai cái đầu
+là credential mới + đường mạng mới + một vòng duyệt ATTT; cái thứ ba không cần gì nhưng dữ liệu cũ
+dần và người dùng phải tự import lại mỗi ngày.
+
+**Sửa ở đâu khi có câu trả lời:** thêm một nguồn vào `apps/desktop/src/main/briefing-service.ts`
+và một `BriefingSourceName` mới. `packages/daily-briefing` không phải sửa: nó đã nhận danh sách
+mục có mốc thời gian, không quan tâm mục đến từ đâu.
+
+### K2. 🟠 `duedate` trống trên diện rộng sẽ làm bản tin loãng
+
+**Bối cảnh:** JQL của bản tin là `assignee = currentUser() AND resolution = EMPTY`, và việc chia
+nhóm dựa vào `duedate`. Nhiều team Jira không điền trường này bao giờ.
+
+**Hậu quả:** mọi issue rơi hết vào nhóm "Đang làm", nhóm "Quá hạn"/"Đến hạn hôm nay" chỉ còn cam
+kết cục bộ, và bản tin trở thành một danh sách backlog thay vì một bản tin. v1 giảm nhẹ bằng cách
+đẩy issue thuộc sprint đang chạy lên trước trong nhóm đó — nhưng chỉ khi payload `jira_search` có
+nói về sprint, mà tool này không cho chọn field trả về nên thường là không có.
+
+**Câu hỏi cần Product owner trả lời:** khi gặp thực tế này thì nên (a) cho người dùng cấu hình JQL
+riêng, (b) dùng sprint hiện tại làm hạn ngầm định, hay (c) chấp nhận và chỉ hiện N issue mới cập
+nhật nhất? Chưa đoán hộ — cần số liệu từ Jira thật (cùng nhóm với C2).
+
+### K3. 🟡 Tóm tắt bản tin có được rời tổ chức không?
+
+**Bối cảnh:** `dailyBriefingSummaryEnabled` mặc định tắt. Khi bật, danh sách việc — gồm tên cam
+kết và tiêu đề issue — được gửi cho model. Hiện tại code từ chối provider ngoài, đi theo đúng cổng
+của `commitmentContextEnabled`.
+
+**Câu hỏi cần ATTT trả lời:** giữ nguyên (LiteLLM-only, như luồng chứng từ ngân hàng), hay cho
+phép provider ngoài khi người dùng đã bật chia sẻ như memory? Lập trường hiện tại là cái chặt hơn,
+và đổi sang cái lỏng hơn phải là một quyết định có người chịu trách nhiệm.
+
+**Sửa ở đâu:** `apps/desktop/src/main/briefing-summary.ts`, đúng một nhánh `isExternalProvider`.
