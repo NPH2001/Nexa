@@ -733,6 +733,91 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
   })
 })
 
+test.describe('E2E — bản tin công việc cá nhân (openspec add-daily-briefing)', () => {
+  test('bản tin hiện từ cam kết khi chưa có Jira, rồi có thêm việc Jira sau khi kết nối', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+
+      // Một cam kết quá hạn: đủ để bản tin có việc mà không cần Jira.
+      await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
+      await h.page.getByLabel(/Kết quả muốn đạt/).fill('Gửi báo cáo vận hành tháng 8')
+      await h.page.getByLabel(/Bước tiếp theo/).fill('Xin số liệu từ phòng Kế toán')
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 16)
+      await h.page.getByLabel('Hạn hoàn thành').fill(yesterday)
+      await h.page.getByRole('button', { name: 'Tạo cam kết' }).click()
+      await expect(h.page.getByText('Đã tạo cam kết.')).toBeVisible()
+
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      const briefing = h.page.getByRole('region', { name: 'Việc cần làm' })
+
+      // Nguồn cục bộ chạy được dù chưa cấu hình Jira.
+      const overdue = briefing.getByRole('list', { name: 'Quá hạn' })
+      await expect(overdue.getByText('Gửi báo cáo vận hành tháng 8')).toBeVisible()
+      await expect(overdue.getByText('Quá hạn 1 ngày')).toBeVisible()
+
+      // Nguồn thiếu phải NÓI RA, không được im lặng thành "không có việc nào".
+      await expect(briefing.getByText(/Chưa kết nối Jira/)).toBeVisible()
+      await expect(briefing.getByText(/Chưa gồm lịch họp/)).toBeVisible()
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+        await h.page.screenshot({
+          path: join(captureDir, 'briefing-no-jira-default.png'),
+          fullPage: true,
+        })
+      }
+
+      // Kết nối Jira rồi làm mới ⇒ việc được giao xuất hiện, chia đúng nhóm.
+      await h.page.getByRole('button', { name: 'Cài đặt' }).click()
+      await h.page.getByRole('tab', { name: 'Jira' }).click()
+      await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
+      await h.page
+        .getByLabel('Tên đăng nhập')
+        .or(h.page.locator('.field input').nth(1))
+        .fill('nguyen.van.a')
+      await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
+      await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      await briefing.getByRole('button', { name: 'Làm mới' }).click()
+
+      await expect(overdue.getByText('Rà soát log pilot tuần này')).toBeVisible({ timeout: 25_000 })
+      await expect(
+        briefing
+          .getByRole('list', { name: 'Đến hạn hôm nay' })
+          .getByText('Chuẩn bị số liệu cho báo cáo vận hành'),
+      ).toBeVisible()
+      await expect(
+        briefing.getByRole('list', { name: 'Đang làm' }).getByText('Dọn backlog kỹ thuật'),
+      ).toBeVisible()
+      // Cam kết cục bộ vẫn còn nguyên bên cạnh việc Jira.
+      await expect(overdue.getByText('Gửi báo cáo vận hành tháng 8')).toBeVisible()
+      await expect(briefing.getByText(/Chưa kết nối Jira/)).toHaveCount(0)
+
+      if (captureDir !== undefined && captureDir !== '') {
+        const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({
+          path: join(captureDir, 'briefing-default.png'),
+          fullPage: true,
+        })
+        await h.page.setViewportSize({ width: 620, height: 720 })
+        await h.page.screenshot({ path: join(captureDir, 'briefing-narrow.png'), fullPage: true })
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+    } finally {
+      await h.close()
+    }
+  })
+})
+
 test.describe('E2E — cam kết từ hội thoại', () => {
   test('Nexa đề xuất cam kết, người dùng xác nhận rồi thấy nó trong Mục tiêu và Hoạt động', async () => {
     const h = await launch({ litellmScenario: 'commitment-tool' })
