@@ -3,6 +3,9 @@ import { extname } from 'node:path'
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
 import { hashPath } from '@nexa/security'
+import { CfbArchive } from './cfb.js'
+import { detectImageMediaType, estimateImageTokens } from './image.js'
+import { isImageKind } from './types.js'
 import type {
   DocumentChunk,
   DocumentKind,
@@ -27,6 +30,14 @@ export interface DocumentLimits {
   readonly maxFilesPerRequest: number
   /** Trần ký tự trích xuất mỗi file. Tách khỏi giới hạn dung lượng file. */
   readonly maxCharsPerFile?: number
+  /**
+   * Trần dung lượng RIÊNG cho ảnh, tính sau khi gỡ metadata.
+   *
+   * Tách khỏi `maxFileSizeMb` vì hai con số này chặn hai thứ khác nhau: giới hạn chung bảo vệ
+   * bộ nhớ lúc đọc file, còn giới hạn ảnh bảo vệ payload thật sự rời khỏi máy — ảnh đi nguyên
+   * si tới model chứ không được rút gọn như văn bản.
+   */
+  readonly maxImageSizeMb?: number
 }
 
 export interface DocumentProcessorOptions {
@@ -44,10 +55,23 @@ const EXTENSION_MAP: Readonly<Record<string, DocumentKind>> = {
   '.txt': 'txt',
   '.log': 'txt',
   '.csv': 'txt',
+  '.tsv': 'txt',
   '.md': 'markdown',
   '.markdown': 'markdown',
   '.pdf': 'pdf',
   '.docx': 'docx',
+  '.doc': 'doc',
+  '.xlsx': 'xlsx',
+  '.xlsm': 'xlsx',
+  '.xls': 'xls',
+  '.pptx': 'pptx',
+  '.pptm': 'pptx',
+  '.ppt': 'ppt',
+  '.png': 'image',
+  '.jpg': 'image',
+  '.jpeg': 'image',
+  '.webp': 'image',
+  '.gif': 'image',
 }
 
 const MIME_MAP: Readonly<Record<DocumentKind, string>> = {
@@ -55,7 +79,54 @@ const MIME_MAP: Readonly<Record<DocumentKind, string>> = {
   markdown: 'text/markdown',
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  doc: 'application/msword',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  ppt: 'application/vnd.ms-powerpoint',
+  image: 'image/*',
 }
+
+/**
+ * "Họ" định dạng nhận ra được từ magic bytes.
+ *
+ * Magic bytes KHÔNG phân biệt được `.docx` với `.xlsx` — cả hai đều là ZIP; cũng như `.doc`
+ * với `.xls` — cả hai đều là OLE. Nên kiểm tra chéo diễn ra ở mức họ, rồi tinh chỉnh thêm
+ * bằng tên part bên trong (xem `refineOoxmlKind`). Bộ đọc của từng định dạng vẫn là chốt cuối:
+ * mở một `.xlsx` mà bên trong là Word thì nó báo lỗi rõ ràng.
+ */
+type FormatFamily = 'text' | 'pdf' | 'ooxml' | 'ole' | 'image'
+
+const KIND_FAMILY: Readonly<Record<DocumentKind, FormatFamily>> = {
+  txt: 'text',
+  markdown: 'text',
+  pdf: 'pdf',
+  docx: 'ooxml',
+  xlsx: 'ooxml',
+  pptx: 'ooxml',
+  doc: 'ole',
+  xls: 'ole',
+  ppt: 'ole',
+  image: 'image',
+}
+
+/** Phần mở rộng hiện ra trong hộp thoại chọn file. Suy thẳng từ `EXTENSION_MAP` để hai nơi
+ *  không bao giờ lệch nhau. */
+export const SUPPORTED_FILE_EXTENSIONS: readonly string[] = Object.keys(EXTENSION_MAP)
+  .map((extension) => extension.slice(1))
+  .sort()
+
+/**
+ * Phần mở rộng cho các luồng chỉ tiêu thụ VĂN BẢN trích xuất.
+ *
+ * Không gian Nghiệp vụ và hồ sơ chứng từ đọc `text`/`chunks` của tài liệu; một tấm ảnh cho ra
+ * chuỗi rỗng, nên nếu để lọt thì model nhận một tài liệu trống mà không ai được báo. Danh sách
+ * này giữ ảnh ra khỏi hộp thoại ngay từ đầu.
+ */
+export const TEXT_FILE_EXTENSIONS: readonly string[] = Object.entries(EXTENSION_MAP)
+  .filter(([, kind]) => !isImageKind(kind))
+  .map(([extension]) => extension.slice(1))
+  .sort()
 
 export class DocumentProcessor {
   private readonly runner: ExtractionRunner
@@ -93,7 +164,9 @@ export class DocumentProcessor {
     return results
   }
 
-  private async validate(file: FileDescriptor): Promise<{ file: FileDescriptor; kind: DocumentKind }> {
+  private async validate(
+    file: FileDescriptor,
+  ): Promise<{ file: FileDescriptor; kind: DocumentKind }> {
     const ext = extname(file.fileName).toLowerCase()
     const byExtension = EXTENSION_MAP[ext]
     if (byExtension === undefined) {
@@ -117,17 +190,25 @@ export class DocumentProcessor {
 
     // §14.1: "Validate MIME type và extension; không chỉ tin vào tên file."
     const signature = await readSignature(file.path)
-    const byContent = detectBySignature(signature)
-    if (byContent !== null && byContent !== byExtension) {
+    const expectedFamily = KIND_FAMILY[byExtension]
+    const actualFamily = detectFamily(signature)
+
+    if (actualFamily !== null && actualFamily !== expectedFamily) {
       throw new NexaError(ERROR_CODES.FILE_UNSUPPORTED, {
-        safeDetail: `content looks like "${byContent}" but extension says "${byExtension}"`,
+        safeDetail: `content looks like "${actualFamily}" but extension says "${byExtension}"`,
       })
     }
     // Nội dung nhị phân mang extension .txt: từ chối thay vì nhồi rác vào prompt.
-    if (byContent === null && (byExtension === 'txt' || byExtension === 'markdown')) {
-      if (looksBinary(signature)) {
+    if (actualFamily === null && expectedFamily === 'text' && looksBinary(signature)) {
+      throw new NexaError(ERROR_CODES.FILE_UNSUPPORTED, {
+        safeDetail: 'binary content with a text extension',
+      })
+    }
+    if (actualFamily === 'ooxml') {
+      const insideKind = refineOoxmlKind(signature)
+      if (insideKind !== null && insideKind !== byExtension) {
         throw new NexaError(ERROR_CODES.FILE_UNSUPPORTED, {
-          safeDetail: 'binary content with a text extension',
+          safeDetail: `office package contains "${insideKind}" parts but extension says "${byExtension}"`,
         })
       }
     }
@@ -144,13 +225,21 @@ export class DocumentProcessor {
   }): Promise<ProcessedDocument> {
     const started = Date.now()
     const maxChars = this.limits.maxCharsPerFile ?? this.limits.maxFileSizeMb * 400_000
+    const maxImageBytes =
+      (this.limits.maxImageSizeMb ?? Math.min(this.limits.maxFileSizeMb, 8)) * 1024 * 1024
 
-    const extracted = await this.runner.run({ path: file.path, kind, maxChars })
+    const extracted = await this.runner.run({ path: file.path, kind, maxChars, maxImageBytes })
+
+    if (isImageKind(kind)) {
+      return this.finishImage({ file, kind, extracted, started })
+    }
+
     const text = normalizeText(extracted.text)
 
     if (text.trim() === '') {
       throw new NexaError(ERROR_CODES.DOCUMENT_EXTRACTION_FAILED, {
-        safeDetail: extracted.suspectedScan === true ? 'pdf has no text layer' : 'no text extracted',
+        safeDetail:
+          extracted.suspectedScan === true ? 'pdf has no text layer' : 'no text extracted',
       })
     }
 
@@ -177,6 +266,55 @@ export class DocumentProcessor {
       truncated: extracted.truncated,
       ...(extracted.pageCount !== undefined ? { pageCount: extracted.pageCount } : {}),
       ...(extracted.suspectedScan === true ? { suspectedScan: true } : {}),
+    }
+  }
+
+  /**
+   * Ảnh đi một nhánh riêng: không có văn bản để chuẩn hoá, không có gì để chunk.
+   *
+   * `estimatedTokens` vẫn phải có thật, vì `AgentRuntime` dùng nó để quyết định ảnh có vừa
+   * context hay không — và ảnh đắt hơn nhiều so với cảm giác trực quan (một ảnh 1024×1024
+   * tốn cỡ 765 token, bằng gần hai trang văn bản).
+   */
+  private finishImage({
+    file,
+    kind,
+    extracted,
+    started,
+  }: {
+    file: FileDescriptor
+    kind: DocumentKind
+    extracted: { image?: ProcessedDocument['image'] }
+    started: number
+  }): ProcessedDocument {
+    const image = extracted.image
+    if (image === undefined) {
+      throw new NexaError(ERROR_CODES.DOCUMENT_EXTRACTION_FAILED, {
+        safeDetail: 'image extraction returned no image',
+      })
+    }
+
+    const estimatedTokens = estimateImageTokens(image.width, image.height)
+    this.log.perf('image-prepared', {
+      durationMs: Date.now() - started,
+      sizeBytes: file.sizeBytes,
+      preparedBytes: image.byteSize,
+      mediaType: image.mediaType,
+      metadataStripped: image.metadataStripped,
+      estimatedTokens,
+    })
+
+    return {
+      fileName: file.fileName,
+      kind,
+      sizeBytes: file.sizeBytes,
+      sourcePathHash: hashPath(file.path),
+      text: '',
+      chunks: [],
+      charCount: 0,
+      estimatedTokens,
+      truncated: false,
+      image,
     }
   }
 
@@ -257,29 +395,80 @@ export function normalizeText(raw: string): string {
 }
 
 function locationLabel(kind: DocumentKind, paragraphIndex: number): string {
-  return kind === 'pdf' ? `khối ${String(paragraphIndex)}` : `đoạn ${String(paragraphIndex)}`
+  const index = String(paragraphIndex)
+  switch (kind) {
+    case 'pdf':
+      return `khối ${index}`
+    case 'xlsx':
+    case 'xls':
+      return `vùng bảng ${index}`
+    case 'pptx':
+    case 'ppt':
+      return `nhóm slide ${index}`
+    default:
+      return `đoạn ${index}`
+  }
 }
 
+/**
+ * Đọc 4 KB đầu thay vì 512 byte.
+ *
+ * 512 byte đủ để nhận ra họ định dạng, nhưng không đủ để thấy tên part đầu tiên bên trong một
+ * gói OOXML — mà đó chính là thứ phân biệt `.docx` với `.xlsx`.
+ */
 async function readSignature(path: string): Promise<Buffer> {
+  const SIGNATURE_BYTES = 4096
   const handle = await open(path, 'r')
   try {
-    const buffer = Buffer.alloc(512)
-    const { bytesRead } = await handle.read(buffer, 0, 512, 0)
+    const buffer = Buffer.alloc(SIGNATURE_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, SIGNATURE_BYTES, 0)
     return buffer.subarray(0, bytesRead)
   } finally {
     await handle.close()
   }
 }
 
-/**
- * Nhận dạng theo magic bytes.
- *
- * DOCX là một file ZIP, và ZIP cũng là vỏ của xlsx/pptx/jar. Ở đây ta chỉ kết luận "đây là zip"
- * và để extension quyết định — mammoth sẽ báo lỗi rõ nếu bên trong không phải Word.
- */
-function detectBySignature(signature: Buffer): DocumentKind | null {
+/** Nhận dạng HỌ định dạng theo magic bytes. */
+function detectFamily(signature: Buffer): FormatFamily | null {
   if (signature.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf'
-  if (signature.length >= 4 && signature[0] === 0x50 && signature[1] === 0x4b) return 'docx'
+  if (detectImageMediaType(signature) !== null) return 'image'
+  if (CfbArchive.isCfb(signature)) return 'ole'
+  // "PK\x03\x04" — local file header của ZIP.
+  if (signature.length >= 4 && signature[0] === 0x50 && signature[1] === 0x4b) return 'ooxml'
+  return null
+}
+
+/**
+ * Đoán loại gói OOXML từ tên part xuất hiện sớm trong file.
+ *
+ * Đọc tên từ chính các local file header, KHÔNG tìm chuỗi trong toàn bộ 4 KB. Khác biệt này
+ * quan trọng: phần lớn 4 KB đầu là dữ liệu đã nén, và ba byte `xl/` xuất hiện ngẫu nhiên trong
+ * đó thường xuyên hơn ta tưởng — đủ để thỉnh thoảng từ chối oan một file `.docx` hợp lệ. Tên
+ * part thì nằm ở vị trí xác định trong header nên đọc được chính xác.
+ *
+ * Không thấy part chính trong 4 KB đầu thì trả `null` và để bộ đọc kết luận; đây là kiểm tra
+ * bổ sung, không phải chốt chặn duy nhất.
+ */
+function refineOoxmlKind(signature: Buffer): DocumentKind | null {
+  const LOCAL_FILE_SIGNATURE = 0x04034b50
+  let at = 0
+
+  while (at + 30 <= signature.length && signature.readUInt32LE(at) === LOCAL_FILE_SIGNATURE) {
+    const nameLength = signature.readUInt16LE(at + 26)
+    const extraLength = signature.readUInt16LE(at + 28)
+    const nameEnd = at + 30 + nameLength
+    if (nameEnd > signature.length) break
+
+    const name = signature.subarray(at + 30, nameEnd).toString('latin1')
+    if (name.startsWith('word/')) return 'docx'
+    if (name.startsWith('xl/')) return 'xlsx'
+    if (name.startsWith('ppt/')) return 'pptx'
+
+    // Không thể nhảy tới entry sau nếu độ dài nằm ở data descriptor (cờ bit 3) thay vì header.
+    if ((signature.readUInt16LE(at + 6) & 0x0008) !== 0) break
+    at = nameEnd + extraLength + signature.readUInt32LE(at + 18)
+  }
+
   return null
 }
 

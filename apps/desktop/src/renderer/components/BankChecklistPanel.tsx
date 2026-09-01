@@ -95,7 +95,8 @@ export function BankChecklistPanel(props: {
     void (async () => {
       setBusy(true)
       try {
-        const picked = await api.files.pick()
+        // Hồ sơ chứng từ chỉ đọc văn bản trích xuất — ảnh chưa dùng được ở đây (I1).
+        const picked = await api.files.pick('text')
         let completed = 0
         for (const file of picked) {
           try {

@@ -115,6 +115,7 @@ export class ConfigRepository {
       modelId: string
       displayName: string
       contextWindowTokens: number
+      supportsVision?: boolean
     },
   ): ModelConfig {
     return this.store.transaction(() => {
@@ -139,8 +140,8 @@ export class ConfigRepository {
         .prepare(
           `INSERT INTO models
              (id, profile_id, provider, model_id, display_name, is_default, verified,
-              context_window_tokens, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+              context_window_tokens, supports_vision, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
         )
         .run(
           id,
@@ -150,6 +151,7 @@ export class ConfigRepository {
           input.displayName,
           b(isFirst),
           input.contextWindowTokens,
+          b(input.supportsVision ?? false),
           now,
         )
       return {
@@ -160,6 +162,7 @@ export class ConfigRepository {
         isDefault: isFirst,
         verified: false,
         contextWindowTokens: input.contextWindowTokens,
+        supportsVision: input.supportsVision ?? false,
         createdAt: now,
       }
     })
@@ -308,6 +311,7 @@ function mapModel(row: Record<string, unknown>): ModelConfig {
     isDefault: Number(row['is_default']) === 1,
     verified: Number(row['verified']) === 1,
     contextWindowTokens: Number(row['context_window_tokens']),
+    supportsVision: Number(row['supports_vision'] ?? 0) === 1,
     createdAt: String(row['created_at']),
   }
 }

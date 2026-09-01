@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@nexa/llm-client'
+import type { ChatContentPart, ChatMessage } from '@nexa/llm-client'
 import { estimateTokens, type ProcessedDocument } from '@nexa/document-processor'
 import { EXPAND_TOOLS_TOOL_NAME, type MessageRole } from '@nexa/shared-types'
 
@@ -110,6 +110,10 @@ export interface BuiltContext {
   readonly estimatedTokens: number
   /** true nếu tài liệu bị cắt bớt chunk để vừa ngân sách. */
   readonly documentsTruncated: boolean
+  /** Số ảnh thực sự được gửi kèm lượt này. */
+  readonly imagesIncluded: number
+  /** Số ảnh bị bỏ vì không còn đủ ngân sách context. */
+  readonly imagesTruncated: number
   /** Số fact thực sự được gửi tới model sau giới hạn số lượng/token. */
   readonly memoryFactsIncluded: number
   /** Số fact hợp lệ nhưng bị bỏ vì vượt giới hạn context. */
@@ -149,8 +153,34 @@ export function buildContext(input: BuildContextInput): BuiltContext {
   // cho câu hỏi này.
   const documentMessages: ChatMessage[] = []
   let documentsTruncated = false
+  const imageParts: ChatContentPart[] = []
+  let imagesIncluded = 0
+  let imagesTruncated = 0
 
   for (const doc of input.documents ?? []) {
+    if (doc.image !== undefined) {
+      // Ảnh vào thẳng ngân sách chung: nó không rút gọn được, nên hoặc gửi cả tấm hoặc không
+      // gửi. Bỏ im lặng là điều DUY NHẤT không được phép — `imagesTruncated` buộc caller phải
+      // nói cho người dùng biết ảnh nào đã không tới được model.
+      if (used + doc.estimatedTokens > available) {
+        imagesTruncated++
+        continue
+      }
+      imageParts.push(
+        {
+          type: 'text',
+          text: `Ảnh người dùng đính kèm — "${doc.fileName}" (${String(doc.image.width)}×${String(doc.image.height)}):`,
+        },
+        {
+          type: 'image_url',
+          image_url: { url: `data:${doc.image.mediaType};base64,${doc.image.dataBase64}` },
+        },
+      )
+      used += doc.estimatedTokens
+      imagesIncluded++
+      continue
+    }
+
     const { text, truncated } = fitDocument(doc, Math.floor(available * 0.6) - used)
     if (text === '') {
       documentsTruncated = true
@@ -162,6 +192,10 @@ export function buildContext(input: BuildContextInput): BuiltContext {
     }:\n\n${text}`
     documentMessages.push({ role: 'user', content })
     used += estimateTokens(content)
+  }
+
+  if (imageParts.length > 0) {
+    documentMessages.push({ role: 'user', content: imageParts })
   }
 
   // Lịch sử: lấy từ mới nhất ngược về, dừng khi hết ngân sách.
@@ -195,6 +229,8 @@ export function buildContext(input: BuildContextInput): BuiltContext {
     truncatedCount,
     estimatedTokens: used,
     documentsTruncated,
+    imagesIncluded,
+    imagesTruncated,
     memoryFactsIncluded: memory.included,
     memoryFactsTruncated: memory.truncated,
     commitmentsIncluded: commitments.included,

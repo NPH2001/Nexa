@@ -215,6 +215,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     limits: {
       maxFileSizeMb: settings.get().maxFileSizeMb,
       maxFilesPerRequest: settings.get().maxFilesPerRequest,
+      maxImageSizeMb: settings.get().maxImageSizeMb,
     },
   })
 

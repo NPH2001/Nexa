@@ -58,6 +58,8 @@ export const modelAddSchema = z.object({
   modelId: z.string().min(1).max(200),
   displayName: z.string().min(1).max(120),
   contextWindowTokens: z.number().int().min(1024).max(2_000_000).default(128_000),
+  /** Xem `ModelConfig.supportsVision`: người dùng khai, mặc định tắt. */
+  supportsVision: z.boolean().default(false),
 })
 
 export const modelRefSchema = z.object({ id: z.string().uuid() })
@@ -464,8 +466,16 @@ export const chatCancelSchema = z.object({ requestId: z.string().min(1).max(100)
 
 // ── File (EPIC-06) ────────────────────────────────────────────────────────
 
-/** Không tham số: main mở dialog, người dùng chọn. Renderer không đề xuất path. */
-export const filePickSchema = z.object({})
+/**
+ * Renderer KHÔNG đề xuất path — nó chỉ nói luồng này nhận loại nội dung nào.
+ *
+ * `text` dùng cho các luồng chỉ tiêu thụ văn bản trích xuất (Không gian Nghiệp vụ, hồ sơ chứng
+ * từ). Đây thuần tuý là để hộp thoại không mời người dùng chọn một loại file sẽ bị từ chối ngay
+ * sau đó; main vẫn kiểm lại lần nữa, vì renderer có thể bị chèn mã.
+ */
+export const filePickSchema = z.object({
+  accept: z.enum(['all', 'text']).default('all'),
+})
 
 export const fileReleaseSchema = z.object({ fileToken: z.string().uuid() })
 

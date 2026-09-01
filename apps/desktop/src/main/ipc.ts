@@ -10,6 +10,7 @@ import {
   type IpcChannel,
 } from '@nexa/shared-types'
 import { SECURITY_EVENTS, newRequestId } from '@nexa/observability'
+import { isImageKind, type ProcessedDocument } from '@nexa/document-processor'
 import {
   auditFields,
   buildErrorCodePage,
@@ -188,6 +189,25 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
    * Renderer không bao giờ gửi đường dẫn (§5.3) — nó gửi token, main tự tra ra descriptor. Token
    * được giải phóng ngay sau khi trích xuất, thành công hay không, đúng như đường tài liệu của chat.
    */
+  /**
+   * Chốt chặn cho các luồng CHỈ đọc văn bản trích xuất (Không gian Nghiệp vụ, hồ sơ chứng từ).
+   *
+   * Ảnh cho ra `text` rỗng và `chunks` rỗng, nên nếu để lọt thì model nhận một tài liệu trống
+   * và trả về một kết quả trông vẫn hợp lý — không ai biết là nó chưa đọc gì cả. Đây là chỗ
+   * duy nhất chặn được: `file:pick` chỉ lọc ở mức hộp thoại, mà renderer thì có thể bị chèn mã.
+   *
+   * Việc chặn này cũng chính là điều giữ cho phần ảnh của Không gian Nghiệp vụ đứng yên cho tới
+   * khi hợp đồng consent được duyệt (OPEN-QUESTIONS I1).
+   */
+  const requireTextDocument = (document: ProcessedDocument): ProcessedDocument => {
+    if (document.image !== undefined || isImageKind(document.kind)) {
+      throw new NexaError(ERROR_CODES.DOCUMENT_REQUIRES_TEXT, {
+        safeDetail: 'this workspace flow consumes extracted text; images have none',
+      })
+    }
+    return document
+  }
+
   const readPickedFileText = async (fileToken: string | undefined): Promise<string> => {
     if (fileToken === undefined) {
       throw new NexaError(ERROR_CODES.VALIDATION_FAILED, { safeDetail: 'missing file token' })
@@ -200,7 +220,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
           safeDetail: 'no text could be extracted from the picked file',
         })
       }
-      return document.text
+      return requireTextDocument(document).text
     } finally {
       services.files.releaseAll(tokens)
     }
@@ -732,7 +752,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
             safeDetail: 'no document could be extracted from the picked file',
           })
         }
-        const output = await services.bankChecklist.extract(document)
+        const output = await services.bankChecklist.extract(requireTextDocument(document))
         const evidence = services.bankChecklists.addDocument({
           caseId: item.id,
           fileName: document.fileName,
@@ -868,12 +888,12 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     },
 
     // ── Files ─────────────────────────────────────────────────────────────
-    'file:pick': async () => {
+    'file:pick': async (input) => {
       const window = ctx.getWindow()
       if (window === null) {
         throw new NexaError(ERROR_CODES.INTERNAL_ERROR, { safeDetail: 'no window' })
       }
-      return services.files.pick(window)
+      return services.files.pick(window, input.accept)
     },
     'file:release': (input) => {
       services.files.release(input.fileToken)

@@ -821,10 +821,20 @@ trong `tool-preset-selector.test.ts`.
 **Câu hỏi:** điều kiện gì để Nexa được phép nhận một ảnh chụp màn hình sản phẩm nội bộ và gửi nó
 tới một model?
 
+**Cập nhật 2026-09-01 — đường nạp ảnh trong Chat đã được mở theo yêu cầu của chủ sở hữu sản
+phẩm** (openspec `add-multi-format-file-upload`, xem mục J1). Điều đó **không** trả lời câu hỏi
+dưới đây và **không** mở khoá mục 13 của `add-ba-workbench`: ảnh → danh sách trường trong Không
+gian Nghiệp vụ vẫn dừng cho tới khi hợp đồng consent được duyệt.
+
+Việc "vẫn dừng" đó là một chốt chặn có thật trong mã, không phải một lời hứa: `ba:document:extract`
+và `ba:checklist:ingest` từ chối ảnh bằng `DOCUMENT_REQUIRES_TEXT` ngay ở main process, và hộp
+thoại chọn file của hai luồng đó không mời chọn ảnh. Chặn ở main mới là chốt, vì renderer có thể
+gọi thẳng channel (§5.3).
+
 **Vì sao nó không phải một dòng code:**
 
-- Hiện **không đường nào** trong Nexa nhận ảnh — `document-processor` chỉ chấp nhận `.txt`, `.md`,
-  `.pdf`, `.docx`. Mở ảnh là mở thêm loại file ở `FileBroker`.
+- ~~Hiện **không đường nào** trong Nexa nhận ảnh~~ — từ 2026-09-01, `document-processor` nhận
+  PNG/JPEG/WebP/GIF cho **Chat**. Phần nghiệp vụ thì vẫn chưa.
 - `DESIGN.md` đang ghi rõ file và ảnh còn tắt cho lựa chọn `chatgpt` **cho tới khi** có một hợp
   đồng consent và media transport đã được duyệt. Việc này đụng thẳng F1.
 - Một ảnh chụp màn hình mang theo nhiều hơn thứ người gửi định gửi: dữ liệu khách hàng trên
@@ -862,3 +872,77 @@ open question cuối còn mở của change, và giờ đã có bản chạy th�
 
 **Sửa ở đâu nếu khác:** `REVIEW_SCOPE_NOTE` và `summarizeReview` trong
 `apps/desktop/src/renderer/components/ba-ui.ts`, kèm test tương ứng trong `ba-ui.test.ts`.
+
+## J. Mở rộng định dạng file đính kèm (2026-09-01, openspec `add-multi-format-file-upload`)
+
+### J1. 🔴 Ảnh trong Chat đã bật trước khi hợp đồng consent được duyệt
+
+**Yêu cầu:** chủ sở hữu sản phẩm yêu cầu cho phép đính kèm ảnh và bộ Office đầy đủ, ngày
+2026-09-01. Tôi đã nêu rằng việc này chạm thẳng vào I1 — câu hỏi consent/transport cho ảnh vẫn
+đang mở — và quyết định được giữ nguyên. Ghi lại ở đây để không ai phải suy ra từ lịch sử git.
+
+**Điều này đi trước một mục đang chờ duyệt.** I1 nói phần ảnh "sẽ không bắt đầu cho tới khi có kết
+luận"; phạm vi câu đó là mục 13 của `add-ba-workbench` (ảnh → trường nghiệp vụ), và mục đó **vẫn
+dừng**. Nhưng lập luận nền của I1 — một ảnh chụp màn hình mang theo nhiều hơn thứ người gửi định
+gửi — áp cho cả đường Chat, nên nó cần ATTT xem lại chứ không tự hết hiệu lực.
+
+**Hệ quả cần ATTT duyệt trước khi phát hành:**
+
+| Vấn đề                                                        | Trạng thái                                                            |
+| ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Ảnh nội bộ có thể tới provider **ngoài** tổ chức              | Áp cùng cổng fail-closed như tài liệu (F1) — phải allowlist tường minh |
+| Ảnh mang EXIF/GPS/số sê-ri máy                                | **Đã gỡ** trước khi mã hoá base64; gỡ thất bại thì không gửi          |
+| Ảnh chụp màn hình mang dữ liệu ngoài chủ ý người gửi          | **Không có biện pháp tự động.** Vẫn là rủi ro còn lại                  |
+| LiteLLM có ghi usage cho nội dung ảnh không                   | Chưa xác minh với hạ tầng thật (cùng nhóm với C2)                     |
+| Ảnh nằm lại trên đĩa                                          | Không. `§8.1` được giữ: base64 cũng là bản sao, và không có chỗ lưu   |
+
+**Biện pháp đã dựng để việc rò rỉ không xảy ra do vô tình:**
+
+1. **Gỡ metadata bắt buộc.** EXIF/XMP/comment bị loại khỏi JPEG/PNG/WebP/GIF trước khi ảnh rời
+   máy. Không có nhánh dự phòng "gỡ lỗi thì gửi ảnh gốc" — gỡ thất bại là lỗi trích xuất.
+2. **Ảnh dùng chung cổng chính sách với tài liệu.** Ảnh là một `DocumentKind`, nên
+   `assertModelMayReceiveDocuments` áp cho ảnh y như cho `.docx` — provider ngoài vẫn fail-closed.
+3. **Model phải được khai là đọc được ảnh**, mặc định tắt cho mọi model kể cả model đã cấu hình
+   từ trước. Đây là kiểm tra năng lực tách khỏi kiểm tra quyền, để thông báo cho người dùng không
+   sai một nửa.
+4. **Ảnh không vừa context là lỗi**, không phải cắt bớt im lặng — người dùng không bao giờ nhận
+   một câu trả lời trôi chảy về tấm ảnh model chưa từng thấy.
+5. **Ảnh gửi bằng data URL**, không bằng URL mạng, để provider không tự đi tải file qua một đường
+   mà `allowedDomains` không nhìn thấy.
+
+**Câu hỏi cần ATTT trả lời:** cổng allowlist + gỡ metadata đã đủ cho ảnh trong Chat chưa, hay ảnh
+cần một cờ riêng (kiểu `baVision`) để IT khoá được toàn tổ chức độc lập với tài liệu văn bản?
+
+**Sửa ở đâu nếu quyết định khác:** `packages/document-processor/src/image.ts` (gỡ metadata),
+`packages/agent-runtime/src/document-policy.ts` (cổng chính sách), và bảng `EXTENSION_MAP` trong
+`pipeline.ts` — bỏ năm phần mở rộng ảnh ở đó là đóng hẳn đường nạp.
+
+### J2. 🟠 Bộ đọc Office tự viết chưa gặp file thật của người dùng
+
+**Bối cảnh:** năm định dạng Office được đọc bằng mã viết trong repo, không dùng thư viện. Lý do
+nằm ở `openspec/changes/add-multi-format-file-upload/design.md` D1: dữ liệu đến từ file không tin
+cậy, và tự viết là cách duy nhất đặt được trần bung dữ liệu vào đúng chỗ cần.
+
+**Cái giá:** chất lượng trích xuất ở mức "đủ dùng". Fixture trong `tests/support` dựng đúng những
+chi tiết khó (mảnh văn bản đảo thứ tự, chuỗi SST cắt qua CONTINUE, mini stream, ô thưa), nhưng
+fixture do tôi sinh ra thì chỉ chứng minh được bộ đọc khớp với hiểu biết của tôi về định dạng.
+
+**Cập nhật 2026-09-01 — đã chạy với 8 tài liệu thật** (2 `.xlsx`, 3 `.docx` gồm một file 9,4 MB,
+2 `.pptx` gồm một file 12 MB, 1 `.doc` Word 97). Cả 8 đọc được, không file nào lỗi, file lớn nhất
+mất 824 ms. Đo chất lượng mã tiếng Việt bằng thống kê ký tự thay vì đọc nội dung: 0 ký tự thay thế
+và 0 rác Latin-1 ở cả 8 file. Vài ký tự Latin-1 xuất hiện (`± ° µ × ½ ÷` trong một đồ án cơ khí,
+`·` làm dấu phân cách trong một slide) là ký tự hợp lệ, không phải lỗi giải mã.
+
+**Một lỗi thật do lần chạy đó phát hiện, đã sửa:** ô ngày trong bảng tính ra số serial. Một cột
+tiêu đề "Ngày ký" tới model dưới dạng `45678`; model không có cách nào biết đó là ngày nên sẽ trả
+lời tự tin về một con số — đúng kiểu sai âm thầm mà cả change này đang tránh. Nay `.xlsx` và `.xls`
+đều đọc tầng style (numFmt/XF) và xuất ngày dạng ISO. Đáng nói là **không file `.xlsx` nào của
+người dùng có ô ngày**, nên lỗi này chỉ lộ ra khi dựng thêm một file thăm dò — bài học cho việc
+"chạy với file thật" không tự động nghĩa là "đã phủ hết".
+
+**Giới hạn còn lại, không sửa được từ phía đọc:** `.doc` tiếng Việt mã TCVN3/VNI ra sai dấu, vì
+file không mang thông tin code page. File `.doc` đã thử nằm ở dạng Unicode nên không dính; điều đó
+KHÔNG chứng minh được là file TCVN3 sẽ ổn.
+
+**Việc còn lại trước pilot:** thử thêm `.xls` cũ (chưa có mẫu thật nào trên máy) và một `.doc` mã
+TCVN3 nếu tổ chức còn lưu. Cùng nhóm với C2.

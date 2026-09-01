@@ -818,6 +818,15 @@ export interface ModelConfig {
   /** Đã đối chiếu với GET /v1/models thành công lần nào chưa. */
   readonly verified: boolean
   readonly contextWindowTokens: number
+  /**
+   * Model này đọc được ảnh hay không.
+   *
+   * Do người dùng khai chứ không tự dò: `GET /v1/models` của LiteLLM không nói gì về phương
+   * thức đầu vào, và đoán theo tên model là cách hỏng âm thầm — mặc định FALSE để một lượt gửi
+   * ảnh bị chặn ngay tại máy, kèm lời giải thích, thay vì bị gateway trả 400 khó hiểu hoặc bị
+   * model lặng lẽ bỏ qua tấm ảnh.
+   */
+  readonly supportsVision: boolean
   readonly createdAt: string
 }
 

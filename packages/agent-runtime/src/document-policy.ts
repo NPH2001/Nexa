@@ -76,6 +76,41 @@ export function mayReceiveDocuments(
   }
 }
 
+/**
+ * §14 + openspec `add-multi-format-file-upload`: model phải THẬT SỰ đọc được ảnh trước khi ta
+ * gửi ảnh cho nó.
+ *
+ * Đây là kiểm tra NĂNG LỰC, chạy sau và độc lập với kiểm tra QUYỀN ở trên. Hai thứ khác nhau:
+ * một model nội bộ có thể được phép nhận tài liệu nhưng vẫn chỉ đọc chữ. Không tách ra thì lỗi
+ * hiện lên là "không được phép", trong khi sự thật là "chọn nhầm model".
+ *
+ * Fail-closed: `supportsVision` mặc định false, nên model chưa khai thì ảnh không đi.
+ */
+export function assertModelSupportsImages(
+  model: { readonly modelId: string; readonly supportsVision: boolean },
+  documents: readonly ProcessedDocument[],
+): void {
+  if (!documents.some((doc) => doc.image !== undefined)) return
+  if (model.supportsVision) return
+
+  throw new NexaError(ERROR_CODES.MODEL_DOES_NOT_SUPPORT_IMAGES, {
+    safeDetail: `model "${model.modelId}" is not marked as able to read images`,
+  })
+}
+
+/** UI dùng để khoá nút Gửi và giải thích trước khi người dùng bấm. */
+export function mayReceiveImages(
+  model: { readonly modelId: string; readonly supportsVision: boolean },
+  documents: readonly ProcessedDocument[],
+): boolean {
+  try {
+    assertModelSupportsImages(model, documents)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export interface DocumentWarning {
   readonly fileName: string
   readonly kind: string
@@ -83,6 +118,8 @@ export interface DocumentWarning {
   readonly estimatedTokens: number
   readonly truncated: boolean
   readonly suspectedScan: boolean
+  /** Với ảnh: kích thước điểm ảnh, để người dùng đối chiếu đúng tấm mình vừa chọn. */
+  readonly imageSize?: { readonly width: number; readonly height: number }
 }
 
 /**
@@ -98,5 +135,8 @@ export function summarizeForWarning(documents: readonly ProcessedDocument[]): Do
     estimatedTokens: doc.estimatedTokens,
     truncated: doc.truncated,
     suspectedScan: doc.suspectedScan === true,
+    ...(doc.image === undefined
+      ? {}
+      : { imageSize: { width: doc.image.width, height: doc.image.height } }),
   }))
 }

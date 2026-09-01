@@ -39,7 +39,7 @@ import {
 } from './context-builder.js'
 import { ConfirmationGuard, type ApprovalDecision } from './confirmation-guard.js'
 import { OperationTracker, isUncertainOutcome } from './operation-tracker.js'
-import { assertModelMayReceiveDocuments } from './document-policy.js'
+import { assertModelMayReceiveDocuments, assertModelSupportsImages } from './document-policy.js'
 import { selectPresetForHistory } from './tool-preset-selector.js'
 
 /**
@@ -124,6 +124,13 @@ export interface RunTurnInput {
   readonly modelId: string
   readonly modelProvider: LlmProvider
   readonly contextWindowTokens: number
+  /**
+   * Model đang chọn có đọc được ảnh không. Host lấy từ `ModelConfig.supportsVision`.
+   *
+   * Mặc định coi như KHÔNG khi caller không truyền: cùng lập trường fail-closed với cột trong
+   * DB — thà bắt người dùng bật một lần còn hơn để ảnh bị model bỏ qua trong im lặng.
+   */
+  readonly modelSupportsVision?: boolean
   readonly history: readonly { role: MessageRole; content: string }[]
   readonly documents?: readonly ProcessedDocument[]
   readonly memoryFacts?: readonly RuntimeMemoryFact[]
@@ -181,6 +188,11 @@ export class AgentRuntime {
     if (input.documents !== undefined && input.documents.length > 0) {
       // §11.2 — chặn trước khi bất kỳ byte nào rời máy. Provider ngoài là fail-closed.
       assertModelMayReceiveDocuments(input.modelProvider, input.modelId, settings)
+      // Rồi mới tới năng lực: được phép gửi không có nghĩa là model đọc được ảnh.
+      assertModelSupportsImages(
+        { modelId: input.modelId, supportsVision: input.modelSupportsVision ?? false },
+        input.documents,
+      )
     }
 
     const budget: ContextBudget = { contextWindowTokens: input.contextWindowTokens }
@@ -223,6 +235,15 @@ export class AgentRuntime {
         eligibleCount: baKnowledge.length,
         includedCount: context.baKnowledgeIncluded,
         truncatedCount: context.baKnowledgeTruncated,
+      })
+    }
+    // Ảnh bị loại vì hết ngân sách là LỖI, không phải một lần cắt bớt như với văn bản: người
+    // dùng đính kèm ảnh rồi nhận về câu trả lời trông có vẻ hợp lý mà model chưa hề nhìn thấy
+    // ảnh là kết cục tệ nhất có thể.
+    if (context.imagesTruncated > 0) {
+      throw new NexaError(ERROR_CODES.IMAGE_EXCEEDS_CONTEXT, {
+        requestId: input.requestId,
+        safeDetail: `${String(context.imagesTruncated)} image(s) did not fit the remaining context budget`,
       })
     }
     if (context.truncatedCount > 0) {

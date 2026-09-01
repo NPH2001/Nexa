@@ -131,6 +131,7 @@ export const api = {
       modelId: string
       displayName: string
       contextWindowTokens: number
+      supportsVision: boolean
     }) => call<ModelConfig>('model:add', input),
     remove: (id: string) => call<{ removed: boolean }>('model:remove', { id }),
     setDefault: (id: string) => call<{ ok: boolean }>('model:setDefault', { id }),
@@ -386,7 +387,9 @@ export const api = {
   },
 
   files: {
-    pick: () => call<{ token: string; fileName: string; sizeBytes: number }[]>('file:pick'),
+    /** `accept: 'text'` cho luồng chỉ đọc văn bản — hộp thoại khi đó không mời chọn ảnh. */
+    pick: (accept: 'all' | 'text' = 'all') =>
+      call<{ token: string; fileName: string; sizeBytes: number }[]>('file:pick', { accept }),
     release: (fileToken: string) => call<{ ok: boolean }>('file:release', { fileToken }),
   },
 

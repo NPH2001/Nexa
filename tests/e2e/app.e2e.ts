@@ -6,11 +6,12 @@ import {
   type Page,
 } from '@playwright/test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { electronEnvironment } from '../support/electron-env.js'
+import { IMAGE_METADATA_MARKER, makePng } from '../support/make-image.js'
 
 /**
  * E2E desktop — T-13-13, §17.1 "E2E desktop: cấu hình LiteLLM, thêm model, chat, file attach,
@@ -149,7 +150,7 @@ test.describe('E2E — cấu hình và chat', () => {
       ])
       await selector.selectOption('chatgpt:gpt-5.6-terra')
       await expect(selector).toHaveValue('chatgpt:gpt-5.6-terra')
-      await expect(h.page.getByLabel('Đính kèm tài liệu')).toBeDisabled()
+      await expect(h.page.getByLabel('Đính kèm tài liệu hoặc ảnh')).toBeDisabled()
 
       const captureDir = process.env['NEXA_CAPTURE_VISUALS']
       if (captureDir !== undefined && captureDir !== '') {
@@ -878,6 +879,63 @@ test.describe('E2E — lịch sử tồn tại qua các lần khởi động', (
   })
 })
 
+test.describe('E2E — đính kèm ảnh (openspec add-multi-format-file-upload)', () => {
+  test('ảnh đi tới model đã gỡ metadata, và bị chặn ở model chỉ đọc chữ', async () => {
+    const h = await launch({ litellmScenario: 'vision' })
+    try {
+      await configureLiteLlm(h)
+
+      // Model thứ hai, lần này có đánh dấu "Đọc được ảnh".
+      await h.page.getByPlaceholder('Model id (ví dụ gpt-5.x-internal)').fill('model-vision')
+      await h.page.getByPlaceholder('Tên hiển thị').fill('Model có thị giác')
+      await h.page.getByLabel('Đọc được ảnh').check()
+      await h.page.getByRole('button', { name: 'Thêm' }).click()
+      await expect(h.page.getByText('model-vision')).toBeVisible()
+
+      // Ảnh thật trên đĩa, mang sẵn một chunk metadata để đối chứng.
+      const imagePath = join(h.userDataDir, 'so-do-kien-truc.png')
+      writeFileSync(imagePath, makePng(64, 32))
+
+      // Hộp thoại native là thứ DUY NHẤT bị thay thế — không kịch bản hoá được từ renderer.
+      // FileBroker, worker trích xuất, chính sách và đường gửi model đều là mã thật.
+      await h.app.evaluate(({ dialog }, picked) => {
+        dialog.showOpenDialog = () =>
+          Promise.resolve({ canceled: false, filePaths: [picked as string] })
+      }, imagePath)
+
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      const selector = h.page.getByLabel('Chọn model')
+      await selector.selectOption('litellm:model-a')
+
+      await h.page.getByLabel('Đính kèm tài liệu hoặc ảnh').click()
+      await expect(h.page.locator('.attachments .chip').first()).toContainText(
+        'so-do-kien-truc.png',
+      )
+
+      // Model chưa khai đọc được ảnh ⇒ nói rõ lý do và khoá nút Gửi, không để người dùng bấm
+      // rồi mới nhận lỗi từ gateway.
+      await h.page.getByLabel('Nội dung câu hỏi').fill('So do nay noi gi?')
+      await expect(h.page.getByText(/chỉ đọc văn bản, không xem được ảnh/)).toBeVisible()
+      await expect(h.page.getByRole('button', { name: 'Gửi' })).toBeDisabled()
+
+      // Đổi sang model đọc được ảnh ⇒ mở khoá, không phải chọn lại file.
+      await selector.selectOption('litellm:model-vision')
+      await expect(h.page.getByText(/chỉ đọc văn bản, không xem được ảnh/)).toBeHidden()
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+
+      // Mock nói lại chính xác những gì nó nhận được: có ảnh, đúng media type, và metadata
+      // đã bị gỡ. Đây là chỗ khẳng định thứ THẬT SỰ rời khỏi máy, không phải trạng thái UI.
+      const reply = h.page.getByText(/CO-ANH|KHONG-CO-ANH/)
+      await expect(reply).toBeVisible({ timeout: 30_000 })
+      await expect(reply).toContainText('CO-ANH image/png')
+      await expect(reply).toContainText('DA-GO-METADATA')
+      expect(makePng(64, 32).toString('latin1')).toContain(IMAGE_METADATA_MARKER)
+    } finally {
+      await h.close()
+    }
+  })
+})
+
 test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
   /**
    * Mock LiteLLM đóng thế api.openai.com được vì giao thức giống hệt — đó chính là lý do
@@ -1153,7 +1211,9 @@ test.describe('E2E — không gian Nghiệp vụ (BA)', () => {
 
       // Khoanh vào đúng thẻ của mục vừa tạo: chữ "Chờ xác nhận" còn xuất hiện ở thống kê, ở
       // dropdown lọc và ở toast, nên tìm theo text trên cả trang là locator quá rộng.
-      const card = h.page.locator('.ba-list .ba-card').filter({ hasText: 'Ngưỡng miễn phí giao hàng' })
+      const card = h.page
+        .locator('.ba-list .ba-card')
+        .filter({ hasText: 'Ngưỡng miễn phí giao hàng' })
       await expect(card).toContainText('Chờ xác nhận')
       await card.getByRole('button', { name: 'Xác nhận' }).click()
       await expect(card).toContainText('Đã xác nhận')

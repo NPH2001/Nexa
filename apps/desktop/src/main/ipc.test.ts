@@ -52,6 +52,10 @@ vi.mock('electron', () => ({
 
 const { registerIpc } = await import('./ipc.js')
 
+const BA_DOCUMENT_ID = '00000000-0000-4000-8000-0000000000ba'
+const FILE_TOKEN = '00000000-0000-4000-8000-0000000000f1'
+const BANK_CASE_ID = '00000000-0000-4000-8000-0000000000bc'
+
 function registerHarness(
   getWindow: () => unknown = () => null,
   allowDirectOpenAi = true,
@@ -62,6 +66,9 @@ function registerHarness(
   readonly conversationDelete: ReturnType<typeof vi.fn>
   readonly conversationCreate: ReturnType<typeof vi.fn>
   readonly isConversationActive: ReturnType<typeof vi.fn>
+  readonly documentsProcess: ReturnType<typeof vi.fn>
+  readonly baExtractionRun: ReturnType<typeof vi.fn>
+  readonly bankExtract: ReturnType<typeof vi.fn>
   readonly modelResolve: ReturnType<typeof vi.fn>
   readonly connectionSave: ReturnType<typeof vi.fn>
   readonly connectionDelete: ReturnType<typeof vi.fn>
@@ -180,6 +187,23 @@ function registerHarness(
   const searchClear = vi.fn()
   const mcpStop = vi.fn()
   const mcp = { isLifecycleBusy: false, stop: mcpStop }
+  /**
+   * Luồng tài liệu nghiệp vụ, đủ để chạm tới chốt chặn "ảnh không có văn bản".
+   *
+   * `documentsProcess` trả về ĐÚNG hình dạng mà `DocumentProcessor` trả cho một tấm ảnh: text
+   * rỗng, chunks rỗng, và một khối `image`.
+   */
+  const documentsProcess = vi.fn()
+  const filesResolve = vi.fn(() => [{ path: '/tmp/x', fileName: 'x', sizeBytes: 1 }])
+  const filesReleaseAll = vi.fn()
+  const bankExtract = vi.fn(() => ({ documentType: 'other', fields: [], needsReview: true }))
+  const baExtractionRun = vi.fn(() => ({
+    model: { items: [], links: [] },
+    nearDuplicates: [],
+    potentialContradictions: [],
+    mergedCount: 0,
+    needsReviewCount: 0,
+  }))
   const services = {
     logger: new Logger({ sink, minLevel: 'debug' }),
     profileId: 'profile-test',
@@ -218,10 +242,23 @@ function registerHarness(
     },
     activity: { record: activityRecord, list: activityList },
     settings: {
-      get: vi.fn(() => ({ proactiveCheckInsEnabled: false, llmTimeoutMs: 120_000 })),
+      get: vi.fn(() => ({
+        proactiveCheckInsEnabled: false,
+        llmTimeoutMs: 120_000,
+        features: { baWorkbench: true },
+      })),
       update: settingsUpdate,
     },
     models: { resolveForConversation: modelResolve },
+    documents: { process: documentsProcess },
+    files: { resolve: filesResolve, releaseAll: filesReleaseAll, release: vi.fn() },
+    baDocuments: { get: vi.fn(() => ({ id: BA_DOCUMENT_ID, profileId: 'profile-test' })) },
+    baExtraction: { run: baExtractionRun },
+    bankChecklists: {
+      get: vi.fn(() => ({ id: BANK_CASE_ID, profileId: 'profile-test' })),
+      addDocument: vi.fn(() => ({ id: 'evidence-1', sourcePathHash: 'x' })),
+    },
+    bankChecklist: { extract: bankExtract },
     connections: { save: connectionSave, delete: connectionDelete, get: vi.fn(() => null) },
     store: { purgeProfile },
     search: { clear: searchClear },
@@ -243,6 +280,9 @@ function registerHarness(
     conversationDelete,
     conversationCreate,
     isConversationActive,
+    documentsProcess,
+    baExtractionRun,
+    bankExtract,
     modelResolve,
     connectionSave,
     connectionDelete,
@@ -373,6 +413,96 @@ describe('registerIpc', () => {
         fields: expect.objectContaining({ channel: 'chat:send', errorCode: 'INTERNAL_ERROR' }),
       }),
     )
+  })
+
+  it('từ chối ảnh ở luồng tài liệu nghiệp vụ — nó chỉ đọc văn bản trích xuất', async () => {
+    const h = registerHarness()
+    // Đúng hình dạng DocumentProcessor trả về cho một tấm ảnh.
+    h.documentsProcess.mockResolvedValue([
+      {
+        fileName: 'so-do.png',
+        kind: 'image',
+        sizeBytes: 2_048,
+        sourcePathHash: 'a'.repeat(64),
+        text: '',
+        chunks: [],
+        charCount: 0,
+        estimatedTokens: 765,
+        truncated: false,
+        image: {
+          mediaType: 'image/png',
+          dataBase64: 'AAAA',
+          byteSize: 3,
+          width: 64,
+          height: 64,
+          metadataStripped: true,
+        },
+      },
+    ])
+
+    const result = await h.handlers.get('ba:document:extract')?.(
+      {},
+      { id: BA_DOCUMENT_ID, fileToken: FILE_TOKEN },
+    )
+
+    // Nếu để lọt, model nhận một tài liệu TRỐNG và trả về kết quả trông vẫn hợp lý — không ai
+    // biết nó chưa đọc gì. Đây cũng là thứ giữ phần ảnh của Nghiệp vụ đứng yên (OPEN-QUESTIONS I1).
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.DOCUMENT_REQUIRES_TEXT } })
+    expect(h.baExtractionRun).not.toHaveBeenCalled()
+  })
+
+  it('từ chối ảnh ở luồng hồ sơ chứng từ — cùng một chốt chặn, hai call site', async () => {
+    const h = registerHarness()
+    h.documentsProcess.mockResolvedValue([
+      {
+        fileName: 'cmnd.png',
+        kind: 'image',
+        sizeBytes: 2_048,
+        sourcePathHash: 'c'.repeat(64),
+        text: '',
+        chunks: [],
+        charCount: 0,
+        estimatedTokens: 765,
+        truncated: false,
+        image: {
+          mediaType: 'image/png',
+          dataBase64: 'AAAA',
+          byteSize: 3,
+          width: 64,
+          height: 64,
+          metadataStripped: true,
+        },
+      },
+    ])
+
+    const result = await h.handlers.get('ba:checklist:ingest')?.(
+      {},
+      { id: BANK_CASE_ID, fileToken: FILE_TOKEN },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.DOCUMENT_REQUIRES_TEXT } })
+    expect(h.bankExtract).not.toHaveBeenCalled()
+  })
+
+  it('vẫn nhận tài liệu văn bản ở đúng luồng đó', async () => {
+    const h = registerHarness()
+    h.documentsProcess.mockResolvedValue([
+      {
+        fileName: 'dac-ta.docx',
+        kind: 'docx',
+        sizeBytes: 4_096,
+        sourcePathHash: 'b'.repeat(64),
+        text: 'Khách hàng đặt đơn.',
+        chunks: [],
+        charCount: 19,
+        estimatedTokens: 5,
+        truncated: false,
+      },
+    ])
+
+    await h.handlers.get('ba:document:extract')?.({}, { id: BA_DOCUMENT_ID, fileToken: FILE_TOKEN })
+
+    expect(h.baExtractionRun).toHaveBeenCalledWith(BA_DOCUMENT_ID, 'Khách hàng đặt đơn.')
   })
 
   it('file picker thất bại an toàn khi cửa sổ đã đóng', async () => {

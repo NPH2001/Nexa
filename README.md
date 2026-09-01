@@ -6,12 +6,17 @@ Triển khai theo `Nexa_Tai_lieu_thiet_ke_va_trien_khai_MVP_v1.1.docx`. Comment 
 tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chiếu được hai chiều.
 
 > **Đọc trước khi làm gì khác:** [`docs/OPEN-QUESTIONS.md`](docs/OPEN-QUESTIONS.md) — mọi giả
-> định đã dùng để viết code, và những gì còn phải chốt. Có 9 mục 🔴 BLOCKER cần trả lời trước
+> định đã dùng để viết code, và những gì còn phải chốt. Có 11 mục 🔴 BLOCKER cần trả lời trước
 > khi chạy với hạ tầng thật.
 >
 > **Sai lệch so với thiết kế:** Nexa có kết nối OpenAI trực tiếp, trái với §6 (_"Nexa không kết
 > nối trực tiếp provider"_). Đã được chấp nhận 2026-08-01 nhưng **cần ATTT duyệt trước khi phát
 > hành** — xem OPEN-QUESTIONS mục F1.
+>
+> **Đi trước một mục đang chờ duyệt:** đính kèm ảnh trong Chat đã được bật 2026-09-01 theo yêu
+> cầu, trong khi hợp đồng consent cho ảnh (mục I1) vẫn đang mở. Ảnh đã được gỡ EXIF/XMP và áp
+> cùng cổng fail-closed như tài liệu, nhưng **cần ATTT xem lại trước khi phát hành** — xem
+> OPEN-QUESTIONS mục J1. Phần ảnh của Không gian Nghiệp vụ thì vẫn dừng.
 >
 > Trạng thái so với Phụ lục C: [`docs/operations/pre-pilot-checklist.md`](docs/operations/pre-pilot-checklist.md) — **3/10 đạt**.
 
@@ -69,7 +74,7 @@ nexa/
 │  ├─ mcp-client/              MCP JSON-RPC trên stdio (EPIC-07)
 │  ├─ atlassian-mcp-manager/   Lifecycle MCP + danh mục tool + preview (EPIC-07)
 │  ├─ connection-config/       Connection/model/settings service (EPIC-02/03)
-│  ├─ document-processor/      TXT/PDF/DOCX, worker, chunking (EPIC-06)
+│  ├─ document-processor/      Office + PDF + ảnh, worker, chunking (EPIC-06)
 │  ├─ agent-runtime/           Vòng lặp tool, confirmation guard, operation tracker (EPIC-08)
 │  └─ ba-kit/                  Mô hình tài liệu BA, template, rulebook, dò trùng, phép chiếu
 │                                (Markdown · Mermaid · ma trận · trang mã lỗi) — thuần, không DB/LLM
@@ -141,6 +146,26 @@ model *thấy*, không đổi cái được phép *chạy*. Tắt toàn tổ ch�
 ```json
 { "forcedFeatures": { "toolScoping": false } }
 ```
+
+**Định dạng file đính kèm** — openspec `add-multi-format-file-upload`.
+
+| Nhóm         | Định dạng                                        | Cách đọc                                                          |
+| ------------ | ------------------------------------------------ | ----------------------------------------------------------------- |
+| Văn bản      | `.txt` `.md` `.csv` `.tsv` `.log`                | đoán encoding theo BOM, dự phòng windows-1258                     |
+| PDF          | `.pdf`                                           | `pdfjs-dist`, cảnh báo bản scan; **không OCR**                     |
+| Word         | `.docx` · `.doc`                                 | `mammoth` · piece table Word 97 viết trong repo                    |
+| Excel        | `.xlsx` `.xlsm` · `.xls`                         | OOXML · BIFF8, cả hai viết trong repo; ô ngày ra ISO, không ra số  |
+| PowerPoint   | `.pptx` `.pptm` · `.ppt`                         | OOXML · cây bản ghi PowerPoint 97                                  |
+| Ảnh          | `.png` `.jpg` `.jpeg` `.webp` `.gif`             | gửi cho model thị giác, **đã gỡ EXIF/XMP** trước khi rời máy       |
+
+Bộ đọc cho Office và ảnh **viết trong repo, không thêm dependency nào** — mọi byte ở đây đến từ
+file không tin cậy, và mọi lối bung dữ liệu (inflate, chain sector, chuỗi bản ghi) đều có trần
+tường minh. Xem `packages/document-processor/src/zip-reader.ts` và `cfb.ts`.
+
+Ảnh cần model được đánh dấu **"Đọc được ảnh"** ở Cài đặt → Model. Mặc định tắt cho mọi model, kể
+cả model đã cấu hình từ trước: LiteLLM không cho biết model nhận được phương thức nào, và đoán sai
+nghĩa là gateway lặng lẽ bỏ ảnh đi rồi model trả lời trôi chảy về tấm ảnh nó chưa từng thấy. Ảnh
+không vừa cửa sổ ngữ cảnh là **lỗi**, không phải một lần cắt bớt im lặng.
 
 **Không gian Nghiệp vụ (BA)** — cờ `baWorkbench`, mặc định **tắt** (openspec `add-ba-workbench`).
 Bật trong Cài đặt → Dữ liệu & quyền riêng tư. Khi bật, Nexa thêm một đích **Nghiệp vụ** gồm kho tri
