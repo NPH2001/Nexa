@@ -59,6 +59,7 @@ import { BankChecklistService, loadBankChecklistTemplates } from './bank-checkli
 import type { BankChecklistTemplate } from '@nexa/document-checklist'
 import { FileBroker } from './file-broker.js'
 import { ProactiveCheckInService } from './proactive-check-in-service.js'
+import { DailyBriefingService } from './briefing-service.js'
 import { ChatGptAccountService } from './chatgpt-account-service.js'
 
 /**
@@ -85,6 +86,7 @@ export interface NexaServices {
   readonly checkInState: CheckInRepository
   readonly activity: ActivityRepository
   readonly checkIns: ProactiveCheckInService
+  readonly briefing: DailyBriefingService
   readonly memory: MemoryRepository
   readonly baKnowledge: BaKnowledgeRepository
   readonly baDocuments: BaDocumentRepository
@@ -322,6 +324,24 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
       buildLlmClient: (provider, timeoutMs) =>
         services.connections.buildLlmClient(provider, timeoutMs),
       settings: () => settings.get(),
+      logger,
+    }),
+    /**
+     * Bản tin đọc MCP qua closure vì `services.mcp` được dựng lại mỗi lần đổi kết nối Atlassian —
+     * giữ một tham chiếu cứng ở đây sẽ khoá bản tin vào manager cũ.
+     */
+    briefing: new DailyBriefingService({
+      profileId: profile.id,
+      commitments,
+      settings: () => settings.get(),
+      mcp: () => services.mcp,
+      jiraBaseUrl: () => services.connections.get('jira')?.baseUrl ?? null,
+      summary: {
+        resolveModel: () => models.resolveForConversation(null, null),
+        buildLlmClient: (provider, timeoutMs) =>
+          services.connections.buildLlmClient(provider, timeoutMs),
+        timeoutMs: () => settings.get().llmTimeoutMs,
+      },
       logger,
     }),
     baStandards,

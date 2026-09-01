@@ -31,6 +31,7 @@ import type {
   ConnectionTestResult,
   ConnectionType,
   Conversation,
+  DailyBriefingView,
   LlmProvider,
   Envelope,
   ErrorEnvelope,
@@ -337,6 +338,11 @@ export const api = {
         call<BankDocumentEvidenceView>('ba:checklist:ingest', { id, fileToken }),
       review: (id: string) => call<BankChecklistReportView>('ba:checklist:review', { id }),
     },
+  },
+
+  briefing: {
+    get: () => call<DailyBriefingView>('briefing:get'),
+    refresh: () => call<DailyBriefingView>('briefing:refresh'),
   },
 
   checkIns: {

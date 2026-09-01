@@ -3,6 +3,8 @@ import { IPC_CHANNEL_NAMES, NEXA_EVENTS } from './channels.js'
 import { DEFAULT_APP_SETTINGS } from './settings.js'
 import {
   activityListSchema,
+  briefingGetSchema,
+  briefingRefreshSchema,
   checkInRespondSchema,
   commitmentCreateSchema,
   commitmentUpdateSchema,
@@ -141,5 +143,26 @@ describe('shared IPC allowlists', () => {
 
   it('publishes check-in refresh events to renderer', () => {
     expect(NEXA_EVENTS.checkInsChanged).toBe('nexa:checkins-changed')
+  })
+})
+
+describe('briefing IPC schemas', () => {
+  it('bỏ mọi tham số renderer gửi kèm, kể cả JQL', () => {
+    expect(
+      briefingGetSchema.parse({ jql: 'assignee = admin ORDER BY created', limit: 500 }),
+    ).toEqual({})
+    expect(briefingRefreshSchema.parse({ jql: 'project = SECRET' })).toEqual({})
+  })
+
+  it('chấp nhận payload rỗng', () => {
+    expect(briefingGetSchema.parse({})).toEqual({})
+    expect(briefingRefreshSchema.parse({})).toEqual({})
+  })
+})
+
+describe('briefing settings', () => {
+  it('bản tin bật sẵn còn tóm tắt thì không', () => {
+    expect(DEFAULT_APP_SETTINGS.dailyBriefingEnabled).toBe(true)
+    expect(DEFAULT_APP_SETTINGS.dailyBriefingSummaryEnabled).toBe(false)
   })
 })

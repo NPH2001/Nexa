@@ -24,11 +24,11 @@ tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chi�
 
 | Hạng mục                                 | Trạng thái                                                                         |
 | ---------------------------------------- | ---------------------------------------------------------------------------------- |
-| Test                                     | **842 unit/integration** + **23 E2E** được định nghĩa (21 Linux + 2 Windows-only)  |
+| Test                                     | **1108 unit/integration** + **33 E2E** được định nghĩa (31 Linux + 2 Windows-only) |
 | Lint · typecheck                         | sạch                                                                               |
 | Build (main/preload/renderer)            | chạy được                                                                          |
 | Chạy app thật                            | ✅ trên Linux — `window-ready` sau 304 ms                                          |
-| E2E desktop                              | ✅ 15 test Linux qua Playwright + Electron; 2 test DPAPI/startup dành cho Windows  |
+| E2E desktop                              | ✅ 31 test Linux qua Playwright + Electron; 2 test DPAPI/startup dành cho Windows  |
 | Đóng gói Windows                         | ⚠️ phải build trên Windows (job CI `build-windows`) — không cross-compile từ Linux |
 | Xác minh DPAPI trên Windows              | **chưa** (OPEN-QUESTIONS C1)                                                       |
 | Kết nối LiteLLM / Jira / Confluence thật | **chưa** — mới chạy với mock server (C2)                                           |
@@ -74,6 +74,7 @@ nexa/
 │  ├─ mcp-client/              MCP JSON-RPC trên stdio (EPIC-07)
 │  ├─ atlassian-mcp-manager/   Lifecycle MCP + danh mục tool + preview (EPIC-07)
 │  ├─ connection-config/       Connection/model/settings service (EPIC-02/03)
+│  ├─ daily-briefing/         Nhóm và xếp hạng bản tin công việc theo ngày — thuần, không DB/LLM/MCP
 │  ├─ document-processor/      Office + PDF + ảnh, worker, chunking (EPIC-06)
 │  ├─ agent-runtime/           Vòng lặp tool, confirmation guard, operation tracker (EPIC-08)
 │  └─ ba-kit/                  Mô hình tài liệu BA, template, rulebook, dò trùng, phép chiếu

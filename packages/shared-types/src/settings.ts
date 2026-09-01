@@ -128,6 +128,22 @@ export const appSettingsSchema = z.object({
    * Với provider ngoài, nội dung cam kết còn phải qua cổng chia sẻ như memory.
    */
   commitmentContextEnabled: z.boolean().default(true),
+  /**
+   * Bản tin công việc buổi sáng trên Today (openspec `add-daily-briefing`).
+   *
+   * Mặc định BẬT: nó chỉ đọc cam kết cục bộ và gọi một tool Jira READ mà người dùng đã được cấp
+   * quyền từ trước — không mở thêm quyền nào. Tắt cờ ⇒ Today quay lại phần tổng quan cũ và main
+   * không gọi Jira cho bản tin nữa.
+   */
+  dailyBriefingEnabled: z.boolean().default(true),
+  /**
+   * Cho model viết một đoạn dẫn ngắn phía trên bản tin.
+   *
+   * Mặc định TẮT, cùng lập trường với `proactiveCheckInsEnabled`: đây mới là chỗ dữ liệu công
+   * việc rời máy đi tới model. Đoạn văn không phải nguồn dữ liệu — nó không thêm, bớt, đổi thứ
+   * tự hay đổi hạn của mục nào, và bản tin vẫn đầy đủ khi model lỗi.
+   */
+  dailyBriefingSummaryEnabled: z.boolean().default(false),
   /** §14: giới hạn MVP 20–30 MB/file. Phụ lục A chốt 30. */
   maxFileSizeMb: z.number().int().min(1).max(100).default(30),
   maxFilesPerRequest: z.number().int().min(1).max(20).default(5),

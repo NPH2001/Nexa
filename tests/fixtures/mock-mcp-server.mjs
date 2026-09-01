@@ -138,6 +138,38 @@ async function handleToolCall(id, params) {
     }
     case 'jira_search': {
       const jql = String(args.jql ?? '')
+      // Bản tin công việc dùng đúng một JQL cố định do main dựng. Trả một tập việc được giao có
+      // đủ ba mức khẩn để E2E thấy được cách nhóm, thay vì chỉ thấy một danh sách rỗng.
+      if (jql.includes('assignee = currentUser()')) {
+        const today = new Date().toISOString().slice(0, 10)
+        const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+        const issues = [
+          {
+            key: 'DT-501',
+            summary: 'Rà soát log pilot tuần này',
+            status: 'In Progress',
+            duedate: yesterday,
+            updated: '2026-08-28T02:00:00.000Z',
+            url: `${jiraUrl}/browse/DT-501`,
+          },
+          {
+            key: 'DT-502',
+            summary: 'Chuẩn bị số liệu cho báo cáo vận hành',
+            status: 'To Do',
+            duedate: today,
+            updated: '2026-08-29T02:00:00.000Z',
+            url: `${jiraUrl}/browse/DT-502`,
+          },
+          {
+            key: 'DT-503',
+            summary: 'Dọn backlog kỹ thuật',
+            status: 'To Do',
+            updated: '2026-08-20T02:00:00.000Z',
+            url: `${jiraUrl}/browse/DT-503`,
+          },
+        ]
+        return textResult(id, JSON.stringify({ total: issues.length, issues }))
+      }
       // Cho phép test tra cứu "uncertain": tìm theo summary trả về đúng issue đã tạo.
       const matches = created.filter((issue) => jql.includes(issue.summary))
       return textResult(id, JSON.stringify({ total: matches.length, issues: matches }))

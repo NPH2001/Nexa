@@ -15,6 +15,7 @@ const WORKSPACE_PACKAGES = [
   'mcp-client',
   'atlassian-mcp-manager',
   'connection-config',
+  'daily-briefing',
   'document-checklist',
   'document-processor',
   'agent-runtime',

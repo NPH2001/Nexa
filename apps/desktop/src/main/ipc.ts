@@ -548,6 +548,11 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
           subjectLabel: resolveActivitySubjectLabel(services, event.subjectType, event.subjectId),
         })),
 
+    // ── Bản tin công việc cá nhân ───────────────────────────────────────
+    // Không nhận tham số: JQL do main dựng, và schema đã strip mọi thứ renderer gửi kèm.
+    'briefing:get': () => services.briefing.get(),
+    'briefing:refresh': () => services.briefing.refresh(),
+
     // ── BA workbench ────────────────────────────────────────────────────
     'ba:knowledge:list': (input) => {
       requireBaWorkbench()
@@ -994,6 +999,15 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     'settings:update': (input) => {
       const updated = services.settings.update(input)
       if (input.proactiveCheckInsEnabled !== undefined) services.checkIns.reconfigure()
+      // Bản tin cache theo ngày, nên đổi cờ mà không dọn cache thì người dùng phải chờ sang hôm
+      // sau mới thấy thay đổi — kể cả khi họ vừa tắt đoạn dẫn của model.
+      if (
+        input.dailyBriefingEnabled !== undefined ||
+        input.dailyBriefingSummaryEnabled !== undefined ||
+        input.features !== undefined
+      ) {
+        services.briefing.invalidate()
+      }
       return updated
     },
     'policy:get': () => services.policy,
