@@ -26,7 +26,22 @@ interface ChatModelOption {
   readonly displayName: string
   readonly isDefault: boolean
   readonly verified: boolean
+  readonly supportsVision: boolean
   readonly defaultReasoningEffort?: string
+}
+
+/**
+ * Phần mở rộng của những file được xử lý như ảnh.
+ *
+ * Renderer không đọc được file (§5.3) nên chỉ có tên để dựa vào. Chấp nhận được: đây là để
+ * hiện đúng biểu tượng và cảnh báo sớm, còn kết luận thật vẫn do main process rút ra từ magic
+ * bytes. Đoán sai theo tên chỉ làm cảnh báo hiện thừa hoặc thiếu, không mở thêm đường nào.
+ */
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
+
+function looksLikeImage(fileName: string): boolean {
+  const lower = fileName.toLowerCase()
+  return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension))
 }
 
 export function ChatView(props: {
@@ -71,6 +86,7 @@ export function ChatView(props: {
         displayName: model.displayName,
         isDefault: model.isDefault,
         verified: model.verified,
+        supportsVision: model.supportsVision,
       })),
       ...props.chatGptModels.map((model) => ({
         key: `chatgpt:${model.modelId}`,
@@ -80,6 +96,8 @@ export function ChatView(props: {
         displayName: model.displayName,
         isDefault: model.isDefault,
         verified: true,
+        // Chat qua tài khoản ChatGPT hiện không nhận đính kèm nào, kể cả ảnh.
+        supportsVision: false,
         ...(model.defaultReasoningEffort === null
           ? {}
           : { defaultReasoningEffort: model.defaultReasoningEffort }),
@@ -161,6 +179,16 @@ export function ChatView(props: {
   }, [props.settings, selectedModel])
 
   const externalSelected = selectedModel !== null && isExternalProvider(selectedModel.provider)
+  const imageAttachmentCount = attachments.filter((file) => looksLikeImage(file.fileName)).length
+
+  /**
+   * Năng lực đọc ảnh, phản chiếu `assertModelSupportsImages` ở main.
+   *
+   * Tách khỏi `documentPolicy` đúng như bên main: một bên là được phép hay không, một bên là
+   * làm được hay không. Gộp lại thì thông báo cho người dùng sẽ sai một nửa.
+   */
+  const imageBlocked =
+    imageAttachmentCount > 0 && selectedModel !== null && !selectedModel.supportsVision
 
   if (props.conversation === null) {
     return (
@@ -280,7 +308,8 @@ export function ChatView(props: {
             {/* §7.2 bước 4: hiển thị file đã chọn và lượng nội dung dự kiến gửi. */}
             {attachments.map((file) => (
               <span key={file.token} className="chip">
-                📎 {file.fileName} <span className="muted">({formatBytes(file.sizeBytes)})</span>
+                {looksLikeImage(file.fileName) ? '🖼' : '📎'} {file.fileName}{' '}
+                <span className="muted">({formatBytes(file.sizeBytes)})</span>
                 <button
                   type="button"
                   className="chip-close"
@@ -309,6 +338,13 @@ export function ChatView(props: {
           <p className="error-inline">{documentPolicy.reason}</p>
         )}
 
+        {imageBlocked && !documentPolicy.blocked && (
+          <p className="error-inline">
+            Model đang chọn chỉ đọc văn bản, không xem được ảnh. Hãy chọn model khác, hoặc đánh dấu
+            “Đọc được ảnh” cho model này trong Cài đặt → Model nếu nó thật sự hỗ trợ.
+          </p>
+        )}
+
         {externalSelected && attachments.length === 0 && (
           <p className="warning-inline">
             Model đang chọn nằm ngoài tổ chức. Câu hỏi của bạn sẽ được gửi tới{' '}
@@ -320,11 +356,11 @@ export function ChatView(props: {
           <button
             type="button"
             className="btn btn-small"
-            aria-label="Đính kèm tài liệu"
+            aria-label="Đính kèm tài liệu hoặc ảnh"
             title={
               selectedModel?.provider === 'chatgpt'
                 ? 'ChatGPT Plus / Codex hiện chỉ hỗ trợ chat văn bản'
-                : 'Đính kèm tài liệu'
+                : 'Đính kèm tài liệu hoặc ảnh (Word, Excel, PowerPoint, PDF, TXT, PNG/JPEG/WebP/GIF)'
             }
             onClick={pickFiles}
             disabled={selectedModel === null || selectedModel.provider === 'chatgpt'}
@@ -385,7 +421,8 @@ export function ChatView(props: {
                 props.busy ||
                 draft.trim() === '' ||
                 selectedModel === null ||
-                (attachments.length > 0 && documentPolicy.blocked)
+                (attachments.length > 0 && documentPolicy.blocked) ||
+                imageBlocked
               }
             >
               {props.busy ? 'Đang xử lý…' : 'Gửi'}

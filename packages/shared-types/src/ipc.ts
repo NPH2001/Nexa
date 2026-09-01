@@ -58,6 +58,8 @@ export const modelAddSchema = z.object({
   modelId: z.string().min(1).max(200),
   displayName: z.string().min(1).max(120),
   contextWindowTokens: z.number().int().min(1024).max(2_000_000).default(128_000),
+  /** Xem `ModelConfig.supportsVision`: người dùng khai, mặc định tắt. */
+  supportsVision: z.boolean().default(false),
 })
 
 export const modelRefSchema = z.object({ id: z.string().uuid() })

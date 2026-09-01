@@ -74,6 +74,21 @@ export const ERROR_CODES = {
    * Đây là fail-closed có chủ ý — xem OPEN-QUESTIONS F1.
    */
   EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS: 'EXTERNAL_MODEL_NOT_ALLOWED_FOR_DOCUMENTS',
+  /**
+   * Model đang chọn không đọc được ảnh.
+   *
+   * Tách khỏi allowlist tài liệu vì đây là chuyện NĂNG LỰC, không phải chuyện quyền: gửi ảnh
+   * cho một model chỉ đọc chữ thì hoặc gateway trả 400, hoặc tệ hơn — nó âm thầm bỏ ảnh đi và
+   * trả lời như thể đã xem, mà người dùng không hề biết.
+   */
+  MODEL_DOES_NOT_SUPPORT_IMAGES: 'MODEL_DOES_NOT_SUPPORT_IMAGES',
+  /**
+   * Ảnh không vừa cửa sổ ngữ cảnh của model.
+   *
+   * Văn bản rút gọn được, ảnh thì không — hoặc gửi cả tấm hoặc không gửi. Vì vậy đây là LỖI
+   * chứ không phải một lần cắt bớt im lặng: người dùng phải biết ảnh đã không tới được model.
+   */
+  IMAGE_EXCEEDS_CONTEXT: 'IMAGE_EXCEEDS_CONTEXT',
   /** IPC payload không khớp schema Zod (§5.3). */
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   /** Lỗi không phân loại được. Không bao giờ chứa chi tiết nhạy cảm. */
@@ -115,7 +130,7 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
   FILE_UNSUPPORTED: {
     message: 'Loại file không được hỗ trợ.',
     retryable: false,
-    hint: 'MVP chỉ hỗ trợ TXT, Markdown, PDF và DOCX.',
+    hint: 'Hỗ trợ TXT, Markdown, CSV, PDF, Word (.doc/.docx), Excel (.xls/.xlsx), PowerPoint (.ppt/.pptx) và ảnh PNG/JPEG/WebP/GIF.',
   },
   ATLASSIAN_CONFIG_REQUIRED: {
     message: 'Chưa cấu hình kết nối Jira/Confluence.',
@@ -282,6 +297,16 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     message: 'Không thể gửi tài liệu tới một model bên ngoài tổ chức.',
     retryable: false,
     hint: 'Hãy chọn một model chạy qua LiteLLM nội bộ. Nếu bạn thực sự cần gửi tài liệu ra ngoài, bộ phận an toàn thông tin phải cho phép model đó trước.',
+  },
+  MODEL_DOES_NOT_SUPPORT_IMAGES: {
+    message: 'Model đang chọn không đọc được ảnh.',
+    retryable: false,
+    hint: 'Chọn một model có đánh dấu "đọc được ảnh" trong Cài đặt → Model, hoặc bỏ ảnh khỏi lượt gửi này.',
+  },
+  IMAGE_EXCEEDS_CONTEXT: {
+    message: 'Ảnh đính kèm không vừa cửa sổ ngữ cảnh của model.',
+    retryable: false,
+    hint: 'Bớt file đính kèm, bắt đầu một hội thoại mới, hoặc chọn model có cửa sổ ngữ cảnh lớn hơn.',
   },
   VALIDATION_FAILED: { message: 'Dữ liệu gửi lên không hợp lệ.', retryable: false },
   INTERNAL_ERROR: {

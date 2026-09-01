@@ -4,7 +4,7 @@ import { statSync } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
-import type { FileDescriptor } from '@nexa/document-processor'
+import { SUPPORTED_FILE_EXTENSIONS, type FileDescriptor } from '@nexa/document-processor'
 
 /**
  * §5.3: "Không cho UI truyền đường dẫn tùy ý để đọc file; chỉ sử dụng handle từ file picker."
@@ -48,9 +48,9 @@ export class FileBroker {
     const result = await dialog.showOpenDialog(window, {
       title: 'Chọn tài liệu để đính kèm',
       properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
-      filters: [
-        { name: 'Tài liệu được hỗ trợ', extensions: ['txt', 'md', 'markdown', 'csv', 'log', 'pdf', 'docx'] },
-      ],
+      // Danh sách suy thẳng từ bảng của DocumentProcessor: hộp thoại không bao giờ mời người
+      // dùng chọn một loại file mà pipeline sẽ từ chối ngay sau đó.
+      filters: [{ name: 'Tài liệu và ảnh được hỗ trợ', extensions: [...SUPPORTED_FILE_EXTENSIONS] }],
     })
     if (result.canceled) return []
 

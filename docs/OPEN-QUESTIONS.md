@@ -821,10 +821,15 @@ trong `tool-preset-selector.test.ts`.
 **Câu hỏi:** điều kiện gì để Nexa được phép nhận một ảnh chụp màn hình sản phẩm nội bộ và gửi nó
 tới một model?
 
+**Cập nhật 2026-09-01 — đường nạp ảnh trong Chat đã được mở theo yêu cầu của chủ sở hữu sản
+phẩm** (openspec `add-multi-format-file-upload`, xem mục J1). Điều đó **không** trả lời câu hỏi
+dưới đây và **không** mở khoá mục 13 của `add-ba-workbench`: ảnh → danh sách trường trong Không
+gian Nghiệp vụ vẫn dừng cho tới khi hợp đồng consent được duyệt.
+
 **Vì sao nó không phải một dòng code:**
 
-- Hiện **không đường nào** trong Nexa nhận ảnh — `document-processor` chỉ chấp nhận `.txt`, `.md`,
-  `.pdf`, `.docx`. Mở ảnh là mở thêm loại file ở `FileBroker`.
+- ~~Hiện **không đường nào** trong Nexa nhận ảnh~~ — từ 2026-09-01, `document-processor` nhận
+  PNG/JPEG/WebP/GIF cho **Chat**. Phần nghiệp vụ thì vẫn chưa.
 - `DESIGN.md` đang ghi rõ file và ảnh còn tắt cho lựa chọn `chatgpt` **cho tới khi** có một hợp
   đồng consent và media transport đã được duyệt. Việc này đụng thẳng F1.
 - Một ảnh chụp màn hình mang theo nhiều hơn thứ người gửi định gửi: dữ liệu khách hàng trên
@@ -862,3 +867,65 @@ open question cuối còn mở của change, và giờ đã có bản chạy th�
 
 **Sửa ở đâu nếu khác:** `REVIEW_SCOPE_NOTE` và `summarizeReview` trong
 `apps/desktop/src/renderer/components/ba-ui.ts`, kèm test tương ứng trong `ba-ui.test.ts`.
+
+## J. Mở rộng định dạng file đính kèm (2026-09-01, openspec `add-multi-format-file-upload`)
+
+### J1. 🔴 Ảnh trong Chat đã bật trước khi hợp đồng consent được duyệt
+
+**Yêu cầu:** chủ sở hữu sản phẩm yêu cầu cho phép đính kèm ảnh và bộ Office đầy đủ, ngày
+2026-09-01. Tôi đã nêu rằng việc này chạm thẳng vào I1 — câu hỏi consent/transport cho ảnh vẫn
+đang mở — và quyết định được giữ nguyên. Ghi lại ở đây để không ai phải suy ra từ lịch sử git.
+
+**Điều này đi trước một mục đang chờ duyệt.** I1 nói phần ảnh "sẽ không bắt đầu cho tới khi có kết
+luận"; phạm vi câu đó là mục 13 của `add-ba-workbench` (ảnh → trường nghiệp vụ), và mục đó **vẫn
+dừng**. Nhưng lập luận nền của I1 — một ảnh chụp màn hình mang theo nhiều hơn thứ người gửi định
+gửi — áp cho cả đường Chat, nên nó cần ATTT xem lại chứ không tự hết hiệu lực.
+
+**Hệ quả cần ATTT duyệt trước khi phát hành:**
+
+| Vấn đề                                                        | Trạng thái                                                            |
+| ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Ảnh nội bộ có thể tới provider **ngoài** tổ chức              | Áp cùng cổng fail-closed như tài liệu (F1) — phải allowlist tường minh |
+| Ảnh mang EXIF/GPS/số sê-ri máy                                | **Đã gỡ** trước khi mã hoá base64; gỡ thất bại thì không gửi          |
+| Ảnh chụp màn hình mang dữ liệu ngoài chủ ý người gửi          | **Không có biện pháp tự động.** Vẫn là rủi ro còn lại                  |
+| LiteLLM có ghi usage cho nội dung ảnh không                   | Chưa xác minh với hạ tầng thật (cùng nhóm với C2)                     |
+| Ảnh nằm lại trên đĩa                                          | Không. `§8.1` được giữ: base64 cũng là bản sao, và không có chỗ lưu   |
+
+**Biện pháp đã dựng để việc rò rỉ không xảy ra do vô tình:**
+
+1. **Gỡ metadata bắt buộc.** EXIF/XMP/comment bị loại khỏi JPEG/PNG/WebP/GIF trước khi ảnh rời
+   máy. Không có nhánh dự phòng "gỡ lỗi thì gửi ảnh gốc" — gỡ thất bại là lỗi trích xuất.
+2. **Ảnh dùng chung cổng chính sách với tài liệu.** Ảnh là một `DocumentKind`, nên
+   `assertModelMayReceiveDocuments` áp cho ảnh y như cho `.docx` — provider ngoài vẫn fail-closed.
+3. **Model phải được khai là đọc được ảnh**, mặc định tắt cho mọi model kể cả model đã cấu hình
+   từ trước. Đây là kiểm tra năng lực tách khỏi kiểm tra quyền, để thông báo cho người dùng không
+   sai một nửa.
+4. **Ảnh không vừa context là lỗi**, không phải cắt bớt im lặng — người dùng không bao giờ nhận
+   một câu trả lời trôi chảy về tấm ảnh model chưa từng thấy.
+5. **Ảnh gửi bằng data URL**, không bằng URL mạng, để provider không tự đi tải file qua một đường
+   mà `allowedDomains` không nhìn thấy.
+
+**Câu hỏi cần ATTT trả lời:** cổng allowlist + gỡ metadata đã đủ cho ảnh trong Chat chưa, hay ảnh
+cần một cờ riêng (kiểu `baVision`) để IT khoá được toàn tổ chức độc lập với tài liệu văn bản?
+
+**Sửa ở đâu nếu quyết định khác:** `packages/document-processor/src/image.ts` (gỡ metadata),
+`packages/agent-runtime/src/document-policy.ts` (cổng chính sách), và bảng `EXTENSION_MAP` trong
+`pipeline.ts` — bỏ năm phần mở rộng ảnh ở đó là đóng hẳn đường nạp.
+
+### J2. 🟠 Bộ đọc Office tự viết chưa gặp file thật của người dùng
+
+**Bối cảnh:** năm định dạng Office được đọc bằng mã viết trong repo, không dùng thư viện. Lý do
+nằm ở `openspec/changes/add-multi-format-file-upload/design.md` D1: dữ liệu đến từ file không tin
+cậy, và tự viết là cách duy nhất đặt được trần bung dữ liệu vào đúng chỗ cần.
+
+**Cái giá:** chất lượng trích xuất ở mức "đủ dùng". Fixture trong `tests/support` dựng đúng những
+chi tiết khó (mảnh văn bản đảo thứ tự, chuỗi SST cắt qua CONTINUE, mini stream, ô thưa), nhưng
+fixture do tôi sinh ra thì chỉ chứng minh được bộ đọc khớp với hiểu biết của tôi về định dạng.
+
+**Hai giới hạn đã biết, không sửa được từ phía đọc:**
+
+- `.doc` tiếng Việt mã TCVN3/VNI ra sai dấu — file không mang thông tin code page.
+- Ngày tháng trong `.xls`/`.xlsx` ra số serial — thà đưa model con số đúng còn hơn một ngày sai.
+
+**Việc cần làm trước pilot:** chạy thử với một bộ file thật do người dùng cung cấp, đặc biệt là
+`.doc` và `.xls` cũ. Cùng nhóm với C2 (chưa chạy với hạ tầng thật).

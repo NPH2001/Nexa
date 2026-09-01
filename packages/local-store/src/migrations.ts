@@ -728,6 +728,23 @@ export const MIGRATIONS: readonly Migration[] = [
       DROP TABLE IF EXISTS bank_checklist_cases;
     `,
   },
+  {
+    version: 11,
+    name: 'model-vision-capability',
+    /**
+     * Đánh dấu model nào đọc được ảnh (openspec `add-multi-format-file-upload`).
+     *
+     * Mặc định 0 cho MỌI model đang có: không suy đoán năng lực của model đã cấu hình từ
+     * trước. Người dùng bật tay trong Cài đặt → Model. Fail-closed ở đây chỉ tốn một lần bật,
+     * còn đoán sai thì ảnh bị model bỏ qua trong im lặng và câu trả lời trông vẫn hợp lý.
+     */
+    up: `
+      ALTER TABLE models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0;
+    `,
+    down: `
+      ALTER TABLE models DROP COLUMN supports_vision;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

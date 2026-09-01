@@ -150,8 +150,10 @@ export class ChatController {
           fileType: doc.kind,
           fileSize: doc.sizeBytes,
           sourcePathHash: doc.sourcePathHash,
-          // §8.3: chỉ lưu text đã trích xuất nếu chính sách cho phép.
-          extractedText: settings.features.storeExtractedText ? doc.text : null,
+          // §8.3: chỉ lưu text đã trích xuất nếu chính sách cho phép. Ảnh không có text, và
+          // KHÔNG bao giờ lưu bản sao ảnh — §8.1 cấm giữ bản sao file, base64 cũng là bản sao.
+          extractedText:
+            settings.features.storeExtractedText && doc.text !== '' ? doc.text : null,
           extractedChars: doc.charCount,
           ...(doc.pageCount !== undefined ? { pageCount: doc.pageCount } : {}),
           ...(doc.suspectedScan === true ? { suspectedScan: true } : {}),
@@ -195,6 +197,7 @@ export class ChatController {
           modelId: model.modelId,
           modelProvider: model.provider,
           contextWindowTokens: model.contextWindowTokens,
+          modelSupportsVision: model.supportsVision,
           documents,
           controller,
           fileTokens: input.fileTokens,
@@ -428,6 +431,7 @@ export class ChatController {
     modelId: string
     modelProvider: LlmProvider
     contextWindowTokens: number
+    modelSupportsVision: boolean
     documents: readonly ProcessedDocument[]
     controller: AbortController
     fileTokens: readonly string[]
@@ -635,6 +639,7 @@ export class ChatController {
         modelId: params.modelId,
         modelProvider: params.modelProvider,
         contextWindowTokens: params.contextWindowTokens,
+        modelSupportsVision: params.modelSupportsVision,
         history,
         ...(memoryFacts.length > 0 ? { memoryFacts } : {}),
         ...(commitmentContext.length > 0 ? { commitments: commitmentContext } : {}),

@@ -896,6 +896,66 @@ describe('chính sách tài liệu theo provider', () => {
   })
 })
 
+describe('ảnh trong runTurn', () => {
+  const imageDoc = {
+    fileName: 'so-do.png',
+    kind: 'image' as const,
+    sizeBytes: 2_048,
+    sourcePathHash: 'c'.repeat(64),
+    text: '',
+    chunks: [],
+    charCount: 0,
+    estimatedTokens: 765,
+    truncated: false,
+    image: {
+      mediaType: 'image/png' as const,
+      dataBase64: 'AAAA',
+      byteSize: 3,
+      width: 1024,
+      height: 1024,
+      metadataStripped: true,
+    },
+  }
+
+  function runWithImage(h: Harness, overrides: { modelSupportsVision?: boolean; contextWindowTokens?: number } = {}) {
+    return h.runtime.runTurn({
+      requestId: 'req_img',
+      conversationId: '00000000-0000-4000-8000-00000000000e',
+      modelId: 'model-a',
+      modelProvider: 'litellm',
+      contextWindowTokens: overrides.contextWindowTokens ?? 128_000,
+      ...(overrides.modelSupportsVision === undefined
+        ? {}
+        : { modelSupportsVision: overrides.modelSupportsVision }),
+      history: [{ role: 'user' as const, content: 'ảnh này nói gì?' }],
+      documents: [imageDoc],
+      emit: () => undefined,
+      toolCalls: h.sink,
+    })
+  }
+
+  it('từ chối khi model chưa được đánh dấu đọc được ảnh (fail-closed)', async () => {
+    const h = await makeHarness({ script: [{ text: 'không nên tới đây' }] })
+    await expect(runWithImage(h)).rejects.toMatchObject({
+      code: ERROR_CODES.MODEL_DOES_NOT_SUPPORT_IMAGES,
+    })
+  })
+
+  it('gửi ảnh khi model đọc được ảnh', async () => {
+    const h = await makeHarness({ script: [{ text: 'Đây là sơ đồ kiến trúc.' }] })
+    const result = await runWithImage(h, { modelSupportsVision: true })
+    expect(result.text).toBe('Đây là sơ đồ kiến trúc.')
+  })
+
+  it('báo lỗi thay vì âm thầm bỏ ảnh khi ảnh không vừa cửa sổ ngữ cảnh', async () => {
+    const h = await makeHarness({ script: [{ text: 'không nên tới đây' }] })
+    // Cửa sổ nhỏ nhất mà schema cho phép: 765 token ảnh không thể vừa.
+    await expect(
+      runWithImage(h, { modelSupportsVision: true, contextWindowTokens: 1_024 }),
+    ).rejects.toMatchObject({ code: ERROR_CODES.IMAGE_EXCEEDS_CONTEXT })
+  })
+})
+
 describe('mayReceiveDocuments (dùng cho UI)', () => {
   const settings = {
     ...DEFAULT_APP_SETTINGS,

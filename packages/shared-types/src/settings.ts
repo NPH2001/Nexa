@@ -131,6 +131,14 @@ export const appSettingsSchema = z.object({
   /** §14: giới hạn MVP 20–30 MB/file. Phụ lục A chốt 30. */
   maxFileSizeMb: z.number().int().min(1).max(100).default(30),
   maxFilesPerRequest: z.number().int().min(1).max(20).default(5),
+  /**
+   * Trần dung lượng riêng cho ảnh, tính SAU khi gỡ metadata.
+   *
+   * Thấp hơn `maxFileSizeMb` một cách có chủ ý: văn bản được rút gọn trước khi gửi, còn ảnh
+   * thì đi nguyên vẹn — 30 MB base64 là hơn 40 MB trên dây và gần như chắc chắn bị gateway
+   * từ chối.
+   */
+  maxImageSizeMb: z.number().int().min(1).max(20).default(8),
   /** 0 = giữ tới khi người dùng tự xoá (§8.3). */
   historyRetentionDays: z.number().int().min(0).max(3650).default(180),
   /** §8.3: 7–14 ngày. */

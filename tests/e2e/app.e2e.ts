@@ -149,7 +149,7 @@ test.describe('E2E — cấu hình và chat', () => {
       ])
       await selector.selectOption('chatgpt:gpt-5.6-terra')
       await expect(selector).toHaveValue('chatgpt:gpt-5.6-terra')
-      await expect(h.page.getByLabel('Đính kèm tài liệu')).toBeDisabled()
+      await expect(h.page.getByLabel('Đính kèm tài liệu hoặc ảnh')).toBeDisabled()
 
       const captureDir = process.env['NEXA_CAPTURE_VISUALS']
       if (captureDir !== undefined && captureDir !== '') {

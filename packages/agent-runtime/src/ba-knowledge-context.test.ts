@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { messageText, type ChatMessage } from '@nexa/llm-client'
 import {
   BA_KNOWLEDGE_CONTEXT_BUDGET_RATIO,
   MAX_BA_KNOWLEDGE_IN_CONTEXT,
@@ -24,9 +25,11 @@ function build(items: readonly BaKnowledgeContextItem[], contextWindowTokens = 1
   })
 }
 
-function knowledgeBlock(messages: readonly { role: string; content: string }[]): string | undefined {
-  return messages.find((message) => message.content.startsWith('Tri thức nghiệp vụ đã được xác nhận'))
-    ?.content
+function knowledgeBlock(messages: readonly ChatMessage[]): string | undefined {
+  const found = messages.find((message) =>
+    messageText(message).startsWith('Tri thức nghiệp vụ đã được xác nhận'),
+  )
+  return found === undefined ? undefined : messageText(found)
 }
 
 describe('khối context tri thức nghiệp vụ', () => {
@@ -45,7 +48,7 @@ describe('khối context tri thức nghiệp vụ', () => {
     expect(blocks).toHaveLength(4)
     expect(knowledgeBlock(context.messages)).toContain('Quy tắc 1')
     // Khối tri thức không được trộn vào khối memory.
-    expect(blocks[1]?.content).not.toContain('Quy tắc 1')
+    expect(blocks[1] === undefined ? '' : messageText(blocks[1])).not.toContain('Quy tắc 1')
   })
 
   it('đóng khung là dữ kiện tham chiếu, không phải chỉ dẫn', () => {

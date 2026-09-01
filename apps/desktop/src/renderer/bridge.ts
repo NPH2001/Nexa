@@ -131,6 +131,7 @@ export const api = {
       modelId: string
       displayName: string
       contextWindowTokens: number
+      supportsVision: boolean
     }) => call<ModelConfig>('model:add', input),
     remove: (id: string) => call<{ removed: boolean }>('model:remove', { id }),
     setDefault: (id: string) => call<{ ok: boolean }>('model:setDefault', { id }),

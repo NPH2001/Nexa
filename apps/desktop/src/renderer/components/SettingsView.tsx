@@ -764,6 +764,7 @@ function ModelsPanel(props: {
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [contextWindow, setContextWindow] = useState(128_000)
+  const [supportsVision, setSupportsVision] = useState(false)
   const [modelToDelete, setModelToDelete] = useState<ModelConfig | null>(null)
   const [deletingModel, setDeletingModel] = useState(false)
 
@@ -850,6 +851,14 @@ function ModelsPanel(props: {
             onChange={(e) => setContextWindow(Number(e.target.value))}
             title="Cửa sổ ngữ cảnh (token)"
           />
+          <label className="checkbox" title="Model này nhận được ảnh trong prompt">
+            <input
+              type="checkbox"
+              checked={supportsVision}
+              onChange={(e) => setSupportsVision(e.target.checked)}
+            />
+            Đọc được ảnh
+          </label>
           <button
             type="button"
             className="btn btn-primary"
@@ -862,9 +871,11 @@ function ModelsPanel(props: {
                     modelId: modelId.trim(),
                     displayName: displayName.trim() === '' ? modelId.trim() : displayName.trim(),
                     contextWindowTokens: contextWindow,
+                    supportsVision,
                   })
                   setModelId('')
                   setDisplayName('')
+                  setSupportsVision(false)
                   await refresh()
                 } catch (error) {
                   props.onError(error, 'Không thêm được model.')
@@ -882,6 +893,7 @@ function ModelsPanel(props: {
               <th>Model</th>
               <th>Provider</th>
               <th>Ngữ cảnh</th>
+              <th>Ảnh</th>
               <th>Trạng thái</th>
               <th scope="col">Thao tác</th>
             </tr>
@@ -906,6 +918,13 @@ function ModelsPanel(props: {
                   )}
                 </td>
                 <td>{model.contextWindowTokens.toLocaleString('vi-VN')} token</td>
+                <td>
+                  {model.supportsVision ? (
+                    <span className="ok">✓ đọc được</span>
+                  ) : (
+                    <span className="muted">chỉ văn bản</span>
+                  )}
+                </td>
                 <td>
                   {model.verified ? (
                     <span className="ok">✓ đã kiểm chứng</span>

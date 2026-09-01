@@ -2,6 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
+import { extractXlsx, extractPptx } from './ooxml.js'
+import { extractDoc } from './legacy-word.js'
+import { extractXls } from './legacy-excel.js'
+import { extractPpt } from './legacy-ppt.js'
+import { prepareImage } from './image.js'
 import type { ExtractionRequest, ExtractionResult } from './types.js'
 
 const nodeRequire = createRequire(import.meta.url)
@@ -18,6 +23,18 @@ export async function extract(request: ExtractionRequest): Promise<ExtractionRes
       return extractPdf(request)
     case 'docx':
       return extractDocx(request)
+    case 'xlsx':
+      return extractOffice(request, extractXlsx)
+    case 'pptx':
+      return extractOffice(request, extractPptx)
+    case 'doc':
+      return extractLegacy(request, extractDoc)
+    case 'xls':
+      return extractLegacy(request, extractXls)
+    case 'ppt':
+      return extractLegacy(request, extractPpt)
+    case 'image':
+      return extractImage(request)
     default: {
       const never: never = request.kind
       throw new NexaError(ERROR_CODES.FILE_UNSUPPORTED, { safeDetail: String(never) })
@@ -145,6 +162,43 @@ async function extractDocx(request: ExtractionRequest): Promise<ExtractionResult
     })
   }
 }
+
+/**
+ * `.xlsx` / `.pptx` — vỏ ZIP chứa XML. Bộ đọc trả về thêm số sheet/slide, ánh xạ vào
+ * `pageCount` để UI có một con số duy nhất phải hiển thị.
+ */
+async function extractOffice(
+  request: ExtractionRequest,
+  read: (buffer: Buffer, maxChars: number) => { text: string; unitCount: number; truncated: boolean },
+): Promise<ExtractionResult> {
+  const buffer = await readFile(request.path)
+  const { text, unitCount, truncated } = read(buffer, request.maxChars)
+  return { text, truncated, ...(unitCount > 0 ? { pageCount: unitCount } : {}) }
+}
+
+/** `.doc` / `.xls` / `.ppt` — vỏ OLE nhị phân. Xem `cfb.ts` và ba module `legacy-*`. */
+async function extractLegacy(
+  request: ExtractionRequest,
+  read: (buffer: Buffer, maxChars: number) => { text: string; truncated: boolean },
+): Promise<ExtractionResult> {
+  const buffer = await readFile(request.path)
+  return read(buffer, request.maxChars)
+}
+
+/**
+ * Ảnh không sinh ra văn bản: kết quả là chính tấm ảnh đã được làm sạch, để runtime gắn vào
+ * lượt gọi model dưới dạng nội dung đa phương thức.
+ */
+async function extractImage(request: ExtractionRequest): Promise<ExtractionResult> {
+  const buffer = await readFile(request.path)
+  const image = prepareImage(buffer, {
+    maxBytes: request.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES,
+  })
+  return { text: '', truncated: false, image }
+}
+
+/** Mặc định 8 MB: đủ cho ảnh chụp màn hình và ảnh điện thoại, dưới trần payload của LiteLLM. */
+export const DEFAULT_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 function finish(raw: string, request: ExtractionRequest): ExtractionResult {
   const truncated = raw.length > request.maxChars

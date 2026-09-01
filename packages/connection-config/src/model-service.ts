@@ -35,6 +35,7 @@ export class ModelService {
     modelId: string
     displayName: string
     contextWindowTokens: number
+    supportsVision?: boolean
   }): ModelConfig {
     this.assertProviderAllowed(input.provider)
     const modelId = input.modelId.trim()
@@ -46,6 +47,7 @@ export class ModelService {
       modelId,
       displayName: input.displayName.trim() === '' ? modelId : input.displayName.trim(),
       contextWindowTokens: input.contextWindowTokens,
+      supportsVision: input.supportsVision ?? false,
     })
   }
 
