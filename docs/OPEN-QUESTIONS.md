@@ -826,6 +826,11 @@ phẩm** (openspec `add-multi-format-file-upload`, xem mục J1). Điều đó *
 dưới đây và **không** mở khoá mục 13 của `add-ba-workbench`: ảnh → danh sách trường trong Không
 gian Nghiệp vụ vẫn dừng cho tới khi hợp đồng consent được duyệt.
 
+Việc "vẫn dừng" đó là một chốt chặn có thật trong mã, không phải một lời hứa: `ba:document:extract`
+và `ba:checklist:ingest` từ chối ảnh bằng `DOCUMENT_REQUIRES_TEXT` ngay ở main process, và hộp
+thoại chọn file của hai luồng đó không mời chọn ảnh. Chặn ở main mới là chốt, vì renderer có thể
+gọi thẳng channel (§5.3).
+
 **Vì sao nó không phải một dòng code:**
 
 - ~~Hiện **không đường nào** trong Nexa nhận ảnh~~ — từ 2026-09-01, `document-processor` nhận

@@ -116,6 +116,18 @@ export const SUPPORTED_FILE_EXTENSIONS: readonly string[] = Object.keys(EXTENSIO
   .map((extension) => extension.slice(1))
   .sort()
 
+/**
+ * Phần mở rộng cho các luồng chỉ tiêu thụ VĂN BẢN trích xuất.
+ *
+ * Không gian Nghiệp vụ và hồ sơ chứng từ đọc `text`/`chunks` của tài liệu; một tấm ảnh cho ra
+ * chuỗi rỗng, nên nếu để lọt thì model nhận một tài liệu trống mà không ai được báo. Danh sách
+ * này giữ ảnh ra khỏi hộp thoại ngay từ đầu.
+ */
+export const TEXT_FILE_EXTENSIONS: readonly string[] = Object.entries(EXTENSION_MAP)
+  .filter(([, kind]) => !isImageKind(kind))
+  .map(([extension]) => extension.slice(1))
+  .sort()
+
 export class DocumentProcessor {
   private readonly runner: ExtractionRunner
   private readonly log: Logger

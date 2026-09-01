@@ -89,6 +89,14 @@ export const ERROR_CODES = {
    * chứ không phải một lần cắt bớt im lặng: người dùng phải biết ảnh đã không tới được model.
    */
   IMAGE_EXCEEDS_CONTEXT: 'IMAGE_EXCEEDS_CONTEXT',
+  /**
+   * Luồng này cần tài liệu CÓ VĂN BẢN, và người dùng đưa vào một tấm ảnh.
+   *
+   * Tách khỏi `FILE_UNSUPPORTED` vì hai chuyện khác nhau: file không hỏng, và Nexa nói chung
+   * vẫn nhận ảnh — chỉ riêng đường nghiệp vụ thì chưa. Dùng chung mã sẽ khiến người dùng đi
+   * kiểm tra file thay vì hiểu ra giới hạn thật.
+   */
+  DOCUMENT_REQUIRES_TEXT: 'DOCUMENT_REQUIRES_TEXT',
   /** IPC payload không khớp schema Zod (§5.3). */
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   /** Lỗi không phân loại được. Không bao giờ chứa chi tiết nhạy cảm. */
@@ -307,6 +315,11 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     message: 'Ảnh đính kèm không vừa cửa sổ ngữ cảnh của model.',
     retryable: false,
     hint: 'Bớt file đính kèm, bắt đầu một hội thoại mới, hoặc chọn model có cửa sổ ngữ cảnh lớn hơn.',
+  },
+  DOCUMENT_REQUIRES_TEXT: {
+    message: 'Chức năng này cần một tài liệu có văn bản.',
+    retryable: false,
+    hint: 'Ảnh và bản scan chưa dùng được ở Không gian Nghiệp vụ. Hãy chọn file Word, Excel, PowerPoint, PDF có lớp văn bản hoặc TXT.',
   },
   VALIDATION_FAILED: { message: 'Dữ liệu gửi lên không hợp lệ.', retryable: false },
   INTERNAL_ERROR: {

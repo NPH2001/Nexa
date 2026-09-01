@@ -124,6 +124,22 @@ cannot hold an image, the turn SHALL fail with `IMAGE_EXCEEDS_CONTEXT`.
 - **WHEN** the estimated image cost exceeds the available context budget
 - **THEN** the turn fails and no request is sent to the model
 
+### Requirement: Text-only flows refuse images
+
+Flows that consume extracted text — the Business Analyst workspace and bank document checklists —
+SHALL refuse an image in the main process rather than proceed with an empty document, and their
+file picker SHALL NOT offer image formats.
+
+#### Scenario: Image sent to workspace extraction
+
+- **WHEN** a renderer invokes workspace extraction with a file token for an image
+- **THEN** the call fails with `DOCUMENT_REQUIRES_TEXT` and no model request is made
+
+#### Scenario: Text document in the same flow
+
+- **WHEN** the same flow receives a `.docx` file token
+- **THEN** extraction proceeds normally
+
 ### Requirement: Images are never persisted
 
 The system SHALL NOT write image bytes, in any encoding, to the local store. Attachment metadata

@@ -4,7 +4,11 @@ import { statSync } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
-import { SUPPORTED_FILE_EXTENSIONS, type FileDescriptor } from '@nexa/document-processor'
+import {
+  SUPPORTED_FILE_EXTENSIONS,
+  TEXT_FILE_EXTENSIONS,
+  type FileDescriptor,
+} from '@nexa/document-processor'
 
 /**
  * §5.3: "Không cho UI truyền đường dẫn tùy ý để đọc file; chỉ sử dụng handle từ file picker."
@@ -44,13 +48,23 @@ export class FileBroker {
     this.log = logger.child({ module: 'file-broker' })
   }
 
-  async pick(window: BrowserWindow): Promise<PickedFile[]> {
+  /**
+   * `accept: 'text'` cho các luồng chỉ đọc văn bản trích xuất — xem `TEXT_FILE_EXTENSIONS`.
+   * Đây là lọc ở mức trình bày; chốt chặn thật nằm ở phía tiêu thụ trong main.
+   */
+  async pick(window: BrowserWindow, accept: 'all' | 'text' = 'all'): Promise<PickedFile[]> {
+    const textOnly = accept === 'text'
     const result = await dialog.showOpenDialog(window, {
       title: 'Chọn tài liệu để đính kèm',
       properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
       // Danh sách suy thẳng từ bảng của DocumentProcessor: hộp thoại không bao giờ mời người
       // dùng chọn một loại file mà pipeline sẽ từ chối ngay sau đó.
-      filters: [{ name: 'Tài liệu và ảnh được hỗ trợ', extensions: [...SUPPORTED_FILE_EXTENSIONS] }],
+      filters: [
+        {
+          name: textOnly ? 'Tài liệu có văn bản' : 'Tài liệu và ảnh được hỗ trợ',
+          extensions: [...(textOnly ? TEXT_FILE_EXTENSIONS : SUPPORTED_FILE_EXTENSIONS)],
+        },
+      ],
     })
     if (result.canceled) return []
 

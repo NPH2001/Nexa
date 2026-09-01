@@ -64,6 +64,25 @@ describe('FileBroker', () => {
     expect(broker.resolve([picked!.token])[0]?.path).toBe(path)
   })
 
+  it('hộp thoại chỉ mời chọn loại file mà pipeline nhận', async () => {
+    showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] })
+    const broker = new FileBroker(logger(), { maxFilesPerRequest: 5, maxFileSizeMb: 30 })
+
+    await broker.pick({} as never)
+    const all = showOpenDialog.mock.calls[0]?.[1] as { filters: { extensions: string[] }[] }
+    expect(all.filters[0]?.extensions).toEqual(expect.arrayContaining(['docx', 'xlsx', 'png']))
+
+    // Luồng chỉ đọc văn bản KHÔNG được mời chọn ảnh: ảnh cho ra text rỗng, và một tài liệu
+    // trống đi tới model là kết cục tệ hơn một lời từ chối rõ ràng.
+    await broker.pick({} as never, 'text')
+    const textOnly = showOpenDialog.mock.calls[1]?.[1] as { filters: { extensions: string[] }[] }
+    const extensions = textOnly.filters[0]?.extensions ?? []
+    expect(extensions).toEqual(expect.arrayContaining(['docx', 'xlsx', 'pdf', 'doc']))
+    for (const image of ['png', 'jpg', 'jpeg', 'webp', 'gif']) {
+      expect(extensions).not.toContain(image)
+    }
+  })
+
   it('từ chối token bịa ra — renderer không thể yêu cầu đọc file tuỳ ý', () => {
     const broker = new FileBroker(logger(), { maxFilesPerRequest: 5, maxFileSizeMb: 30 })
     expect(() => broker.resolve(['00000000-0000-4000-8000-000000000000'])).toThrow()
@@ -189,19 +208,19 @@ describe('UpdateService', () => {
   })
 
   it('không chặn sử dụng khi máy chủ cập nhật không truy cập được', async () => {
-    const service = new UpdateService(
-      logger(),
-      '1.0.0',
-      (async () => {
-        throw new Error('mạng hỏng')
-      }) as unknown as typeof fetch,
+    const service = new UpdateService(logger(), '1.0.0', (async () => {
+      throw new Error('mạng hỏng')
+    }) as unknown as typeof fetch)
+    expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe(
+      'unavailable',
     )
-    expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe('unavailable')
   })
 
   it('từ chối manifest thiếu trường hoặc sai định dạng', async () => {
     const service = new UpdateService(logger(), '1.0.0', fetchOk({ version: 'không phải semver' }))
-    expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe('unavailable')
+    expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe(
+      'unavailable',
+    )
   })
 
   it('phát hiện phiên bản đang chạy đã bị thu hồi (§18.2 rollback)', async () => {
@@ -211,7 +230,11 @@ describe('UpdateService', () => {
       fetchOk({
         ...manifest,
         version: '1.3.0',
-        rollbackTo: { version: '1.2.0', url: 'https://updates.corp.local/nexa-1.2.0.exe', sha256: 'b'.repeat(64) },
+        rollbackTo: {
+          version: '1.2.0',
+          url: 'https://updates.corp.local/nexa-1.2.0.exe',
+          sha256: 'b'.repeat(64),
+        },
       }),
     )
     const result = await service.check('https://updates.corp.local/m.json', [])
@@ -226,7 +249,11 @@ describe('UpdateService', () => {
       fetchOk({
         ...manifest,
         version: '1.2.0',
-        rollbackTo: { version: '1.2.0', url: 'https://updates.corp.local/x.exe', sha256: 'b'.repeat(64) },
+        rollbackTo: {
+          version: '1.2.0',
+          url: 'https://updates.corp.local/x.exe',
+          sha256: 'b'.repeat(64),
+        },
       }),
     )
     expect((await service.check('https://updates.corp.local/m.json', [])).status).toBe('up-to-date')

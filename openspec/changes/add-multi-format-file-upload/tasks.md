@@ -28,6 +28,7 @@
 - [x] 4.2 `maxImageSizeMb` trong settings, nối vào `DocumentProcessor`.
 - [x] 4.3 File picker suy từ bảng định dạng; chat controller truyền `modelSupportsVision`.
 - [x] 4.4 Renderer: ô "Đọc được ảnh" ở Cài đặt → Model; chip ảnh và cảnh báo ở ChatView.
+- [x] 4.5 Luồng chỉ-văn-bản (Nghiệp vụ, hồ sơ chứng từ) từ chối ảnh ở main + hộp thoại thu hẹp.
 
 ## 5. Verification
 
