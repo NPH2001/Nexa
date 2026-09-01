@@ -830,6 +830,101 @@ export interface ModelConfig {
   readonly createdAt: string
 }
 
+// ── Bản tin công việc cá nhân (openspec `add-daily-briefing`) ─────────────
+
+export type BriefingGroupName = 'overdue' | 'due_today' | 'due_this_week' | 'in_progress'
+export type BriefingSourceName = 'commitment' | 'jira'
+export type BriefingReasonKindName =
+  | 'overdue'
+  | 'due_today'
+  | 'due_this_week'
+  | 'in_progress'
+  | 'check_in_due'
+
+/**
+ * Vì sao một nguồn không có dữ liệu.
+ *
+ * Tách `empty` khỏi mọi trạng thái lỗi là điểm mấu chốt: một nguồn hỏng không bao giờ được trình
+ * bày thành "hôm nay bạn không có việc gì".
+ */
+export type BriefingSourceStatusName =
+  | 'ok'
+  | 'empty'
+  | 'disabled_by_policy'
+  | 'not_configured'
+  | 'unauthenticated'
+  /**
+   * Server có đó nhưng không trả lời được — mất kết nối, đang khởi động lại, hoặc quá hạn chờ.
+   *
+   * Timeout nằm chung ở đây một cách có chủ ý: MCP báo lỗi bằng text chứ không bằng mã, và tầng
+   * manager đã gộp "timed out" vào `MCP_SERVER_UNAVAILABLE`. Tách ra ở tầng này sẽ phải đoán
+   * theo chuỗi lỗi — một cách sai âm thầm. Cả hai đều thử lại được, nên người dùng không mất gì.
+   */
+  | 'unavailable'
+  | 'error'
+
+export interface BriefingReasonView {
+  readonly kind: BriefingReasonKindName
+  readonly at: string | null
+  readonly days: number | null
+}
+
+export interface BriefingItemView {
+  readonly id: string
+  readonly source: BriefingSourceName
+  readonly title: string
+  readonly detail: string | null
+  /** Issue key với nguồn Jira. */
+  readonly reference: string | null
+  /** Link mở thẳng issue; main dựng từ base URL đã cấu hình. */
+  readonly url: string | null
+  readonly sourceConversationId: string | null
+  readonly status: string
+  readonly group: BriefingGroupName
+  readonly reason: BriefingReasonView
+  readonly at: string | null
+  readonly updatedAt: string
+  readonly inActiveSprint: boolean
+}
+
+export interface BriefingGroupView {
+  readonly group: BriefingGroupName
+  readonly items: readonly BriefingItemView[]
+  readonly truncatedCount: number
+}
+
+export interface BriefingSourceStateView {
+  readonly source: BriefingSourceName
+  readonly status: BriefingSourceStatusName
+  /** Thời điểm lấy dữ liệu thành công gần nhất của nguồn này. */
+  readonly fetchedAt: string | null
+  readonly itemCount: number
+  /** Còn bao nhiêu mục nguồn trả về mà bản tin không hiển thị. */
+  readonly truncatedCount: number
+}
+
+/** Tóm tắt là phần duy nhất có model tham gia, và nó không được đổi nội dung bản tin. */
+export type BriefingSummaryStatusName = 'disabled' | 'ok' | 'unavailable'
+
+export interface BriefingSummaryView {
+  readonly status: BriefingSummaryStatusName
+  readonly text: string | null
+}
+
+export interface DailyBriefingView {
+  /** `false` khi người dùng tắt bản tin; Today quay lại phần tổng quan cũ. */
+  readonly enabled: boolean
+  readonly generatedAt: string
+  /** Ngày địa phương bản tin thuộc về, `YYYY-MM-DD`. */
+  readonly localDate: string
+  readonly groups: readonly BriefingGroupView[]
+  readonly totalItems: number
+  readonly truncatedTotal: number
+  /** Trạng thái từng nguồn, kể cả nguồn hỏng — luôn đủ mọi nguồn đã biết. */
+  readonly sources: readonly BriefingSourceStateView[]
+  readonly summary: BriefingSummaryView
+}
+
 /** Chỉ giữ schema thật sự được dùng ở biên IPC. */
 export const connectionTypeSchema = z.enum(CONNECTION_TYPES)
 export const memoryFactKindSchema = z.enum(MEMORY_FACT_KINDS)

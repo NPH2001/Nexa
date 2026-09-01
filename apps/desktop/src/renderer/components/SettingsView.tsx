@@ -1217,6 +1217,46 @@ function DataPanel(props: {
       </section>
 
       <section className="panel">
+        <h2>Bản tin công việc</h2>
+        <p className="muted">
+          Tổng hợp cam kết trong Nexa và việc được giao trên Jira lên đầu màn Hôm nay. Danh sách
+          việc do máy tính ra, không do model quyết định. Chưa gồm lịch họp.
+        </p>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={props.settings.dailyBriefingEnabled}
+            onChange={(e) => update({ dailyBriefingEnabled: e.target.checked })}
+          />
+          <span>
+            Hiện bản tin trên màn Hôm nay
+            <span className="muted small">
+              {' '}
+              — đọc cam kết trên máy và gọi một truy vấn Jira chỉ đọc mỗi ngày. Không mở thêm
+              quyền nào ngoài quyền Jira bạn đã cấp.
+            </span>
+          </span>
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={props.settings.dailyBriefingSummaryEnabled}
+            disabled={!props.settings.dailyBriefingEnabled}
+            onChange={(e) => update({ dailyBriefingSummaryEnabled: e.target.checked })}
+          />
+          <span>
+            Cho model viết một đoạn dẫn ngắn đầu bản tin
+            <span className="muted small">
+              {' '}
+              — mặc định tắt. Đây là chỗ duy nhất nội dung công việc được gửi cho model, và không
+              áp dụng với provider bên ngoài. Đoạn văn không thêm, bớt hay đổi hạn việc nào; tắt
+              đi thì danh sách vẫn nguyên vẹn.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <section className="panel">
         <h2>Công cụ Jira / Confluence</h2>
         <p className="muted">
           Mọi thao tác thay đổi dữ liệu đều hiển thị bản xem trước và cần bạn xác nhận, kể cả khi đã

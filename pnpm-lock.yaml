@@ -66,6 +66,9 @@ importers:
       '@nexa/connection-config':
         specifier: workspace:*
         version: link:../../packages/connection-config
+      '@nexa/daily-briefing':
+        specifier: workspace:*
+        version: link:../../packages/daily-briefing
       '@nexa/document-checklist':
         specifier: workspace:*
         version: link:../../packages/document-checklist
@@ -187,6 +190,8 @@ importers:
       '@nexa/shared-types':
         specifier: workspace:*
         version: link:../shared-types
+
+  packages/daily-briefing: {}
 
   packages/document-checklist:
     dependencies:

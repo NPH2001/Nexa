@@ -3,10 +3,20 @@ import type {
   CheckInSuggestion,
   Commitment,
   Conversation,
+  DailyBriefingView,
   MemoryFact,
 } from '@nexa/shared-types/renderer'
 import { api, events } from '../bridge.js'
 import { getCommitmentAttention, sortCommitmentsForToday } from './commitment-ui.js'
+import {
+  BRIEFING_GROUP_LABELS,
+  BRIEFING_GROUP_TONES,
+  briefingItemKicker,
+  describeBriefingReason,
+  describeBriefingSource,
+  formatBriefingTimestamp,
+  isBriefingSourceBroken,
+} from './briefing-ui.js'
 
 const SNOOZE_OPTIONS = [
   { value: 60 as const, label: '1 giờ' },
@@ -49,6 +59,10 @@ export function TodayView(props: {
   const [busyCheckInId, setBusyCheckInId] = useState<string | null>(null)
   const [busyToggle, setBusyToggle] = useState(false)
   const [snoozeMinutesById, setSnoozeMinutesById] = useState<Record<string, 60 | 1440 | 10080>>({})
+  const [briefing, setBriefing] = useState<DailyBriefingView | null>(null)
+  const [briefingLoading, setBriefingLoading] = useState(true)
+  const [briefingFailed, setBriefingFailed] = useState(false)
+  const [briefingRefreshing, setBriefingRefreshing] = useState(false)
 
   const loadOverview = useCallback(async (): Promise<void> => {
     setOverviewLoading(true)
@@ -83,10 +97,33 @@ export function TodayView(props: {
     }
   }, [onError])
 
+  /**
+   * Bản tin tải riêng khỏi phần tổng quan: nó chờ Jira, còn cam kết và hội thoại thì không —
+   * gộp chung sẽ khiến cả Today đứng hình vì một lời gọi mạng.
+   */
+  const loadBriefing = useCallback(
+    async (refresh = false): Promise<void> => {
+      if (refresh) setBriefingRefreshing(true)
+      else setBriefingLoading(true)
+      setBriefingFailed(false)
+      try {
+        setBriefing(refresh ? await api.briefing.refresh() : await api.briefing.get())
+      } catch (error) {
+        setBriefingFailed(true)
+        onError(error, 'Không dựng được bản tin hôm nay.')
+      } finally {
+        setBriefingLoading(false)
+        setBriefingRefreshing(false)
+      }
+    },
+    [onError],
+  )
+
   useEffect(() => {
     void loadOverview()
     void loadCheckIns()
-  }, [loadCheckIns, loadOverview])
+    void loadBriefing()
+  }, [loadBriefing, loadCheckIns, loadOverview])
 
   useEffect(() => events.onCheckInsChanged(() => void loadCheckIns()), [loadCheckIns])
 
@@ -151,6 +188,156 @@ export function TodayView(props: {
           Bắt đầu một việc mới
         </button>
       </header>
+
+      <section className="today-card today-briefing" aria-labelledby="today-briefing-title">
+        <div className="today-card-head">
+          <div>
+            <p className="today-kicker">Bản tin hôm nay</p>
+            <h2 id="today-briefing-title">Việc cần làm</h2>
+          </div>
+          <div className="today-card-tools">
+            {briefing !== null && briefing.enabled && (
+              <span className="muted small">
+                Lấy lúc {formatBriefingTimestamp(briefing.generatedAt)}
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn btn-small"
+              disabled={briefingLoading || briefingRefreshing}
+              onClick={() => void loadBriefing(true)}
+            >
+              {briefingRefreshing ? 'Đang làm mới…' : 'Làm mới'}
+            </button>
+          </div>
+        </div>
+
+        {/* Phạm vi nguồn nói thẳng: Nexa chưa có connector lịch nào được duyệt, và im lặng ở
+            đây sẽ khiến người dùng tưởng bản tin đã bao gồm lịch họp trong ngày. */}
+        <p className="muted small">
+          Tổng hợp từ cam kết trong Nexa và việc được giao trên Jira. Chưa gồm lịch họp — Nexa
+          chưa kết nối với lịch của bạn.
+        </p>
+
+        {briefingLoading ? (
+          <p className="muted" role="status">
+            Đang dựng bản tin…
+          </p>
+        ) : briefingFailed || briefing === null ? (
+          <div className="today-empty">
+            <p>Không dựng được bản tin hôm nay.</p>
+            <button type="button" className="btn" onClick={() => void loadBriefing()}>
+              Thử lại
+            </button>
+          </div>
+        ) : !briefing.enabled ? (
+          <div className="today-empty">
+            <p>Bản tin đang tắt trong Cài đặt.</p>
+            <button type="button" className="btn" onClick={props.onOpenSettings}>
+              Mở Cài đặt
+            </button>
+          </div>
+        ) : (
+          <>
+            {briefing.summary.status === 'ok' && briefing.summary.text !== null && (
+              <p className="today-briefing-summary">{briefing.summary.text}</p>
+            )}
+
+            {briefing.sources.filter(isBriefingSourceBroken).map((source) => {
+              const notice = describeBriefingSource(source)
+              if (notice === null) return null
+              return (
+                <div
+                  key={source.source}
+                  className={`today-briefing-notice notice-${notice.tone}`}
+                  role={notice.tone === 'warning' ? 'alert' : undefined}
+                >
+                  <span>{notice.message}</span>
+                  {notice.canRetry && (
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={briefingRefreshing}
+                      onClick={() => void loadBriefing(true)}
+                    >
+                      Thử lại
+                    </button>
+                  )}
+                  {source.status === 'not_configured' && source.source === 'jira' && (
+                    <button type="button" className="link" onClick={props.onOpenSettings}>
+                      Kết nối Jira
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+
+            {briefing.totalItems === 0 ? (
+              <div className="today-empty">
+                <p>Không có việc nào đến hạn theo các nguồn đã kết nối.</p>
+                <button type="button" className="btn" onClick={props.onOpenGoals}>
+                  Xem cam kết
+                </button>
+              </div>
+            ) : (
+              briefing.groups
+                .filter((group) => group.items.length > 0)
+                .map((group) => (
+                  <div key={group.group} className="today-briefing-group">
+                    <div className="today-briefing-group-head">
+                      <h3>{BRIEFING_GROUP_LABELS[group.group]}</h3>
+                      <span className="today-count">{String(group.items.length)}</span>
+                    </div>
+                    <ul
+                      className="today-briefing-list"
+                      aria-label={BRIEFING_GROUP_LABELS[group.group]}
+                    >
+                      {group.items.map((item) => (
+                        <li key={item.id} className="today-briefing-item">
+                          <span className="today-briefing-copy">
+                            <span className="muted small">{briefingItemKicker(item)}</span>
+                            <strong>{item.title}</strong>
+                            <span className="muted small">
+                              {item.detail ?? 'Chưa có bước tiếp theo'}
+                            </span>
+                          </span>
+                          <span className="today-briefing-meta">
+                            <span
+                              className={`commitment-attention attention-${BRIEFING_GROUP_TONES[group.group]}`}
+                            >
+                              {describeBriefingReason(item.reason)}
+                            </span>
+                            {item.source === 'commitment' ? (
+                              <button type="button" className="link" onClick={props.onOpenGoals}>
+                                Mở cam kết
+                              </button>
+                            ) : (
+                              item.url !== null && (
+                                <a
+                                  className="link"
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Mở trên Jira
+                                </a>
+                              )
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {group.truncatedCount > 0 && (
+                      <p className="muted small">
+                        Còn {String(group.truncatedCount)} việc nữa trong nhóm này chưa hiển thị.
+                      </p>
+                    )}
+                  </div>
+                ))
+            )}
+          </>
+        )}
+      </section>
 
       <div className="today-grid">
         <section className="today-card today-card-wide" aria-labelledby="today-continue-title">

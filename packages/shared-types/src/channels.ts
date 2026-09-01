@@ -49,6 +49,9 @@ export const IPC_CHANNEL_NAMES = [
   'checkin:unmute',
   'activity:list',
 
+  'briefing:get',
+  'briefing:refresh',
+
   'ba:knowledge:list',
   'ba:knowledge:create',
   'ba:knowledge:update',

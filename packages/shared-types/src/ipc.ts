@@ -504,6 +504,15 @@ export const purgeSchema = z.object({
   alsoDeleteCredentials: z.boolean().default(true),
 })
 
+/**
+ * Bản tin không nhận tham số nào từ renderer.
+ *
+ * Cố ý rỗng: JQL do main dựng từ danh tính người dùng, không phải thứ renderer (hay model) gửi
+ * xuống. Zod strip mọi key lạ, nên một `jql` gửi kèm sẽ không tới được handler.
+ */
+export const briefingGetSchema = z.object({})
+export const briefingRefreshSchema = z.object({})
+
 export const emptySchema = z.object({})
 
 /**
@@ -584,6 +593,9 @@ export const IPC_SCHEMAS = {
   'ba:checklist:read': bankChecklistRefSchema,
   'ba:checklist:ingest': bankChecklistIngestSchema,
   'ba:checklist:review': bankChecklistRefSchema,
+
+  'briefing:get': briefingGetSchema,
+  'briefing:refresh': briefingRefreshSchema,
 
   'chat:send': chatSendSchema,
   'chat:cancel': chatCancelSchema,

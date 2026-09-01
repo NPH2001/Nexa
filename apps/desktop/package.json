@@ -15,6 +15,7 @@
     "@nexa/atlassian-mcp-manager": "workspace:*",
     "@nexa/ba-kit": "workspace:*",
     "@nexa/connection-config": "workspace:*",
+    "@nexa/daily-briefing": "workspace:*",
     "@nexa/document-processor": "workspace:*",
     "@nexa/document-checklist": "workspace:*",
     "@nexa/llm-client": "workspace:*",
