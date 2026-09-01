@@ -558,8 +558,14 @@ function MessageBubble(props: {
         <div className="attachments">
           {message.attachments.map((file) => (
             <span key={file.id} className="chip chip-static">
-              📎 {file.fileName}
-              <span className="muted"> · {file.extractedChars.toLocaleString('vi-VN')} ký tự</span>
+              {file.fileType === 'image' ? '🖼' : '📎'} {file.fileName}
+              {/* Ảnh không sinh ra ký tự nào, nên "0 ký tự" ở đây vừa vô nghĩa vừa đọc như một
+                  lỗi trích xuất. Với ảnh, con số nói lên điều gì đó là dung lượng. */}
+              <span className="muted">
+                {file.fileType === 'image'
+                  ? ` · ${formatBytes(file.fileSize)}`
+                  : ` · ${file.extractedChars.toLocaleString('vi-VN')} ký tự`}
+              </span>
               {file.suspectedScan === true && (
                 <span className="warning-tag" title="PDF có thể là bản scan, không có lớp văn bản">
                   nghi bản scan

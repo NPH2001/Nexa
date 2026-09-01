@@ -34,3 +34,5 @@
 - [x] 5.2 Test cho từng định dạng, cho zip bomb và cho việc gỡ metadata.
 - [x] 5.3 Test ảnh trong context và trong `runTurn`.
 - [x] 5.4 Lint + typecheck + full test + build.
+- [x] 5.5 E2E chạy app thật: đính kèm ảnh, bị chặn ở model chỉ đọc chữ, và mock LiteLLM xác nhận
+      ảnh tới nơi đã gỡ metadata.

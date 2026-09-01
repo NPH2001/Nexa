@@ -11,7 +11,7 @@
  * In ra stdout đúng một dòng `LISTENING <port>` để tiến trình cha đọc được cổng.
  *
  * Kịch bản qua env `MOCK_SCENARIO`: ok | no-models-endpoint | auth-failed | tool-call |
- *                                   commitment-tool | slow | length
+ *                                   commitment-tool | slow | length | vision
  */
 
 import { createServer } from 'node:http'
@@ -230,6 +230,33 @@ const server = createServer((req, res) => {
           `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
           'data: [DONE]\n\n',
         ])
+        return
+      }
+
+      // `vision`: nói lại CHÍNH XÁC những gì nhận được về ảnh, để E2E khẳng định ảnh thật sự
+      // đi ra dây chứ không chỉ khẳng định giao diện trông có vẻ ổn.
+      if (scenario === 'vision') {
+        const parts = (body?.messages ?? []).flatMap((m) =>
+          Array.isArray(m.content) ? m.content : [],
+        )
+        const image = parts.find((p) => p.type === 'image_url')
+        if (image === undefined) {
+          sse(res, textStream('KHONG-CO-ANH'))
+          return
+        }
+        const url = String(image.image_url?.url ?? '')
+        const mediaType = url.slice('data:'.length, url.indexOf(';'))
+        const bytes = Buffer.from(url.slice(url.indexOf(',') + 1), 'base64')
+        // Chuỗi này là `IMAGE_METADATA_MARKER` trong `tests/support/make-image.ts`, nằm trong
+        // chunk tEXt/APP1 của ảnh fixture. Nếu nó tới được đây thì việc gỡ metadata đã hỏng, và
+        // câu trả lời phải nói ra điều đó thay vì im lặng.
+        const leaked = bytes.includes(Buffer.from('EXIF-BI-MAT'))
+        sse(
+          res,
+          textStream(
+            `CO-ANH ${mediaType} ${String(bytes.length)}B ${leaked ? 'CON-METADATA' : 'DA-GO-METADATA'}`,
+          ),
+        )
         return
       }
 
