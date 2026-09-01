@@ -154,7 +154,7 @@ model *thấy*, không đổi cái được phép *chạy*. Tắt toàn tổ ch�
 | Văn bản      | `.txt` `.md` `.csv` `.tsv` `.log`                | đoán encoding theo BOM, dự phòng windows-1258                     |
 | PDF          | `.pdf`                                           | `pdfjs-dist`, cảnh báo bản scan; **không OCR**                     |
 | Word         | `.docx` · `.doc`                                 | `mammoth` · piece table Word 97 viết trong repo                    |
-| Excel        | `.xlsx` `.xlsm` · `.xls`                         | OOXML · BIFF8, cả hai viết trong repo                              |
+| Excel        | `.xlsx` `.xlsm` · `.xls`                         | OOXML · BIFF8, cả hai viết trong repo; ô ngày ra ISO, không ra số  |
 | PowerPoint   | `.pptx` `.pptm` · `.ppt`                         | OOXML · cây bản ghi PowerPoint 97                                  |
 | Ảnh          | `.png` `.jpg` `.jpeg` `.webp` `.gif`             | gửi cho model thị giác, **đã gỡ EXIF/XMP** trước khi rời máy       |
 

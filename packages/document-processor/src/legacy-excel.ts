@@ -1,6 +1,7 @@
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
 import { CfbArchive } from './cfb.js'
 import { decodeCp1252, decodeUtf16Le } from './legacy-text.js'
+import { formatExcelSerial, isDateFormat, type NumberFormat } from './spreadsheet-dates.js'
 import type { LegacyExtraction } from './legacy-word.js'
 
 /**
@@ -32,6 +33,8 @@ const RECORD_NUMBER = 0x0203
 const RECORD_FORMULA = 0x0006
 const RECORD_STRING = 0x0207
 const RECORD_BOOLERR = 0x0205
+const RECORD_XF = 0x00e0
+const RECORD_FORMAT = 0x041e
 
 const SUBSTREAM_WORKSHEET = 0x0010
 const BIFF8 = 0x0600
@@ -67,6 +70,9 @@ function readWorkbook(stream: Buffer): Workbook {
   const namesByPosition = new Map<number, string>()
   const orderedNames: string[] = []
   let sharedStrings: string[] = []
+  /** Định dạng số theo thứ tự bản ghi XF — chỉ số `ixfe` của ô trỏ thẳng vào mảng này. */
+  const cellFormats: NumberFormat[] = []
+  const customFormatCodes = new Map<number, string>()
   let biffVersion = BIFF8
   let current: SheetData | null = null
   let sheetOrdinal = 0
@@ -117,6 +123,24 @@ function readWorkbook(stream: Buffer): Workbook {
         break
       }
 
+      case RECORD_FORMAT: {
+        if (body.length < 3) break
+        customFormatCodes.set(
+          body.readUInt16LE(0),
+          biffVersion >= BIFF8
+            ? readUnicodeString(body.subarray(2))
+            : readShortString(body.subarray(2), biffVersion),
+        )
+        break
+      }
+
+      case RECORD_XF: {
+        // ifnt(2) rồi ifmt(2). Thứ tự xuất hiện CHÍNH LÀ chỉ số mà ô tham chiếu tới.
+        if (body.length < 4) break
+        cellFormats.push({ id: body.readUInt16LE(2) })
+        break
+      }
+
       case RECORD_SST: {
         const segments = [body]
         // Gom mọi CONTINUE đi liền sau vào cùng một dòng byte trước khi đọc chuỗi.
@@ -152,7 +176,12 @@ function readWorkbook(stream: Buffer): Workbook {
       case RECORD_RK: {
         if (current === null || body.length < 10) break
         const value = decodeRk(body.readInt32LE(6))
-        setCell(current, body.readUInt16LE(0), body.readUInt16LE(2), formatNumber(value))
+        setCell(
+          current,
+          body.readUInt16LE(0),
+          body.readUInt16LE(2),
+          formatNumericCell(value, body.readUInt16LE(4), cellFormats, customFormatCodes),
+        )
         break
       }
 
@@ -163,7 +192,14 @@ function readWorkbook(stream: Buffer): Workbook {
         const count = Math.floor((body.length - 6) / 6)
         for (let i = 0; i < count; i++) {
           const value = decodeRk(body.readInt32LE(4 + i * 6 + 2))
-          setCell(current, row, firstColumn + i, formatNumber(value))
+          // Mỗi ô trong MULRK mang ixfe RIÊNG — một hàng có thể trộn ô ngày với ô số.
+          const styleIndex = body.readUInt16LE(4 + i * 6)
+          setCell(
+            current,
+            row,
+            firstColumn + i,
+            formatNumericCell(value, styleIndex, cellFormats, customFormatCodes),
+          )
         }
         break
       }
@@ -174,7 +210,12 @@ function readWorkbook(stream: Buffer): Workbook {
           current,
           body.readUInt16LE(0),
           body.readUInt16LE(2),
-          formatNumber(body.readDoubleLE(6)),
+          formatNumericCell(
+            body.readDoubleLE(6),
+            body.readUInt16LE(4),
+            cellFormats,
+            customFormatCodes,
+          ),
         )
         break
       }
@@ -195,7 +236,17 @@ function readWorkbook(stream: Buffer): Workbook {
             setCell(current, row, column, errorText(body.readUInt8(8)))
           }
         } else {
-          setCell(current, row, column, formatNumber(body.readDoubleLE(6)))
+          setCell(
+            current,
+            row,
+            column,
+            formatNumericCell(
+              body.readDoubleLE(6),
+              body.readUInt16LE(4),
+              cellFormats,
+              customFormatCodes,
+            ),
+          )
         }
         break
       }
@@ -230,6 +281,30 @@ function readWorkbook(stream: Buffer): Workbook {
   }
 
   return { sheets }
+}
+
+/**
+ * Định dạng một ô số, đổi serial thành ngày khi style của ô nói đó là ngày.
+ *
+ * FORMAT có thể đến SAU XF trong dòng bản ghi, nên `formatCode` tuỳ biến chỉ được tra ở đây —
+ * lúc dựng bảng thì chưa chắc đã có.
+ */
+function formatNumericCell(
+  value: number,
+  styleIndex: number,
+  cellFormats: readonly NumberFormat[],
+  customFormatCodes: ReadonlyMap<number, string>,
+): string {
+  const base = cellFormats[styleIndex]
+  if (base !== undefined) {
+    const code = customFormatCodes.get(base.id)
+    const format: NumberFormat = code === undefined ? base : { id: base.id, code }
+    if (isDateFormat(format)) {
+      const asDate = formatExcelSerial(value, format)
+      if (asDate !== null) return asDate
+    }
+  }
+  return formatNumber(value)
 }
 
 function setCell(sheet: SheetData, row: number, column: number, value: string): void {

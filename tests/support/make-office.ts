@@ -69,10 +69,19 @@ export function makeZip(entries: readonly ZipEntry[]): Buffer {
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`
 
+/** Ô ngày: Excel lưu số serial, và CHỈ style nói rằng nó là ngày. */
+export interface DateCell {
+  readonly serial: number
+  /** Bỏ trống ⇒ dùng định dạng ngày dựng sẵn (numFmtId 14). */
+  readonly formatCode?: string
+}
+
+export type CellFixture = string | number | null | DateCell
+
 export interface SheetFixture {
   readonly name: string
   /** Mỗi hàng là một mảng ô; `null` để bỏ trống ô đó và tạo hàng thưa. */
-  readonly rows: readonly (readonly (string | number | null)[])[]
+  readonly rows: readonly (readonly CellFixture[])[]
 }
 
 /** Dựng `.xlsx` dùng bảng chuỗi dùng chung cho ô chữ và giá trị trực tiếp cho ô số. */
@@ -103,6 +112,11 @@ export function makeXlsx(sheets: readonly SheetFixture[]): Buffer {
             if (typeof value === 'number') {
               return `<c r="${reference}"><v>${String(value)}</v></c>`
             }
+            if (typeof value === 'object') {
+              // s="1" = định dạng dựng sẵn 14; s="2" = định dạng tuỳ biến khai trong styles.xml.
+              const style = value.formatCode === undefined ? 1 : 2
+              return `<c r="${reference}" s="${String(style)}"><v>${String(value.serial)}</v></c>`
+            }
             return `<c r="${reference}" t="s"><v>${String(indexOf(value))}</v></c>`
           })
           .join('')
@@ -126,8 +140,24 @@ export function makeXlsx(sheets: readonly SheetFixture[]): Buffer {
     .map((value) => `<si><t>${escapeXml(value)}</t></si>`)
     .join('')}</sst>`
 
+  const customFormat = sheets
+    .flatMap((sheet) => sheet.rows.flat())
+    .find((cell): cell is DateCell => typeof cell === 'object' && cell !== null)?.formatCode
+
+  // cellXfs: 0 = mặc định, 1 = ngày dựng sẵn, 2 = ngày theo formatCode tuỳ biến. `cellStyleXfs`
+  // cũng chứa <xf> và cố ý có mặt ở đây — bộ đọc phải bỏ qua nó, nếu không chỉ số style lệch hết.
+  const stylesXml =
+    `<?xml version="1.0"?><styleSheet>` +
+    (customFormat === undefined
+      ? ''
+      : `<numFmts count="1"><numFmt numFmtId="164" formatCode="${escapeXml(customFormat)}"/></numFmts>`) +
+    `<cellStyleXfs count="1"><xf numFmtId="0"/></cellStyleXfs>` +
+    `<cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/>` +
+    `<xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>`
+
   return makeZip([
     { name: '[Content_Types].xml', content: CONTENT_TYPES },
+    { name: 'xl/styles.xml', content: stylesXml },
     {
       name: 'xl/workbook.xml',
       content: `<?xml version="1.0"?><workbook><sheets>${sheetTags.join('')}</sheets></workbook>`,

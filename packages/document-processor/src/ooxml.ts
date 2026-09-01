@@ -1,6 +1,7 @@
 import { ERROR_CODES, NexaError } from '@nexa/shared-types'
 import { ZipArchive } from './zip-reader.js'
 import { attribute, collectTagText, decodeXmlEntities, sliceBlocks } from './xml-text.js'
+import { formatExcelSerial, isDateFormat, type NumberFormat } from './spreadsheet-dates.js'
 
 /**
  * Trích văn bản từ hai định dạng OOXML còn lại ngoài DOCX: bảng tính `.xlsx` và trình chiếu
@@ -38,6 +39,7 @@ export function extractXlsx(buffer: Buffer, maxChars: number): OfficeExtraction 
 
   const relationships = readRelationships(zip, 'xl/workbook.xml')
   const sharedStrings = readSharedStrings(zip)
+  const cellFormats = readCellFormats(zip)
 
   const out = new TextBudget(maxChars)
   let sheetCount = 0
@@ -50,7 +52,7 @@ export function extractXlsx(buffer: Buffer, maxChars: number): OfficeExtraction 
 
     sheetCount++
     out.push(`## Bảng tính: ${sheet.name}`)
-    const rows = readSheetRows(sheetXml, sharedStrings)
+    const rows = readSheetRows(sheetXml, sharedStrings, cellFormats)
     if (rows.length === 0) out.push('(trống)')
     for (const row of rows) {
       if (!out.push(row)) break
@@ -135,7 +137,51 @@ function readSharedStrings(zip: ZipArchive): string[] {
   return strings
 }
 
-function readSheetRows(sheetXml: string, sharedStrings: readonly string[]): string[] {
+/**
+ * Đọc bảng định dạng số: `cellXfs` là danh sách style của ô, mỗi mục trỏ tới một `numFmtId`.
+ *
+ * Phải cắt đúng khối `<cellXfs>` trước khi quét `<xf>`: file nào cũng có thêm `<cellStyleXfs>`
+ * chứa các `<xf>` khác, và trộn hai danh sách vào nhau sẽ làm lệch toàn bộ chỉ số style.
+ */
+function readCellFormats(zip: ZipArchive): NumberFormat[] {
+  const xml = zip.readText('xl/styles.xml')
+  if (xml === null) return []
+
+  const customCodes = new Map<number, string>()
+  const numberFormatsBlock = sliceBlocks(xml, 'numFmts')[0]
+  if (numberFormatsBlock !== undefined) {
+    const pattern = /<numFmt\b([^>]*)\/?>/g
+    let found: RegExpExecArray | null
+    while ((found = pattern.exec(numberFormatsBlock)) !== null) {
+      const tag = found[1]
+      if (tag === undefined) continue
+      const id = Number.parseInt(attribute(tag, 'numFmtId') ?? '', 10)
+      const code = attribute(tag, 'formatCode')
+      if (Number.isInteger(id) && code !== null) customCodes.set(id, code)
+    }
+  }
+
+  const cellXfsBlock = sliceBlocks(xml, 'cellXfs')[0]
+  if (cellXfsBlock === undefined) return []
+
+  const formats: NumberFormat[] = []
+  const pattern = /<xf\b([^>]*?)(?:\/>|>)/g
+  let found: RegExpExecArray | null
+  while ((found = pattern.exec(cellXfsBlock)) !== null) {
+    const tag = found[1]
+    if (tag === undefined) continue
+    const id = Number.parseInt(attribute(tag, 'numFmtId') ?? '0', 10)
+    const code = customCodes.get(id)
+    formats.push(code === undefined ? { id } : { id, code })
+  }
+  return formats
+}
+
+function readSheetRows(
+  sheetXml: string,
+  sharedStrings: readonly string[],
+  cellFormats: readonly NumberFormat[],
+): string[] {
   const rows: string[] = []
   const rowPattern = /<row\b[^>]*>([\s\S]*?)<\/row>/g
   let foundRow: RegExpExecArray | null
@@ -151,7 +197,7 @@ function readSheetRows(sheetXml: string, sharedStrings: readonly string[]): stri
     while ((foundCell = cellPattern.exec(rowXml)) !== null) {
       const tag = foundCell[1] ?? ''
       const body = foundCell[2] ?? ''
-      const value = readCellValue(tag, body, sharedStrings)
+      const value = readCellValue(tag, body, sharedStrings, cellFormats)
 
       // Giữ đúng cột bằng cách chèn ô rỗng cho khoảng trống — nếu không, hàng thưa sẽ bị
       // dồn trái và model đọc nhầm cột nào ứng với tiêu đề nào.
@@ -169,7 +215,12 @@ function readSheetRows(sheetXml: string, sharedStrings: readonly string[]): stri
   return rows
 }
 
-function readCellValue(tag: string, body: string, sharedStrings: readonly string[]): string {
+function readCellValue(
+  tag: string,
+  body: string,
+  sharedStrings: readonly string[],
+  cellFormats: readonly NumberFormat[],
+): string {
   const type = attribute(tag, 't') ?? 'n'
 
   switch (type) {
@@ -188,9 +239,20 @@ function readCellValue(tag: string, body: string, sharedStrings: readonly string
     // dùng thấy ô đang lỗi thay vì tưởng ô trống.
     case 'str':
     case 'e':
-    case 'n':
-    default:
       return collectTagText(body, 'v')
+    case 'n':
+    default: {
+      const raw = collectTagText(body, 'v')
+      if (raw === '') return ''
+      // Ô số mang style ngày: đổi serial thành ngày. Xem `spreadsheet-dates.ts`.
+      const styleIndex = Number.parseInt(attribute(tag, 's') ?? '', 10)
+      const format = Number.isInteger(styleIndex) ? cellFormats[styleIndex] : undefined
+      if (isDateFormat(format) && format !== undefined) {
+        const asDate = formatExcelSerial(Number(raw), format)
+        if (asDate !== null) return asDate
+      }
+      return raw
+    }
   }
 }
 

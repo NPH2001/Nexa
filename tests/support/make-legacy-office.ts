@@ -280,9 +280,17 @@ export function makeDoc(pieces: readonly DocPiece[]): Buffer {
 
 // ── Excel 97 (BIFF8) ──────────────────────────────────────────────────────
 
+/** Ô ngày trong BIFF8: giá trị vẫn là số, "ngày" nằm ở bản ghi XF mà ô trỏ tới. */
+export interface XlsDateCell {
+  readonly serial: number
+  readonly formatCode?: string
+}
+
+export type XlsCellFixture = string | number | null | XlsDateCell
+
 export interface XlsSheetFixture {
   readonly name: string
-  readonly rows: readonly (readonly (string | number | null)[])[]
+  readonly rows: readonly (readonly XlsCellFixture[])[]
 }
 
 /** Dựng `.xls` dùng SST cho ô chữ và bản ghi NUMBER cho ô số. */
@@ -300,6 +308,10 @@ export function makeXls(sheets: readonly XlsSheetFixture[]): Buffer {
     }
   }
 
+  const customFormat = sheets
+    .flatMap((sheet) => sheet.rows.flat())
+    .find((cell) => typeof cell === 'object' && cell !== null)?.formatCode
+
   const sheetBodies = sheets.map((sheet) => {
     const records: Buffer[] = [
       record(0x0809, Buffer.concat([uint16(0x0600), uint16(0x0010), Buffer.alloc(12)])),
@@ -307,6 +319,16 @@ export function makeXls(sheets: readonly XlsSheetFixture[]): Buffer {
     sheet.rows.forEach((row, rowIndex) => {
       row.forEach((cell, columnIndex) => {
         if (cell === null) return
+        if (typeof cell === 'object') {
+          // ixfe = 1 (XF ngày dựng sẵn) hoặc 2 (XF trỏ tới FORMAT tuỳ biến).
+          const body = Buffer.alloc(14)
+          body.writeUInt16LE(rowIndex, 0)
+          body.writeUInt16LE(columnIndex, 2)
+          body.writeUInt16LE(cell.formatCode === undefined ? 1 : 2, 4)
+          body.writeDoubleLE(cell.serial, 6)
+          records.push(record(0x0203, body))
+          return
+        }
         if (typeof cell === 'number') {
           const body = Buffer.alloc(14)
           body.writeUInt16LE(rowIndex, 0)
@@ -326,8 +348,29 @@ export function makeXls(sheets: readonly XlsSheetFixture[]): Buffer {
     return Buffer.concat(records)
   })
 
+  // FORMAT khai formatCode tuỳ biến; XF là bảng style mà ô trỏ tới theo THỨ TỰ xuất hiện.
+  const formatRecords =
+    customFormat === undefined
+      ? []
+      : [
+          record(
+            0x041e,
+            Buffer.concat([
+              uint16(164),
+              uint16(customFormat.length),
+              Buffer.from([0x01]),
+              Buffer.from(customFormat, 'utf16le'),
+            ]),
+          ),
+        ]
+  const xfRecords = [0, 14, 164].map((formatId) =>
+    record(0x00e0, Buffer.concat([uint16(0), uint16(formatId), Buffer.alloc(16)])),
+  )
+
   const globalsWithoutBoundsheets = Buffer.concat([
     record(0x0809, Buffer.concat([uint16(0x0600), uint16(0x0005), Buffer.alloc(12)])),
+    ...formatRecords,
+    ...xfRecords,
   ])
   const sst = record(
     0x00fc,

@@ -922,10 +922,22 @@ cậy, và tự viết là cách duy nhất đặt được trần bung dữ li�
 chi tiết khó (mảnh văn bản đảo thứ tự, chuỗi SST cắt qua CONTINUE, mini stream, ô thưa), nhưng
 fixture do tôi sinh ra thì chỉ chứng minh được bộ đọc khớp với hiểu biết của tôi về định dạng.
 
-**Hai giới hạn đã biết, không sửa được từ phía đọc:**
+**Cập nhật 2026-09-01 — đã chạy với 8 tài liệu thật** (2 `.xlsx`, 3 `.docx` gồm một file 9,4 MB,
+2 `.pptx` gồm một file 12 MB, 1 `.doc` Word 97). Cả 8 đọc được, không file nào lỗi, file lớn nhất
+mất 824 ms. Đo chất lượng mã tiếng Việt bằng thống kê ký tự thay vì đọc nội dung: 0 ký tự thay thế
+và 0 rác Latin-1 ở cả 8 file. Vài ký tự Latin-1 xuất hiện (`± ° µ × ½ ÷` trong một đồ án cơ khí,
+`·` làm dấu phân cách trong một slide) là ký tự hợp lệ, không phải lỗi giải mã.
 
-- `.doc` tiếng Việt mã TCVN3/VNI ra sai dấu — file không mang thông tin code page.
-- Ngày tháng trong `.xls`/`.xlsx` ra số serial — thà đưa model con số đúng còn hơn một ngày sai.
+**Một lỗi thật do lần chạy đó phát hiện, đã sửa:** ô ngày trong bảng tính ra số serial. Một cột
+tiêu đề "Ngày ký" tới model dưới dạng `45678`; model không có cách nào biết đó là ngày nên sẽ trả
+lời tự tin về một con số — đúng kiểu sai âm thầm mà cả change này đang tránh. Nay `.xlsx` và `.xls`
+đều đọc tầng style (numFmt/XF) và xuất ngày dạng ISO. Đáng nói là **không file `.xlsx` nào của
+người dùng có ô ngày**, nên lỗi này chỉ lộ ra khi dựng thêm một file thăm dò — bài học cho việc
+"chạy với file thật" không tự động nghĩa là "đã phủ hết".
 
-**Việc cần làm trước pilot:** chạy thử với một bộ file thật do người dùng cung cấp, đặc biệt là
-`.doc` và `.xls` cũ. Cùng nhóm với C2 (chưa chạy với hạ tầng thật).
+**Giới hạn còn lại, không sửa được từ phía đọc:** `.doc` tiếng Việt mã TCVN3/VNI ra sai dấu, vì
+file không mang thông tin code page. File `.doc` đã thử nằm ở dạng Unicode nên không dính; điều đó
+KHÔNG chứng minh được là file TCVN3 sẽ ổn.
+
+**Việc còn lại trước pilot:** thử thêm `.xls` cũ (chưa có mẫu thật nào trên máy) và một `.doc` mã
+TCVN3 nếu tổ chức còn lưu. Cùng nhóm với C2.

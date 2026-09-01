@@ -63,6 +63,26 @@ rather than from part file names.
 - **WHEN** slides were reordered so that `slide3.xml` appears first in the presentation
 - **THEN** it is extracted as `Slide 1`
 
+### Requirement: Date cells are extracted as dates, not as serial numbers
+
+A spreadsheet cell whose number format is a date or time format SHALL be extracted as an ISO
+date string. A cell holding the same value without a date format SHALL be extracted unchanged.
+
+#### Scenario: Signing date column
+
+- **WHEN** a cell under the heading "Ngày ký" holds the serial `45678` with a date format
+- **THEN** it is extracted as `2025-01-21`, not as `45678`
+
+#### Scenario: Same value, no date format
+
+- **WHEN** a cell holds `45678` with a general number format
+- **THEN** it is extracted as `45678`
+
+#### Scenario: Text prefix that looks like a date pattern
+
+- **WHEN** a cell's custom format code is `"Ngày "0`
+- **THEN** the cell is treated as a number, because the date letters are inside a text literal
+
 ### Requirement: Image metadata is removed before the image leaves the machine
 
 The system SHALL remove EXIF, XMP and comment blocks from an image before encoding it for the

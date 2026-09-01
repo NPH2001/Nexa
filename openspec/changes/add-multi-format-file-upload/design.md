@@ -36,7 +36,7 @@ trần bung dữ liệu vào ĐÚNG chỗ cần — `inflateRawSync({ maxOutputL
 vì cấp phát xong rồi mới phát hiện quá cỡ.
 
 Cái giá đã chấp nhận: chất lượng trích xuất ở mức "đủ dùng", không bằng bộ chuyển đổi chuyên
-dụng. Ngày tháng trong Excel ra số serial; `.doc` tiếng Việt mã TCVN3/VNI ra sai dấu.
+dụng. `.doc` tiếng Việt mã TCVN3/VNI ra sai dấu — file không mang thông tin code page.
 
 ### D2. Ảnh là một `DocumentKind`, không phải một loại đính kèm riêng
 
@@ -76,7 +76,23 @@ bề mặt tấn công mà D1 đang tránh.
 Khi không gỡ được thì KHÔNG gửi ảnh gốc. Một cam kết về quyền riêng tư mà có nhánh dự phòng âm
 thầm bỏ qua chính nó thì không phải cam kết.
 
-### D6. `ChatMessage.content` là union, mặc định vẫn là chuỗi
+### D6. Ô ngày phải đọc qua tầng style, không đọc thẳng giá trị
+
+Excel không lưu ngày — nó lưu số ngày kể từ 30/12/1899, và để **định dạng hiển thị** quyết định
+con số đó trông ra ngày hay ra số. Cùng giá trị `45678` hiện là "15/01/2025" ở ô này và "45678"
+ở ô kia, chỉ khác nhau ở style.
+
+Bỏ qua tầng đó thì một cột "Ngày ký" tới model dưới dạng `45678`, và model sẽ trả lời tự tin về
+một con số. Đây cùng một lỗi với D4 (ảnh bị bỏ im lặng): câu trả lời trông vẫn hợp lý, nên không
+ai phát hiện ra.
+
+Xuất theo ISO (`2025-01-21`) chứ không theo `dd/mm/yyyy`. Người đọc ở đây là model, và
+`03/04/2025` là ngày 3 tháng 4 hay 4 tháng 3 thì không định dạng địa phương nào nói được.
+
+Áp cho CẢ `.xlsx` (numFmt + cellXfs) và `.xls` (FORMAT + XF). Sửa một bên thôi thì tệ hơn không
+sửa: cùng một bảng lưu ở hai định dạng sẽ cho hai kết quả khác nhau.
+
+### D7. `ChatMessage.content` là union, mặc định vẫn là chuỗi
 
 `string | ChatContentPart[]`. Tuyệt đại đa số message không có ảnh, và một số gateway cũ chỉ nhận
 chuỗi — chuyển hết sang dạng mảng là thay đổi hành vi cho 99% lượt gửi để phục vụ 1%. Chỉ message

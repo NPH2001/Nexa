@@ -7,6 +7,7 @@
 
 - [x] 2.1 `ZipArchive` — đọc ZIP có trần bung theo entry và theo tổng, hỗ trợ ZIP64.
 - [x] 2.2 `ooxml.ts` — `.xlsx` (SST, ô thưa, thứ tự sheet) và `.pptx` (thứ tự `sldIdLst`, ghi chú).
+- [x] 2.2b `spreadsheet-dates.ts` — ô ngày ra ISO thay vì số serial, cho cả `.xlsx` và `.xls`.
 - [x] 2.3 `CfbArchive` — đọc OLE2 gồm FAT, DIFAT, mini stream, có trần chain.
 - [x] 2.4 `legacy-word.ts` — piece table Word 97, bỏ chỉ dẫn field, dự phòng Word 6/95.
 - [x] 2.5 `legacy-excel.ts` — BIFF8 gồm SST qua CONTINUE, LABELSST/LABEL/RK/MULRK/NUMBER/FORMULA.
@@ -36,3 +37,4 @@
 - [x] 5.4 Lint + typecheck + full test + build.
 - [x] 5.5 E2E chạy app thật: đính kèm ảnh, bị chặn ở model chỉ đọc chữ, và mock LiteLLM xác nhận
       ảnh tới nơi đã gỡ metadata.
+- [x] 5.6 Chạy thử với 8 tài liệu thật (`.docx`, `.xlsx`, `.pptx`, `.doc`) — xem OPEN-QUESTIONS J2.
