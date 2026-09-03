@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -158,7 +158,15 @@ describe('driver SQLite (ADR 0003)', () => {
     // Đường dẫn không ghi được ⇒ cả hai driver đều hỏng. Thông báo phải nói nguyên nhân của
     // từng cái — đây đúng là tình huống đã gặp thật khi Electron 33 (Node 20) không có
     // node:sqlite và cũng không có binding better-sqlite3.
-    const impossible = '/khong/the/tao/duoc/nexa.db'
+    //
+    // Dùng một FILE làm "thư mục cha" thay vì một đường dẫn cố định không tồn tại: một đường dẫn
+    // cố định có thể vô tình trở nên ghi được (ví dụ nếu lần chạy trước để sót thư mục), khiến
+    // test flaky theo trạng thái đĩa. Mở DB bên trong một file luôn thất bại (ENOTDIR), bất kể
+    // máy hay lần chạy nào.
+    ctx = makeTempStore()
+    const blocker = join(ctx.dir, 'blocker-file')
+    writeFileSync(blocker, '')
+    const impossible = join(blocker, 'nexa.db')
     try {
       openDatabase(impossible)
       throw new Error('phải ném lỗi')
