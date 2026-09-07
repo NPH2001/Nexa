@@ -6,7 +6,7 @@ import {
   type Page,
 } from '@playwright/test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -132,6 +132,42 @@ async function configureLiteLlm(h: Harness, apiKey = 'sk-e2e-0123456789abcdef'):
   await expect(h.page.getByText('model-a')).toBeVisible()
 }
 
+/** Log ứng dụng trên đĩa — nơi duy nhất quan sát được thông báo OS từ ngoài tiến trình. */
+function readAppLog(userDataDir: string): string {
+  const path = join(userDataDir, 'logs', 'nexa.log')
+  return existsSync(path) ? readFileSync(path, 'utf8') : ''
+}
+
+/**
+ * Chờ một event xuất hiện trong log rồi trả về khối `fields` của từng dòng khớp.
+ *
+ * Trả về mảng RỖNG khi hết thời gian chờ thay vì ném: "không có thông báo nào" là một kết cục
+ * mà test cần phân biệt được với "có nhưng sai nội dung", chứ không phải một lỗi hạ tầng.
+ */
+async function waitForLogEvent(
+  userDataDir: string,
+  event: string,
+  timeoutMs = 20_000,
+): Promise<Record<string, unknown>[]> {
+  const deadline = Date.now() + timeoutMs
+  let found: Record<string, unknown>[] = []
+  for (;;) {
+    found = readAppLog(userDataDir)
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line) as { event?: string; fields?: Record<string, unknown> }]
+        } catch {
+          return []
+        }
+      })
+      .filter((record) => record.event === event)
+      .map((record) => record.fields ?? {})
+    if (found.length > 0 || Date.now() >= deadline) return found
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
 test.describe('E2E — cấu hình và chat', () => {
   test('hiển thị model Plus ngoài màn hình Chat, chọn được và nhận streaming', async () => {
     const h = await launch({ codexScenario: 'authenticated' })
@@ -170,6 +206,96 @@ test.describe('E2E — cấu hình và chat', () => {
       await expect(
         h.page.getByText('Xin chào, đây là câu trả lời từ mock ChatGPT Plus.'),
       ).toBeVisible({ timeout: 20_000 })
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('giao diện sáng giữ chat, sao chép và bố cục ở các cỡ cửa sổ', async () => {
+    const h = await launch({ codexScenario: 'authenticated' })
+    try {
+      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByLabel('Nội dung câu hỏi').fill('hi')
+      await h.page.getByRole('button', { name: 'Gửi', exact: true }).click()
+      const firstReply = h.page.locator('.message-assistant').first()
+      await expect(firstReply.getByText(/câu trả lời từ mock ChatGPT Plus/)).toBeVisible()
+      await firstReply.getByLabel('Sửa tin nhắn').click()
+      await firstReply.getByLabel('Nội dung tin nhắn đang sửa').fill('Hi! How can I help?')
+      await firstReply.getByRole('button', { name: 'Lưu', exact: true }).click()
+
+      await h.page.getByLabel('Nội dung câu hỏi').fill('toi muon len ke hoach thuc hien task jira')
+      await h.page.getByRole('button', { name: 'Gửi', exact: true }).click()
+      await expect(h.page.locator('.message-assistant')).toHaveCount(2)
+      const reply = h.page.locator('.message-assistant').last()
+      await expect(reply.getByText(/câu trả lời từ mock ChatGPT Plus/)).toBeVisible()
+      const content =
+        'Được. Bạn gửi mình nội dung task Jira hoặc các thông tin sau:\n\n' +
+        '• Tiêu đề và mô tả task\n• Acceptance criteria\n• Repo/module liên quan\n' +
+        '• Deadline hoặc mức độ ưu tiên\n• Ràng buộc kỹ thuật nếu có\n\n' +
+        'Mình sẽ chuyển thành kế hoạch gồm: mục tiêu, các bước triển khai, phân chia subtask, tiêu chí hoàn thành, rủi ro và kế hoạch test.'
+      await reply.getByLabel('Sửa tin nhắn').click()
+      await reply.getByLabel('Nội dung tin nhắn đang sửa').fill(content)
+      await reply.getByRole('button', { name: 'Lưu', exact: true }).click()
+      await expect(reply.locator('.message-body')).toHaveText(content)
+      await expect(h.page.locator('.message-date')).toHaveText('Hôm nay')
+
+      // Keep the host clipboard untouched while checking the renderer copy action.
+      await h.page.evaluate(() => {
+        navigator.clipboard.writeText = async (value: string): Promise<void> => {
+          sessionStorage.setItem('nexa-e2e-copied', value)
+        }
+      })
+      await reply.getByLabel('Sao chép tin nhắn').click()
+      await expect(h.page.getByText('Đã sao chép tin nhắn')).toBeVisible()
+      expect(await h.page.evaluate(() => sessionStorage.getItem('nexa-e2e-copied'))).toBe(content)
+
+      const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+      while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir) mkdirSync(captureDir, { recursive: true })
+      for (const width of [1513, 1280, 900, 760, 520]) {
+        await h.page.setViewportSize({ width, height: width === 1513 ? 1002 : 860 })
+        await h.page.locator('.messages').evaluate((node) => {
+          node.scrollTop = 0
+        })
+        expect(
+          await h.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        ).toBe(true)
+        const composer = h.page.getByLabel('Nội dung câu hỏi')
+        await expect(composer).toBeVisible()
+        await composer.scrollIntoViewIfNeeded()
+        const box = await composer.boundingBox()
+        expect(box).not.toBeNull()
+        expect(box!.x).toBeGreaterThanOrEqual(0)
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width)
+        if (captureDir) {
+          await h.page.screenshot({
+            path: join(captureDir, `nexa-chat-${String(width)}.png`),
+            fullPage: true,
+          })
+        }
+      }
+      await h.page.setViewportSize({ width: 1280, height: 860 })
+      await h.page.getByLabel('Tìm trong hội thoại').fill('Acceptance')
+      await expect(h.page.locator('.conversation-list .snippet').first()).toContainText(
+        'Acceptance',
+      )
+      await h.page.getByLabel('Tìm trong hội thoại').fill('')
+      await h.page.setViewportSize({ width: 900, height: 520 })
+      await h.page.locator('.sidebar').evaluate((node) => {
+        node.scrollTop = node.scrollHeight
+      })
+      const settingsButton = h.page
+        .locator('.sidebar')
+        .getByRole('button', { name: 'Cài đặt', exact: true })
+      await expect(settingsButton).toBeInViewport()
+      await expect(h.page.locator('.conversation-row').first()).toBeInViewport()
+      await expect(h.page.getByLabel('Nội dung câu hỏi')).toBeInViewport()
+      if (captureDir) {
+        await h.page.screenshot({ path: join(captureDir, 'nexa-chat-900x520.png') })
+      }
+      await settingsButton.click()
+      await expect(h.page.getByRole('tablist')).toBeVisible()
     } finally {
       await h.close()
     }
@@ -507,6 +633,117 @@ test.describe('E2E — cấu hình và chat', () => {
       await h.page.getByRole('button', { name: 'Tắt nhắc việc' }).click()
       await expect(h.page.getByRole('button', { name: 'Bật nhắc việc' })).toBeVisible()
       await expect(h.page.getByRole('list', { name: 'Check-in cần chú ý' })).toHaveCount(0)
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('thông báo OS gửi đúng một lần với nội dung chung chung khi cửa sổ không được nhìn', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+
+      // ── Hai công tắc, và chúng phải mặc định TẮT ────────────────────────
+      await h.page.getByRole('button', { name: 'Cài đặt' }).click()
+      await h.page.getByRole('tab', { name: 'Dữ liệu & quyền riêng tư' }).click()
+
+      const osToggle = h.page.getByRole('checkbox', {
+        name: /Gửi thông báo hệ thống khi có việc tới hạn/,
+      })
+      const contentToggle = h.page.getByRole('checkbox', { name: /Cho thông báo nêu tên cam kết/ })
+      await expect(osToggle).not.toBeChecked()
+      await expect(contentToggle).not.toBeChecked()
+      // Mô tả phải nói thẳng rủi ro màn hình khoá, không chỉ ghi "hiển thị chi tiết".
+      await expect(h.page.getByText(/màn hình khoá/)).toBeVisible()
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        for (const [width, height, name] of [
+          [1280, 860, 'notification-settings-default.png'],
+          [620, 720, 'notification-settings-narrow.png'],
+        ] as const) {
+          await h.page.setViewportSize({ width, height })
+          await h.page.screenshot({ path: join(captureDir, name), fullPage: true })
+        }
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+      }
+
+      // Nội dung là tuỳ chọn PHỤ: không bật được khi thông báo còn tắt.
+      await expect(contentToggle).toBeDisabled()
+
+      // `Notification.isSupported()` là false trên một số desktop environment Linux (và trong
+      // WSL không có notification daemon). Cả hai nhánh dưới đây đều là hợp đồng phải giữ —
+      // nhánh "có hỗ trợ" là nhánh khẳng định việc gộp và nội dung chung chung, và nó chạy trên
+      // CI Windows cũng như Linux có libnotify.
+      const notificationsSupported = await osToggle.isEnabled()
+      if (notificationsSupported) {
+        await osToggle.check()
+        await expect(contentToggle).toBeEnabled()
+        // Cố ý KHÔNG bật nội dung — đây là mặc định cần kiểm chứng.
+        await expect(contentToggle).not.toBeChecked()
+      } else {
+        // Nói rõ lý do và vô hiệu hoá công tắc, thay vì bật một tính năng không chạy.
+        await expect(h.page.getByText(/không hỗ trợ thông báo/)).toBeVisible()
+      }
+
+      // ── Một cam kết đã quá hạn ─────────────────────────────────────────
+      await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
+      const title = 'Thông báo E2E — cam kết quá hạn'
+      await h.page.getByLabel(/Kết quả muốn đạt/).fill(title)
+      await h.page.getByLabel(/Bước tiếp theo/).fill('Mở cam kết và tự quyết định bước tiếp theo')
+      await h.page.getByLabel('Hạn hoàn thành').fill('2020-01-01T09:00')
+      await h.page.getByRole('button', { name: 'Tạo cam kết' }).click()
+      await expect(
+        h.page.getByRole('list', { name: 'Đang theo dõi' }).getByText(title),
+      ).toBeVisible()
+
+      // ── Ẩn cửa sổ, rồi bật nhắc việc ───────────────────────────────────
+      // Bật nhắc việc TRƯỚC khi ẩn sẽ khiến `checkin:setEnabled` reconcile trong lúc cửa sổ còn
+      // focus — và lúc đó notifier im lặng đúng theo hợp đồng. Nên phải ẩn trước.
+      await h.app.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.hide()
+      })
+      await h.page.evaluate(async () => {
+        await window.nexa?.invoke('checkin:setEnabled', { enabled: true })
+      })
+
+      if (notificationsSupported) {
+        const sent = await waitForLogEvent(h.userDataDir, 'check-in-notification-sent')
+        expect(sent, 'gộp thành đúng một thông báo').toHaveLength(1)
+        expect(sent[0]?.['count']).toBe(1)
+        // Đây là khẳng định quan trọng nhất của test này: nội dung ra khỏi vùng mã hoá của Nexa
+        // phải là chung chung, vì người dùng chưa bật `notificationShowContent`.
+        expect(sent[0]?.['withContent']).toBe(false)
+      } else {
+        // Không hỗ trợ thì phải im lặng VÀ ghi lại vì sao — "không thấy thông báo nào" là loại
+        // lỗi không điều tra được nếu không có dòng log này.
+        //
+        // Lý do là `os-notifications-disabled`, không phải `platform-unsupported`: công tắc bị
+        // vô hiệu hoá nên setting không bao giờ bật lên được, và notifier dừng ở điều kiện
+        // opt-in trước cả khi hỏi tới nền tảng. Đúng thứ tự mà spec yêu cầu — kiểm tra trước,
+        // rồi mới không hứa.
+        const skipped = await waitForLogEvent(h.userDataDir, 'check-in-notification-skipped')
+        expect(skipped.map((line) => line['reason'])).toContain('os-notifications-disabled')
+        expect(await waitForLogEvent(h.userDataDir, 'check-in-notification-sent', 1_000)).toEqual(
+          [],
+        )
+      }
+
+      // Tên cam kết KHÔNG được rời vùng mã hoá — kể cả vào log trên đĩa.
+      expect(readAppLog(h.userDataDir)).not.toContain(title)
+
+      // Hôm nay vẫn là nguồn sự thật: hiện lại cửa sổ và suggestion còn đó.
+      await h.app.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.show()
+      })
+      await h.page.getByRole('button', { name: 'Hôm nay' }).click()
+      await expect(
+        h.page.getByRole('list', { name: 'Check-in cần chú ý' }).getByText(title),
+      ).toBeVisible()
+      // Và Hôm nay phải nói thẳng rằng nhắc việc chết cùng tiến trình.
+      await expect(h.page.getByText(/Đóng Nexa là dừng hẳn/)).toBeVisible()
     } finally {
       await h.close()
     }

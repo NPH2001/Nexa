@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IPC_CHANNEL_NAMES, NEXA_EVENTS } from './channels.js'
+import { IPC_CHANNEL_NAMES, NEXA_EVENTS, NEXA_EVENT_NAMES } from './channels.js'
 import { DEFAULT_APP_SETTINGS } from './settings.js'
 import {
   activityListSchema,
@@ -144,6 +144,13 @@ describe('shared IPC allowlists', () => {
   it('publishes check-in refresh events to renderer', () => {
     expect(NEXA_EVENTS.checkInsChanged).toBe('nexa:checkins-changed')
   })
+
+  it('publishes the deep-link navigate event to preload', () => {
+    // Preload chỉ chuyển tiếp event có trong `NEXA_EVENT_NAMES`; thiếu tên ở đây thì deep-link
+    // từ thông báo/tray sẽ im lặng không tới được renderer.
+    expect(NEXA_EVENTS.navigate).toBe('nexa:navigate')
+    expect(NEXA_EVENT_NAMES).toContain(NEXA_EVENTS.navigate)
+  })
 })
 
 describe('briefing IPC schemas', () => {
@@ -164,5 +171,20 @@ describe('briefing settings', () => {
   it('bản tin bật sẵn còn tóm tắt thì không', () => {
     expect(DEFAULT_APP_SETTINGS.dailyBriefingEnabled).toBe(true)
     expect(DEFAULT_APP_SETTINGS.dailyBriefingSummaryEnabled).toBe(false)
+  })
+})
+
+describe('os notification settings', () => {
+  it('cả thông báo OS lẫn nội dung trong thông báo đều mặc định tắt', () => {
+    // Thông báo OS là một bề mặt rò rỉ MỚI: nội dung rời khỏi vùng mã hoá của Nexa vào trung
+    // tâm thông báo của hệ điều hành. Cả hai cờ phải là quyết định tường minh của người dùng.
+    expect(DEFAULT_APP_SETTINGS.checkInOsNotificationsEnabled).toBe(false)
+    expect(DEFAULT_APP_SETTINGS.notificationShowContent).toBe(false)
+  })
+
+  it('thu nhỏ xuống tray là tuỳ chọn riêng và cũng mặc định tắt', () => {
+    // Chỉ đổi hành vi MINIMIZE. Đóng cửa sổ vẫn thoát app — không có setting nào lật được
+    // ngữ nghĩa đó, vì nó là bất biến credential chứ không phải một tuỳ chọn giao diện.
+    expect(DEFAULT_APP_SETTINGS.minimizeToTrayEnabled).toBe(false)
   })
 })

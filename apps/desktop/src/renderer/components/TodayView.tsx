@@ -215,8 +215,8 @@ export function TodayView(props: {
         {/* Phạm vi nguồn nói thẳng: Nexa chưa có connector lịch nào được duyệt, và im lặng ở
             đây sẽ khiến người dùng tưởng bản tin đã bao gồm lịch họp trong ngày. */}
         <p className="muted small">
-          Tổng hợp từ cam kết trong Nexa và việc được giao trên Jira. Chưa gồm lịch họp — Nexa
-          chưa kết nối với lịch của bạn.
+          Tổng hợp từ cam kết trong Nexa và việc được giao trên Jira. Chưa gồm lịch họp — Nexa chưa
+          kết nối với lịch của bạn.
         </p>
 
         {briefingLoading ? (
@@ -401,8 +401,9 @@ export function TodayView(props: {
             </div>
           </div>
           <p className="muted small">
-            Chỉ nhắc khi Nexa đang mở. Chưa có background process hay OS notification ở phiên bản
-            này.
+            Chỉ nhắc khi Nexa đang mở — kể cả khi cửa sổ đang ẩn xuống khay hệ thống. Đóng Nexa là
+            dừng hẳn: không có tiến trình nền nào nhắc thay. Thông báo hệ thống là tuỳ chọn riêng
+            trong Cài đặt và mặc định tắt.
           </p>
           {checkInLoading ? (
             <p className="muted" role="status">

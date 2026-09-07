@@ -60,6 +60,9 @@ export function SettingsView(props: {
   const [tab, setTab] = useState<Tab>(props.initialTab ?? 'litellm')
   const [connections, setConnections] = useState<Connection[]>([])
   const [lockedFeatures, setLockedFeatures] = useState<string[]>([])
+  // Mặc định `true` để chưa tải xong thì công tắc không nhấp nháy sang trạng thái "không hỗ
+  // trợ" — một lời khẳng định sai về nền tảng còn tệ hơn một khoảnh khắc chưa biết.
+  const [notificationsSupported, setNotificationsSupported] = useState(true)
   const openAiAllowed = props.policy?.allowDirectOpenAi === true
 
   const reload = useCallback(async (): Promise<void> => {
@@ -70,6 +73,7 @@ export function SettingsView(props: {
       ])
       setConnections(conns)
       setLockedFeatures(settingsResult.lockedFeatures)
+      setNotificationsSupported(settingsResult.notificationsSupported)
       onSettingsChanged(settingsResult.settings)
     } catch (error) {
       onError(error, 'Không tải được cấu hình.')
@@ -261,6 +265,7 @@ export function SettingsView(props: {
             settings={props.settings}
             models={props.models}
             lockedFeatures={lockedFeatures}
+            notificationsSupported={notificationsSupported}
             onChanged={props.onSettingsChanged}
             onError={props.onError}
             onToast={props.onToast}
@@ -1077,6 +1082,7 @@ function DataPanel(props: {
   settings: AppSettings
   models: readonly ModelConfig[]
   lockedFeatures: readonly string[]
+  notificationsSupported: boolean
   onChanged: (settings: AppSettings) => void
   onError: (error: unknown, fallback: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
@@ -1217,6 +1223,72 @@ function DataPanel(props: {
       </section>
 
       <section className="panel">
+        <h2>Thông báo hệ thống</h2>
+        <p className="muted">
+          Nhắc việc chỉ chạy khi Nexa đang mở — kể cả khi cửa sổ đang ẩn xuống khay hệ thống. Đóng
+          Nexa là dừng hẳn: không có tiến trình nền nào nhắc thay.
+        </p>
+        {!props.notificationsSupported && (
+          <p className="muted small" role="status">
+            Hệ điều hành trên máy này không hỗ trợ thông báo, nên hai tuỳ chọn dưới đây bị vô hiệu
+            hoá. Check-in vẫn hiện đầy đủ trên màn Hôm nay.
+          </p>
+        )}
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={props.settings.checkInOsNotificationsEnabled}
+            disabled={!props.notificationsSupported}
+            onChange={(e) => update({ checkInOsNotificationsEnabled: e.target.checked })}
+          />
+          <span>
+            Gửi thông báo hệ thống khi có việc tới hạn
+            <span className="muted small">
+              {' '}
+              — mặc định tắt, và cần bật cả nhắc việc ở trên. Nexa im lặng khi bạn đang mở sẵn cửa
+              sổ. Chế độ Không làm phiền của hệ điều hành có thể chặn thông báo mà không báo lỗi,
+              nên Hôm nay vẫn là nơi đầy đủ nhất.
+            </span>
+          </span>
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={props.settings.notificationShowContent}
+            disabled={
+              !props.notificationsSupported || !props.settings.checkInOsNotificationsEnabled
+            }
+            onChange={(e) => update({ notificationShowContent: e.target.checked })}
+          />
+          <span>
+            Cho thông báo nêu tên cam kết
+            <span className="muted small">
+              {' '}
+              — mặc định tắt. <strong>Bật là chấp nhận tên việc hiện trên màn hình khoá</strong>,
+              trong trung tâm thông báo của hệ điều hành, và trên một số cấu hình Windows còn được
+              đồng bộ sang máy khác. Đó là vùng Nexa không mã hoá được. Tắt thì thông báo chỉ nói “2
+              việc cần chú ý”.
+            </span>
+          </span>
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={props.settings.minimizeToTrayEnabled}
+            onChange={(e) => update({ minimizeToTrayEnabled: e.target.checked })}
+          />
+          <span>
+            Thu nhỏ xuống khay hệ thống thay vì thanh taskbar
+            <span className="muted small">
+              {' '}
+              — chỉ đổi hành vi khi bạn thu nhỏ. <strong>Đóng cửa sổ vẫn là thoát Nexa</strong>, và
+              lúc đó không còn thông báo nào được gửi.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <section className="panel">
         <h2>Bản tin công việc</h2>
         <p className="muted">
           Tổng hợp cam kết trong Nexa và việc được giao trên Jira lên đầu màn Hôm nay. Danh sách
@@ -1232,8 +1304,8 @@ function DataPanel(props: {
             Hiện bản tin trên màn Hôm nay
             <span className="muted small">
               {' '}
-              — đọc cam kết trên máy và gọi một truy vấn Jira chỉ đọc mỗi ngày. Không mở thêm
-              quyền nào ngoài quyền Jira bạn đã cấp.
+              — đọc cam kết trên máy và gọi một truy vấn Jira chỉ đọc mỗi ngày. Không mở thêm quyền
+              nào ngoài quyền Jira bạn đã cấp.
             </span>
           </span>
         </label>
@@ -1248,9 +1320,9 @@ function DataPanel(props: {
             Cho model viết một đoạn dẫn ngắn đầu bản tin
             <span className="muted small">
               {' '}
-              — mặc định tắt. Đây là chỗ duy nhất nội dung công việc được gửi cho model, và không
-              áp dụng với provider bên ngoài. Đoạn văn không thêm, bớt hay đổi hạn việc nào; tắt
-              đi thì danh sách vẫn nguyên vẹn.
+              — mặc định tắt. Đây là chỗ duy nhất nội dung công việc được gửi cho model, và không áp
+              dụng với provider bên ngoài. Đoạn văn không thêm, bớt hay đổi hạn việc nào; tắt đi thì
+              danh sách vẫn nguyên vẹn.
             </span>
           </span>
         </label>

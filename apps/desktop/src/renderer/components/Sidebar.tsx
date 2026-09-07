@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { Conversation, McpStatusEvent } from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
 import type { View } from '../App.js'
+import { UiIcon } from './UiIcon.js'
+import { NexaMark } from './NexaMark.js'
 
 interface SearchState {
   query: string
@@ -75,13 +77,17 @@ export function Sidebar(props: {
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <div className="brand">Nexa</div>
+        <div className="brand">
+          <NexaMark />
+          <span>Nexa</span>
+        </div>
         <button
           type="button"
           className={`btn btn-block ${props.view === 'today' ? 'btn-active' : ''}`}
           aria-current={props.view === 'today' ? 'page' : undefined}
           onClick={() => props.onChangeView('today')}
         >
+          <UiIcon name="home" />
           Hôm nay
         </button>
         <button
@@ -90,6 +96,7 @@ export function Sidebar(props: {
           aria-current={props.view === 'goals' ? 'page' : undefined}
           onClick={() => props.onChangeView('goals')}
         >
+          <UiIcon name="target" />
           Mục tiêu
         </button>
         <button
@@ -98,6 +105,7 @@ export function Sidebar(props: {
           aria-current={props.view === 'activity' ? 'page' : undefined}
           onClick={() => props.onChangeView('activity')}
         >
+          <UiIcon name="activity" />
           Hoạt động
         </button>
         {props.baEnabled && (
@@ -107,23 +115,34 @@ export function Sidebar(props: {
             aria-current={props.view === 'ba' ? 'page' : undefined}
             onClick={() => props.onChangeView('ba')}
           >
+            <UiIcon name="book" />
             Nghiệp vụ
           </button>
         )}
-        <button type="button" className="btn btn-primary btn-block" onClick={props.onCreate}>
-          + Hội thoại mới
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          aria-label="+ Hội thoại mới"
+          onClick={props.onCreate}
+        >
+          <UiIcon name="plus" />
+          Hội thoại mới
         </button>
-        <input
-          type="search"
-          className="input"
-          aria-label="Tìm trong hội thoại"
-          placeholder="Tìm trong hội thoại…"
-          value={search.query}
-          onChange={(e) => runSearch(e.target.value)}
-        />
+        <div className="sidebar-search">
+          <UiIcon name="search" />
+          <input
+            type="search"
+            className="input"
+            aria-label="Tìm trong hội thoại"
+            placeholder="Tìm trong hội thoại…"
+            value={search.query}
+            onChange={(e) => runSearch(e.target.value)}
+          />
+        </div>
       </div>
 
       <nav className="conversation-list" aria-label="Danh sách hội thoại">
+        <h2 className="conversation-list-heading">Hội thoại gần đây</h2>
         {search.query.trim().length >= 2 ? (
           <>
             {search.searching && (
@@ -203,7 +222,7 @@ export function Sidebar(props: {
                 title="Xoá hội thoại"
                 onClick={() => props.onDelete(conversation.id)}
               >
-                🗑
+                <UiIcon name="trash" size={17} />
               </button>
             </div>
           ))
@@ -217,7 +236,8 @@ export function Sidebar(props: {
           className={`btn btn-block ${props.view === 'settings' ? 'btn-active' : ''}`}
           onClick={() => props.onChangeView(props.view === 'settings' ? 'chat' : 'settings')}
         >
-          {props.view === 'settings' ? '← Quay lại hội thoại' : '⚙ Cài đặt'}
+          <UiIcon name={props.view === 'settings' ? 'chevron' : 'settings'} />
+          {props.view === 'settings' ? '← Quay lại hội thoại' : 'Cài đặt'}
         </button>
       </div>
     </aside>
@@ -234,6 +254,7 @@ function McpBadge(props: { status: McpStatusEvent | null }): React.JSX.Element {
   }
   return (
     <div className={`mcp-badge mcp-${state}`} title={props.status?.errorCode ?? ''}>
+      <UiIcon name="book" size={21} />
       <span className="dot" />
       {label[state]}
     </div>

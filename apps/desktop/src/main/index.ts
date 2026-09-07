@@ -1,13 +1,24 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog } from 'electron'
-import { NEXA_EVENTS, NexaError, type McpStatusEvent } from '@nexa/shared-types'
+import { app, BrowserWindow, Menu, Notification, Tray, dialog } from 'electron'
+import {
+  NEXA_EVENTS,
+  NexaError,
+  type McpStatusEvent,
+  type NavigateView,
+} from '@nexa/shared-types'
 import { FileSink, Logger, globalRedactor } from '@nexa/observability'
 import { ChatController } from './chat-controller.js'
+import { CheckInNotifier, type NotificationHandle } from './check-in-notifier.js'
 import { registerIpc } from './ipc.js'
 import { bootstrapServices, type NexaServices } from './services.js'
 import { createMainWindow } from './window.js'
+import { TrayController, type TrayHandle } from './tray.js'
+import { revealAndNavigate, type RevealWindow } from './window-reveal.js'
 import { UpdateService } from './update-service.js'
 import { RENDERER_ENTRY_URL, registerRendererProtocol } from './renderer-protocol.js'
+
+/** Khớp `appId` trong electron-builder.yml — xem `setAppUserModelId` trong `start()`. */
+const APP_USER_MODEL_ID = 'net.fimaster.nexa'
 
 const isDevelopment = !app.isPackaged
 let services: NexaServices | null = null
@@ -15,6 +26,8 @@ let chat: ChatController | null = null
 let mainWindow: BrowserWindow | null = null
 let retentionTimer: NodeJS.Timeout | null = null
 let updateTimer: NodeJS.Timeout | null = null
+let notifier: CheckInNotifier | null = null
+let tray: TrayController | null = null
 
 /**
  * §11.1: "Không chạy ứng dụng với quyền Administrator nếu không cần."
@@ -34,6 +47,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function start(): void {
+  // Windows gắn toast vào AppUserModelId của tiến trình, không vào tên file. Không khai báo thì
+  // thông báo hiện dưới danh tính "Electron" — hoặc không hiện gì cả. Giá trị phải khớp `appId`
+  // trong electron-builder.yml để khớp shortcut Start Menu mà bộ cài tạo ra.
+  app.setAppUserModelId(APP_USER_MODEL_ID)
+
   registerRendererProtocol(join(app.getAppPath(), 'out', 'renderer'))
 
   try {
@@ -65,6 +83,24 @@ function start(): void {
     onMcpStatus: emitMcpStatus,
   })
 
+  notifier = new CheckInNotifier({
+    notifications: electronNotifications,
+    readSettings: () => activeServices.settings.get(),
+    readWindowVisibility: readWindowVisibility,
+    onActivate: () => revealToday(activeServices),
+    logger: activeServices.logger,
+  })
+
+  tray = new TrayController({
+    tray: electronTray,
+    iconPath: join(app.getAppPath(), 'resources', 'icon.ico'),
+    logger: activeServices.logger,
+    onOpen: () => revealToday(activeServices),
+    onPauseOneHour: () => notifier?.pauseForAnHour(),
+    onQuit: () => app.quit(),
+  })
+  tray.start()
+
   openWindow(activeServices)
   activeServices.checkIns.start()
   scheduleRetention(activeServices)
@@ -76,7 +112,7 @@ function start(): void {
   })
 }
 
-function openWindow(activeServices: NexaServices): void {
+function openWindow(activeServices: NexaServices): BrowserWindow {
   const devServerUrl = process.env['ELECTRON_RENDERER_URL']
 
   mainWindow = createMainWindow({
@@ -91,9 +127,23 @@ function openWindow(activeServices: NexaServices): void {
     mainWindow = null
   })
 
+  // Thu nhỏ xuống tray là tuỳ chọn cho hành vi MINIMIZE, và chỉ vậy: `window-all-closed` bên
+  // dưới không đổi một dòng, nên đóng cửa sổ vẫn thoát app. Không dựng được tray thì thu nhỏ
+  // giữ nguyên hành vi cũ — ẩn cửa sổ khi không có tray là cách làm nó biến mất hẳn.
+  mainWindow.on('minimize', () => {
+    if (!activeServices.settings.get().minimizeToTrayEnabled) return
+    if (tray?.active !== true) return
+    // `hide()` sau khi đã minimize là cách bỏ cửa sổ khỏi taskbar; `minimize` không phải event
+    // huỷ được nên không có đường nào chặn nó từ đầu. `revealAndNavigate` restore rồi show, nên
+    // hai bước này đảo ngược được đầy đủ.
+    mainWindow?.hide()
+  })
+
   activeServices.logger.perf('window-ready', {
     durationMs: Math.round(performance.now()),
   })
+
+  return mainWindow
 }
 
 /** Khởi chạy MCP ở nền: chat với LLM không được phải chờ Atlassian sẵn sàng. */
@@ -194,9 +244,93 @@ function emitMcpStatus(event: McpStatusEvent): void {
   mainWindow.webContents.send(NEXA_EVENTS.mcpStatus, event)
 }
 
+/**
+ * Cổng duy nhất của `ProactiveCheckInService` ra ngoài.
+ *
+ * Hai consumer, cùng một event: Hôm nay cập nhật như trước, và notifier quyết định có gửi thông
+ * báo OS hay không. Service vẫn không biết Notification API tồn tại.
+ */
 function emitCheckInsChanged(changedAt: string): void {
-  if (mainWindow === null || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(NEXA_EVENTS.checkInsChanged, { changedAt })
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(NEXA_EVENTS.checkInsChanged, { changedAt })
+  }
+
+  const activeServices = services
+  if (activeServices === null || notifier === null) return
+  try {
+    // `list()` là cổng đọc công khai duy nhất. Nó reconcile lại một lần nữa, nhưng reconcile là
+    // idempotent nên lần thứ hai không tìm thấy thay đổi và không phát lại event — không có đệ quy.
+    notifier.onCheckInsChanged(activeServices.checkIns.list().suggestions)
+  } catch (error) {
+    // Một thông báo không gửi được KHÔNG được làm hỏng việc cập nhật Hôm nay: Hôm nay mới là
+    // nguồn sự thật, thông báo chỉ là lời mời quay lại.
+    activeServices.logger.warn('check-in-notify-failed', {
+      errorCode: NexaError.wrap(error).code,
+    })
+  }
+}
+
+/** Người dùng có đang NHÌN THẤY màn hình hay không — không phải cửa sổ có tồn tại hay không. */
+function readWindowVisibility(): { exists: boolean; visible: boolean; focused: boolean } {
+  if (mainWindow === null || mainWindow.isDestroyed()) {
+    return { exists: false, visible: false, focused: false }
+  }
+  return {
+    exists: true,
+    visible: mainWindow.isVisible() && !mainWindow.isMinimized(),
+    focused: mainWindow.isFocused(),
+  }
+}
+
+/** Bấm thông báo và "Mở Nexa" trên tray đi cùng một đường và kết thúc ở cùng một chỗ. */
+function revealToday(activeServices: NexaServices): void {
+  revealAndNavigate({
+    getWindow: () => (mainWindow === null ? null : adaptWindow(mainWindow)),
+    openWindow: () => adaptWindow(openWindow(activeServices)),
+  })
+}
+
+function adaptWindow(window: BrowserWindow): RevealWindow {
+  return {
+    isDestroyed: () => window.isDestroyed(),
+    isMinimized: () => window.isMinimized(),
+    isVisible: () => window.isVisible(),
+    restore: () => window.restore(),
+    show: () => window.show(),
+    focus: () => window.focus(),
+    isLoading: () => window.webContents.isLoading(),
+    onceLoaded: (listener) => window.webContents.once('did-finish-load', listener),
+    sendNavigate: (view: NavigateView) =>
+      window.webContents.send(NEXA_EVENTS.navigate, { view }),
+  }
+}
+
+/** Adapter `electron.Notification` — cổng hẹp mà `CheckInNotifier` nhận qua tham số. */
+const electronNotifications = {
+  isSupported: () => Notification.isSupported(),
+  create: (options: { title: string; body: string }): NotificationHandle => {
+    const notification = new Notification(options)
+    return {
+      show: () => notification.show(),
+      onClick: (listener) => notification.on('click', listener),
+    }
+  },
+}
+
+/** Adapter `electron.Tray` + `electron.Menu`. */
+const electronTray = {
+  create: (iconPath: string): TrayHandle => {
+    const instance = new Tray(iconPath)
+    return {
+      setToolTip: (text) => instance.setToolTip(text),
+      setContextMenu: (items) =>
+        instance.setContextMenu(
+          Menu.buildFromTemplate(items.map((item) => ({ label: item.label, click: item.click }))),
+        ),
+      onClick: (listener) => instance.on('click', listener),
+      destroy: () => instance.destroy(),
+    }
+  },
 }
 
 /**
@@ -248,6 +382,11 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (retentionTimer !== null) clearInterval(retentionTimer)
   if (updateTimer !== null) clearInterval(updateTimer)
+  // Tray phải chết cùng tiến trình: một icon còn sót lại ở khay hệ thống là đúng thứ khiến
+  // người dùng tin Nexa vẫn đang nhắc việc khi nó đã tắt.
+  tray?.dispose()
+  tray = null
+  notifier = null
   chat?.shutdown()
 })
 

@@ -59,7 +59,7 @@ export function createMainWindow(opts: WindowOptions): BrowserWindow {
     minWidth: 520,
     minHeight: 520,
     show: false,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#f5f9fe',
     title: 'Nexa',
     webPreferences: {
       preload: opts.preloadPath,

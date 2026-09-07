@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow } from 'electron'
+import { ipcMain, Notification, type BrowserWindow } from 'electron'
 import { app } from 'electron'
 import {
   ERROR_CODES,
@@ -995,6 +995,11 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     'settings:get': () => ({
       settings: services.settings.get(),
       lockedFeatures: services.settings.lockedFeatureNames(),
+      // Đọc lại mỗi lần thay vì chụp một lần lúc khởi động: Cài đặt cần biết để vô hiệu hoá
+      // công tắc kèm lý do, chứ không bật một tính năng mà nền tảng không chạy được. Kể cả khi
+      // trả `true`, Nexa vẫn không hứa thông báo đã tới nơi — DND và focus assist nuốt toast
+      // mà không báo lỗi nào.
+      notificationsSupported: Notification.isSupported(),
     }),
     'settings:update': (input) => {
       const updated = services.settings.update(input)

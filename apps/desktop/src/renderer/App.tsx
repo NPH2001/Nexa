@@ -263,6 +263,10 @@ export function App(): React.JSX.Element {
 
       events.onMcpStatus((status) => setMcpStatus(status)),
 
+      // Main đã khôi phục/focus cửa sổ trước khi gửi event này; ở đây chỉ còn việc đổi đích.
+      // Không có xác nhận nào cần hỏi: người dùng vừa tự bấm vào thông báo hoặc menu tray.
+      events.onNavigate((event) => setView(event.view)),
+
       // §18.2: bản cập nhật không bắt buộc thì chỉ thông báo. Trường hợp bắt buộc hoặc bản
       // đang chạy bị thu hồi do main process chặn thẳng bằng dialog rồi đóng app.
       events.onUpdateAvailable((event) => {
