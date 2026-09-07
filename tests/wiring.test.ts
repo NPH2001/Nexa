@@ -80,6 +80,39 @@ describe('bundler biết mọi workspace package', () => {
   })
 })
 
+/**
+ * Vòng đời tiến trình (openspec `add-os-checkin-notifications`).
+ *
+ * Tray và thông báo OS là đúng loại tính năng dễ kéo theo một "đóng để thu nhỏ" — thứ sẽ giữ
+ * tiến trình sống vô thời hạn với credential đã giải mã trong RAM, tức là lật ngược một quyết
+ * định bảo mật có chủ ý. Những test dưới đây đọc chính mã nguồn để khẳng định ranh giới đó
+ * chưa bị dịch, vì `index.ts` gọi `app.whenReady()` lúc import nên không nạp được trong vitest.
+ */
+describe('vòng đời tiến trình', () => {
+  const main = read('apps/desktop/src/main/index.ts')
+
+  it('đóng cửa sổ cuối vẫn thoát app trên Windows/Linux', () => {
+    const handler = /app\.on\('window-all-closed',[\s\S]*?\n\}\)/.exec(main)?.[0] ?? ''
+    expect(handler, "không tìm thấy handler 'window-all-closed'").not.toBe('')
+    expect(handler).toContain("process.platform !== 'darwin'")
+    expect(handler).toContain('app.quit()')
+    // Một tray "đóng để thu nhỏ" trông giống hệt như thêm `preventDefault` vào đây.
+    expect(handler).not.toContain('preventDefault')
+    expect(handler).not.toContain('hide()')
+  })
+
+  it('không có handler nào chặn việc đóng cửa sổ', () => {
+    // `minimize` có thể ẩn cửa sổ xuống tray; `close` thì không được — đó là ranh giới.
+    expect(main).not.toMatch(/on\('close',/)
+  })
+
+  it('tray bị huỷ trên đường thoát', () => {
+    const handler = /app\.on\('before-quit',[\s\S]*?\n\}\)/.exec(main)?.[0] ?? ''
+    expect(handler, "không tìm thấy handler 'before-quit'").not.toBe('')
+    expect(handler).toContain('tray?.dispose()')
+  })
+})
+
 describe('feature flag', () => {
   const flags = Object.keys(featureFlagsSchema.parse({}))
   const registry = buildToolRegistry({
@@ -114,5 +147,137 @@ describe('feature flag', () => {
         'toolScoping',
       ].sort(),
     )
+  })
+})
+
+/**
+ * Bề mặt tool của agent (openspec `add-memory`, spec `long-term-memory`: "Agent không tự lưu
+ * fact ngầm").
+ *
+ * Cam kết này hiện đúng vì một sự VẮNG MẶT: không có tool memory nào để model gọi. Sự vắng mặt
+ * không tự bảo vệ được nó — thêm một registry mới vào lượt chat là chuyện của ba dòng, và không
+ * test nào ở nơi khác sẽ đỏ. Các vùng khác của repo đã khẳng định đúng kiểu này
+ * (`commitment-tools.test.ts`: "no delete"; `ba-tools.test.ts`: "không có tool nào xoá tri thức").
+ *
+ * `services.memory` là `MemoryRepository` đầy đủ quyền ghi, nên ranh giới KHÔNG nằm ở kiểu dữ
+ * liệu. Nó nằm ở đúng một chỗ: danh sách registry được ghép vào khối `tools`.
+ */
+describe('bề mặt tool của agent', () => {
+  const controller = read('apps/desktop/src/main/chat-controller.ts')
+  const MEMORY_LIKE = /memory|fact|ghi[_-]?nho|ghi[_-]?nhớ/i
+
+  it('đúng hai registry tool cục bộ được ghép vào một lượt chat', () => {
+    const block = /composeLocalToolRegistries\(\[([\s\S]*?)\n\s*\]\)/.exec(controller)?.[1] ?? ''
+    expect(block, 'không tìm thấy chỗ ghép registry tool cục bộ').not.toBe('')
+
+    const factories = [...block.matchAll(/create(\w+?)ToolRegistry/g)]
+      .map((match) => match[1])
+      .sort()
+    expect(factories).toEqual(['Ba', 'Commitment'])
+  })
+
+  it('không tool cục bộ nào là tool memory', () => {
+    const names = ['apps/desktop/src/main/commitment-tools.ts', 'apps/desktop/src/main/ba-tools.ts']
+      .flatMap((file) => [...read(file).matchAll(/export const \w*_TOOL = '([^']+)'/g)])
+      .map((match) => match[1])
+
+    // 2 tool cam kết + 5 tool BA. Con số cứng để việc thêm tool phải đi qua test này.
+    expect(names).toHaveLength(7)
+    expect(names.filter((name) => MEMORY_LIKE.test(name ?? ''))).toEqual([])
+  })
+
+  it('không tool Atlassian nào là tool memory', () => {
+    const registry = buildToolRegistry({
+      jiraBaseUrl: 'https://jira.internal',
+      confluenceBaseUrl: 'https://confluence.internal',
+    })
+
+    expect(registry.filter((tool) => MEMORY_LIKE.test(tool.name))).toEqual([])
+  })
+
+  it('chat controller không chạm tới đường ghi của MemoryRepository', () => {
+    // Đọc memory để dựng context là ĐÚNG (`listForContext`). Ghi thì không — fact chỉ vào kho
+    // qua hành động xác nhận của người dùng, đi đường IPC `memory:*`.
+    const memoryCalls = [...controller.matchAll(/services\.memory\s*\.\s*(\w+)/g)].map(
+      (match) => match[1],
+    )
+    expect([...new Set(memoryCalls)]).toEqual(['listForContext'])
+  })
+})
+
+/**
+ * Async state của Activity (openspec `add-proactive-check-ins-and-agent-activity`, spec
+ * `agent-activity`: "lần tải đầu trả lỗi và lần retry thành công ⇒ UI chuyển từ error sang
+ * list/empty MÀ KHÔNG reset filter").
+ *
+ * Vì sao test này nằm ở đây chứ không cạnh component: vitest chạy `environment: 'node'` nên không
+ * render được React, và eslint cấm renderer chạm `node:fs` (§5.3) nên một test đọc mã nguồn cũng
+ * không được phép sống trong thư mục renderer. Cả hai ràng buộc đều đúng, và chúng đẩy loại test
+ * này về đúng file cấu trúc này.
+ *
+ * GIỚI HẠN: đây KHÔNG thay được một test render. Nó bắt cách hỏng thật sự có khả năng xảy ra —
+ * ai đó "dọn dẹp" trạng thái trong nhánh lỗi hoặc nối nút thử lại vào một đường tải khác — chứ
+ * không chứng minh được chuyển trạng thái error → list. Muốn chứng minh điều đó phải thêm jsdom
+ * và testing-library, và đó là một quyết định về hạ tầng test.
+ */
+describe('nhánh lỗi của Activity không đụng tới filter', () => {
+  const view = read('apps/desktop/src/renderer/components/ActivityTimelineView.tsx')
+
+  /** Ba filter là trạng thái NGƯỜI DÙNG đặt. Không đường lỗi nào được phép tự dọn chúng. */
+  const FILTER_SETTERS = ['setTypeFilter', 'setStatusFilter', 'setActorFilter']
+
+  it('khối catch chỉ đặt cờ lỗi, không reset filter nào', () => {
+    const block = /\} catch \(error\) \{([\s\S]*?)\n {4}\} finally/.exec(view)?.[1] ?? ''
+    expect(block, 'không tìm thấy khối catch của hàm load').not.toBe('')
+
+    for (const setter of FILTER_SETTERS) {
+      expect(block, `nhánh lỗi reset filter: ${setter}`).not.toContain(setter)
+    }
+    expect(block).toContain('setLoadFailed(true)')
+  })
+
+  it('filter chỉ đổi từ chính handler của ô chọn', () => {
+    // Mỗi setter xuất hiện đúng hai lần: một lần khai `useState`, một lần trong `onChange`.
+    // Con số cứng buộc mọi lần gọi mới phải đi qua test này và giải thích được vì sao.
+    for (const setter of FILTER_SETTERS) {
+      const uses = view.split(setter).length - 1
+      expect(uses, `${setter} được gọi ở chỗ ngoài dự kiến`).toBe(2)
+    }
+  })
+
+  it('thử lại chạy đúng hàm load hiện tại, không dựng đường tải thứ hai', () => {
+    // `load` là useCallback phụ thuộc ba filter, nên gọi lại nó là tự khắc giữ nguyên filter.
+    // Một nút thử lại gọi thẳng `api.activity.list` sẽ lách mất tính chất đó.
+    expect(view).toMatch(/onClick=\{[^}]*\bload\b[^}]*\}/)
+    expect(view.split('api.activity.list').length - 1, 'có nhiều hơn một đường gọi list').toBe(1)
+  })
+})
+
+/**
+ * Số message bị lược bỏ phải đi hết đường (openspec `add-memory`, spec `short-term-memory`:
+ * "Số message bị loại bỏ được ghi lại VÀ HIỂN THỊ cho người dùng").
+ *
+ * `context-builder.test.ts` khẳng định con số được TÍNH đúng. Test này khẳng định nửa còn lại:
+ * nó không chết dọc đường. Một ngữ cảnh bị cắt âm thầm là thứ người dùng không có cách nào biết —
+ * câu trả lời chỉ đơn giản là tệ hơn, và không ai truy được vì sao.
+ */
+describe('số message bị lược bỏ đi hết đường tới người dùng', () => {
+  const runtime = read('packages/agent-runtime/src/agent-runtime.ts')
+  const controller = read('apps/desktop/src/main/chat-controller.ts')
+  const chatView = read('apps/desktop/src/renderer/components/ChatView.tsx')
+  const app = read('apps/desktop/src/renderer/App.tsx')
+
+  it('runtime tính rồi trả con số ra ngoài', () => {
+    expect(runtime).toContain('truncatedContextCount: context.truncatedCount')
+  })
+
+  it('main lưu con số vào chính message đã hoàn tất', () => {
+    expect(controller).toMatch(/finalizeMessage\([\s\S]{0,200}truncatedContextCount/)
+  })
+
+  it('renderer nói ra bằng tiếng Việt, ở cả tin nhắn lẫn thông báo', () => {
+    expect(chatView).toContain('message.truncatedContextCount')
+    expect(chatView).toContain('Đã lược bỏ')
+    expect(app).toContain('event.truncatedContextCount')
   })
 })

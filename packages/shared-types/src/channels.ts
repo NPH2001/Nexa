@@ -119,6 +119,13 @@ export const NEXA_EVENTS = {
   checkInsChanged: 'nexa:checkins-changed',
   /** Có bản cập nhật không bắt buộc. Trường hợp bắt buộc/thu hồi do main chặn thẳng. */
   updateAvailable: 'nexa:update-available',
+  /**
+   * Main yêu cầu renderer chuyển sang một đích cụ thể.
+   *
+   * Dùng cho deep-link từ thông báo OS và menu tray: main hiện/khôi phục cửa sổ rồi gửi event
+   * này. Một chiều main → renderer, nên không thêm channel IPC hai chiều nào.
+   */
+  navigate: 'nexa:navigate',
 } as const
 
 export type NexaEventName = (typeof NEXA_EVENTS)[keyof typeof NEXA_EVENTS]

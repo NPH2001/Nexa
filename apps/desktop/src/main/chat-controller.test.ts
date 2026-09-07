@@ -739,3 +739,105 @@ describe('ChatController', () => {
     })
   })
 })
+
+/**
+ * Ảnh không bao giờ xuống đĩa (openspec `add-multi-format-file-upload`, spec `file-ingestion`:
+ * "Images are never persisted").
+ *
+ * Cả cam kết này hiện nằm ở một biểu thức duy nhất trong `chat-controller.ts`: ảnh có
+ * `text === ''` nên không thoả điều kiện ghi. Nó đúng, nhưng nó đúng một cách mong manh — một
+ * thay đổi trông vô hại kiểu "lưu luôn mô tả ảnh cho dễ tìm" là đủ để phá, và không cổng nào đỏ.
+ * §8.1 cấm giữ bản sao file; base64 của một tấm ảnh cũng là một bản sao.
+ */
+describe('ảnh không bao giờ được lưu', () => {
+  function imageDoc() {
+    return {
+      fileName: 'so-do.png',
+      kind: 'image',
+      sizeBytes: 2_048,
+      sourcePathHash: 'a'.repeat(64),
+      text: '',
+      chunks: [],
+      charCount: 0,
+      estimatedTokens: 765,
+      truncated: false,
+      image: {
+        mediaType: 'image/png',
+        dataBase64: 'BASE64ANHRIENGTU',
+        byteSize: 12,
+        width: 1024,
+        height: 1024,
+        metadataStripped: true,
+      },
+    }
+  }
+
+  function textDoc() {
+    return {
+      fileName: 'ghi-chu.txt',
+      kind: 'txt',
+      sizeBytes: 64,
+      sourcePathHash: 'b'.repeat(64),
+      text: 'Nội dung đọc được',
+      chunks: [],
+      charCount: 17,
+      estimatedTokens: 5,
+      truncated: false,
+    }
+  }
+
+  function withStorageOn(h: Harness): void {
+    vi.mocked(h.services.settings.get).mockReturnValue({
+      ...DEFAULT_APP_SETTINGS,
+      features: { ...DEFAULT_APP_SETTINGS.features, storeExtractedText: true },
+    })
+  }
+
+  it('không lưu nội dung ảnh kể cả khi chính sách cho phép lưu text trích xuất', async () => {
+    const h = makeHarness()
+    withStorageOn(h)
+    h.mocks.processDocuments.mockResolvedValueOnce([imageDoc()])
+
+    await h.controller.send(input(['00000000-0000-4000-8000-000000000004']))
+
+    expect(h.mocks.addAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'so-do.png', extractedText: null }),
+    )
+
+    // Khẳng định mạnh hơn cái trên: base64 không được xuất hiện Ở BẤT KỲ ĐÂU trong lời gọi ghi,
+    // kể cả một trường phụ mà ai đó thêm vào sau này.
+    const written = JSON.stringify(h.mocks.addAttachment.mock.calls)
+    expect(written).not.toContain('BASE64ANHRIENGTU')
+  })
+
+  it('vẫn lưu text của tài liệu chữ trong cùng lượt — đây là cấm ảnh, không phải tắt tính năng', async () => {
+    const h = makeHarness()
+    withStorageOn(h)
+    h.mocks.processDocuments.mockResolvedValueOnce([imageDoc(), textDoc()])
+
+    await h.controller.send(input(['00000000-0000-4000-8000-000000000005']))
+
+    expect(h.mocks.addAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'so-do.png', extractedText: null }),
+    )
+    expect(h.mocks.addAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'ghi-chu.txt', extractedText: 'Nội dung đọc được' }),
+    )
+  })
+
+  it('chính sách tắt thì không tài liệu nào được lưu text', async () => {
+    const h = makeHarness()
+    // `storeExtractedText` mặc định BẬT, nên phải tắt tường minh — nhánh này không tự chạy.
+    vi.mocked(h.services.settings.get).mockReturnValue({
+      ...DEFAULT_APP_SETTINGS,
+      features: { ...DEFAULT_APP_SETTINGS.features, storeExtractedText: false },
+    })
+    h.mocks.processDocuments.mockResolvedValueOnce([imageDoc(), textDoc()])
+
+    await h.controller.send(input(['00000000-0000-4000-8000-000000000006']))
+
+    for (const [call] of h.mocks.addAttachment.mock.calls) {
+      expect(call.extractedText).toBeNull()
+    }
+  })
+})

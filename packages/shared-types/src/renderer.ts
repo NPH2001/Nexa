@@ -90,6 +90,8 @@ export type {
   ChatErrorEvent,
   CheckInsChangedEvent,
   McpStatusEvent,
+  NavigateEvent,
+  NavigateView,
   ToolStatusEvent,
 } from './ipc.js'
 export type { Envelope, ErrorEnvelope } from './result.js'

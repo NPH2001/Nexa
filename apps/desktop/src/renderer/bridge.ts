@@ -38,6 +38,7 @@ import type {
   MemoryFact,
   McpStatusEvent,
   Message,
+  NavigateEvent,
   ModelConfig,
   OrgPolicy,
   RiskLevel,
@@ -417,7 +418,13 @@ export const api = {
   },
 
   settings: {
-    get: () => call<{ settings: AppSettings; lockedFeatures: string[] }>('settings:get'),
+    get: () =>
+      call<{
+        settings: AppSettings
+        lockedFeatures: string[]
+        /** `Notification.isSupported()` của main — Cài đặt dùng để vô hiệu hoá công tắc kèm lý do. */
+        notificationsSupported: boolean
+      }>('settings:get'),
     update: (patch: Partial<AppSettings>) => call<AppSettings>('settings:update', patch),
     policy: () => call<OrgPolicy>('policy:get'),
   },
@@ -469,4 +476,7 @@ export const events = {
     bridge().on('nexa:checkins-changed', (p) => fn(p as CheckInsChangedEvent)),
   onUpdateAvailable: (fn: (e: { version: string; message: string; notes?: string }) => void) =>
     bridge().on('nexa:update-available', (p) => fn(p as Parameters<typeof fn>[0])),
+  /** Deep-link từ thông báo OS và menu tray: main đã hiện cửa sổ, renderer chỉ cần đổi đích. */
+  onNavigate: (fn: (e: NavigateEvent) => void) =>
+    bridge().on('nexa:navigate', (p) => fn(p as NavigateEvent)),
 }

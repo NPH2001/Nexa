@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   PROVIDER_LABELS,
   isExternalProvider,
@@ -11,6 +11,8 @@ import {
 } from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
 import type { Toast } from './Toasts.js'
+import { NexaMark } from './NexaMark.js'
+import { UiIcon } from './UiIcon.js'
 
 interface Attachment {
   readonly token: string
@@ -193,6 +195,7 @@ export function ChatView(props: {
   if (props.conversation === null) {
     return (
       <div className="empty-state">
+        <NexaMark size={64} />
         <h2>Chưa có hội thoại nào đang mở</h2>
         <p className="muted">Tạo một hội thoại mới để bắt đầu.</p>
         <button type="button" className="btn btn-primary" onClick={props.onCreateConversation}>
@@ -250,7 +253,7 @@ export function ChatView(props: {
   return (
     <div className="chat">
       <header className="chat-header">
-        <div>
+        <div className="chat-heading">
           <h2>{props.conversation.title}</h2>
           <span className="muted small">
             {props.conversation.messageCount} tin nhắn
@@ -260,7 +263,8 @@ export function ChatView(props: {
         <div className="chat-header-right">
           {externalSelected && (
             <span className="external-tag" title="Dữ liệu gửi ra ngoài tổ chức">
-              ngoài tổ chức
+              <UiIcon name="building" size={18} />
+              Ngoài tổ chức
             </span>
           )}
           <ModelSelector
@@ -279,19 +283,45 @@ export function ChatView(props: {
               })
             }}
           />
+          <span className="chat-avatar" aria-hidden="true">
+            N
+          </span>
         </div>
       </header>
 
       <div className="messages">
         {props.messages.length === 0 && <p className="muted center">Hãy đặt câu hỏi để bắt đầu.</p>}
-        {props.messages.map((message) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            onEdit={(content) => props.onEditMessage(message.id, content)}
-            onDelete={() => props.onDeleteMessage(message.id)}
-          />
-        ))}
+        {props.messages.map((message, index) => {
+          const date = new Date(message.createdAt)
+          const previous = props.messages[index - 1]
+          const startsDay =
+            previous === undefined ||
+            new Date(previous.createdAt).toDateString() !== date.toDateString()
+          return (
+            <Fragment key={message.id}>
+              {startsDay && (
+                <div className="message-date">
+                  <time dateTime={message.createdAt}>
+                    {date.toDateString() === new Date().toDateString()
+                      ? 'Hôm nay'
+                      : date.toLocaleDateString('vi-VN')}
+                  </time>
+                </div>
+              )}
+              <MessageBubble
+                message={message}
+                onEdit={(content) => props.onEditMessage(message.id, content)}
+                onDelete={() => props.onDeleteMessage(message.id)}
+                onCopy={() => {
+                  void navigator.clipboard.writeText(message.content).then(
+                    () => props.onToast({ kind: 'info', title: 'Đã sao chép tin nhắn' }),
+                    (error: unknown) => props.onError(error, 'Không sao chép được tin nhắn.'),
+                  )
+                }}
+              />
+            </Fragment>
+          )
+        })}
         <div ref={bottomRef} />
       </div>
 
@@ -355,7 +385,7 @@ export function ChatView(props: {
         <div className="composer-row">
           <button
             type="button"
-            className="btn btn-small"
+            className="icon-btn composer-attach"
             aria-label="Đính kèm tài liệu hoặc ảnh"
             title={
               selectedModel?.provider === 'chatgpt'
@@ -365,7 +395,7 @@ export function ChatView(props: {
             onClick={pickFiles}
             disabled={selectedModel === null || selectedModel.provider === 'chatgpt'}
           >
-            Tệp
+            <UiIcon name="attach" />
           </button>
           <textarea
             className="composer-input"
@@ -376,7 +406,7 @@ export function ChatView(props: {
             autoCorrect="on"
             autoCapitalize="sentences"
             value={draft}
-            rows={3}
+            rows={1}
             onChange={(e) => setDraft(e.target.value)}
             onCompositionStart={() => {
               composerIsComposing.current = true
@@ -406,16 +436,17 @@ export function ChatView(props: {
           {props.streaming ? (
             <button
               type="button"
-              className="btn btn-danger"
+              className="btn btn-danger composer-submit"
               onClick={props.onCancel}
               disabled={!props.canCancel}
             >
+              <UiIcon name="stop" size={20} />
               {props.canCancel ? 'Dừng' : 'Đang gửi…'}
             </button>
           ) : (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-primary composer-submit"
               onClick={submit}
               disabled={
                 props.busy ||
@@ -425,6 +456,7 @@ export function ChatView(props: {
                 imageBlocked
               }
             >
+              <UiIcon name="send" size={21} />
               {props.busy ? 'Đang xử lý…' : 'Gửi'}
             </button>
           )}
@@ -483,6 +515,7 @@ function MessageBubble(props: {
   message: Message
   onEdit: (content: string) => void
   onDelete: () => void
+  onCopy: () => void
 }): React.JSX.Element {
   const { message } = props
   const roleLabel: Record<string, string> = {
@@ -504,6 +537,7 @@ function MessageBubble(props: {
   if (message.deletedAt !== undefined) {
     return (
       <article className={`message message-${message.role} status-${message.status}`}>
+        {message.role === 'assistant' && <NexaMark className="message-avatar" avatar size={50} />}
         <header className="message-header">
           <div className="message-header-left">
             <strong>{roleLabel[message.role] ?? message.role}</strong>
@@ -519,6 +553,7 @@ function MessageBubble(props: {
 
   return (
     <article className={`message message-${message.role} status-${message.status}`}>
+      {message.role === 'assistant' && <NexaMark className="message-avatar" avatar size={50} />}
       <header className="message-header">
         <div className="message-header-left">
           <strong>{roleLabel[message.role] ?? message.role}</strong>
@@ -532,6 +567,15 @@ function MessageBubble(props: {
             <button
               type="button"
               className="icon-btn"
+              aria-label="Sao chép tin nhắn"
+              title="Sao chép tin nhắn"
+              onClick={props.onCopy}
+            >
+              <UiIcon name="copy" size={19} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
               aria-label="Sửa tin nhắn"
               title="Sửa tin nhắn"
               onClick={() => {
@@ -539,7 +583,7 @@ function MessageBubble(props: {
                 setEditing(true)
               }}
             >
-              ✎
+              <UiIcon name="pencil" size={19} />
             </button>
             <button
               type="button"
@@ -548,7 +592,7 @@ function MessageBubble(props: {
               title="Xoá tin nhắn"
               onClick={props.onDelete}
             >
-              🗑
+              <UiIcon name="trash" size={19} />
             </button>
           </span>
         )}

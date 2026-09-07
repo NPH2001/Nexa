@@ -684,3 +684,15 @@ export interface McpStatusEvent {
 export interface CheckInsChangedEvent {
   readonly changedAt: string
 }
+
+/**
+ * Đích mà main có thể yêu cầu renderer mở.
+ *
+ * Cố ý là một union hẹp chứ không phải `string`: deep-link chỉ tồn tại cho những chỗ main thật
+ * sự cần đưa người dùng tới, và thêm một đích mới phải là một thay đổi tường minh ở đây.
+ */
+export type NavigateView = 'today'
+
+export interface NavigateEvent {
+  readonly view: NavigateView
+}

@@ -144,6 +144,38 @@ export const appSettingsSchema = z.object({
    * tự hay đổi hạn của mục nào, và bản tin vẫn đầy đủ khi model lỗi.
    */
   dailyBriefingSummaryEnabled: z.boolean().default(false),
+  /**
+   * Thông báo hệ điều hành cho check-in (openspec `add-os-checkin-notifications`).
+   *
+   * Mặc định TẮT và là một opt-in RIÊNG bên cạnh `proactiveCheckInsEnabled`: bật nhắc việc
+   * trong app không đồng nghĩa với việc cho phép nội dung rời khỏi cửa sổ Nexa. Phải bật cả
+   * hai thì mới có thông báo nào được gửi.
+   *
+   * Tắt cờ đưa hành vi về đúng như trước change này: suggestion chỉ hiện trên màn Hôm nay.
+   */
+  checkInOsNotificationsEnabled: z.boolean().default(false),
+  /**
+   * Cho thông báo nêu TÊN cam kết thay vì chỉ nêu số lượng.
+   *
+   * Mặc định TẮT vì trung tâm thông báo của OS nằm ngoài vùng mã hoá của Nexa: nó hiển thị cả
+   * trên màn hình khoá, bị trợ lý đọc to, và trên một số cấu hình Windows còn được đồng bộ sang
+   * máy khác. Tên cam kết là kế hoạch công việc nội bộ — cùng loại dữ liệu mà repo đang mã hoá
+   * trong SQLite và cố ý không ghi vào activity row.
+   *
+   * Cờ này KHÔNG tự bật thông báo: nó chỉ đổi nội dung khi `checkInOsNotificationsEnabled` bật.
+   */
+  notificationShowContent: z.boolean().default(false),
+  /**
+   * Thu nhỏ cửa sổ thì ẩn xuống tray thay vì xuống taskbar.
+   *
+   * Mặc định TẮT. Đây là tuỳ chọn cho hành vi MINIMIZE và chỉ vậy: **đóng cửa sổ vẫn thoát app**
+   * trên Windows/Linux (`window-all-closed` không đổi một dòng). Ranh giới đó giữ đúng bất biến
+   * credential — tiến trình chỉ sống khi người dùng chưa đóng cửa sổ, nên không có tiến trình
+   * nền nào ôm credential đã giải mã trong RAM.
+   *
+   * Muốn được nhắc thì để Nexa ở tray; muốn tắt hẳn thì đóng — và lúc đó Nexa không nhắc được.
+   */
+  minimizeToTrayEnabled: z.boolean().default(false),
   /** §14: giới hạn MVP 20–30 MB/file. Phụ lục A chốt 30. */
   maxFileSizeMb: z.number().int().min(1).max(100).default(30),
   maxFilesPerRequest: z.number().int().min(1).max(20).default(5),
