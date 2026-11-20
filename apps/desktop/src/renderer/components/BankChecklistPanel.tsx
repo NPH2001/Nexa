@@ -7,6 +7,7 @@ import type {
 } from '@nexa/shared-types/renderer'
 import { api } from '../bridge.js'
 import { DestructiveActionDialog } from './DestructiveActionDialog.js'
+import { LoadingSkeleton } from './StateBlocks.js'
 import type { Toast } from './Toasts.js'
 import {
   CHECKLIST_STATUS_LABELS,
@@ -157,7 +158,7 @@ export function BankChecklistPanel(props: {
     })()
   }
 
-  if (loading && cases.length === 0) return <p className="muted">Đang tải hồ sơ…</p>
+  if (loading && cases.length === 0) return <LoadingSkeleton label="Đang tải hồ sơ…" rows={3} />
 
   return (
     <div className="checklist-workspace">

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, safeStorage, shell } from 'electron'
 import type { AppSettings, McpStatusEvent, OrgPolicy } from '@nexa/shared-types'
+import { ERROR_CODES, type ErrorCode } from '@nexa/shared-types'
 import {
   FileSink,
   Logger,
@@ -30,6 +31,7 @@ import {
   ConversationSearch,
   LocalStore,
   MemoryRepository,
+  AgentRepository,
   ProfileRepository,
   RetentionService,
 } from '@nexa/local-store'
@@ -42,9 +44,24 @@ import {
 import {
   AtlassianMcpManager,
   DEFAULT_ATLASSIAN_MCP_SPEC,
+  buildToolRegistry,
   type AtlassianCredentials,
 } from '@nexa/atlassian-mcp-manager'
-import { ConfirmationGuard, OperationTracker } from '@nexa/agent-runtime'
+import {
+  ConfirmationGuard,
+  McpToolRouter,
+  OperationTracker,
+  assertDisjointToolNames,
+} from '@nexa/agent-runtime'
+import {
+  RemoteMcpServer,
+  buildRedmineGatewayHeaders,
+  buildRedmineTools,
+  buildXwikiTools,
+  classifyRedmineError,
+  classifyXwikiError,
+  identifyRedmineUser,
+} from '@nexa/work-mcp-servers'
 import {
   DocumentProcessor,
   InlineRunner,
@@ -58,6 +75,7 @@ import { createResourceReader, loadBaStandards, type BaStandards } from './ba-st
 import { BankChecklistService, loadBankChecklistTemplates } from './bank-checklist.js'
 import type { BankChecklistTemplate } from '@nexa/document-checklist'
 import { FileBroker } from './file-broker.js'
+import { FileWriter } from './file-writer.js'
 import { ProactiveCheckInService } from './proactive-check-in-service.js'
 import { DailyBriefingService } from './briefing-service.js'
 import { ChatGptAccountService } from './chatgpt-account-service.js'
@@ -77,6 +95,11 @@ export interface NexaServices {
   readonly profileId: string
   readonly security: SecurityService
   readonly policy: OrgPolicy
+  /**
+   * Chỉ `true` ở bản dev chưa đóng gói (`!app.isPackaged`): cho phép `http://` tới loopback để E2E
+   * trỏ vào mock server. Bản phát hành luôn là `false` — cùng ranh giới với `ConnectionService`.
+   */
+  readonly allowInsecureLoopback: boolean
   readonly settings: SettingsService
   readonly chatgpt: ChatGptAccountService
   readonly connections: ConnectionService
@@ -88,6 +111,7 @@ export interface NexaServices {
   readonly checkIns: ProactiveCheckInService
   readonly briefing: DailyBriefingService
   readonly memory: MemoryRepository
+  readonly agents: AgentRepository
   readonly baKnowledge: BaKnowledgeRepository
   readonly baDocuments: BaDocumentRepository
   readonly baExtraction: BaExtractionJob
@@ -108,7 +132,19 @@ export interface NexaServices {
   readonly extractionRunner: ExtractionRunner
   readonly tempWorkspace: TempWorkspace
   readonly files: FileBroker
+  /** Chiều ghi của luồng file: nội dung do model sinh ra, lưu bằng hộp thoại của hệ điều hành. */
+  readonly fileWriter: FileWriter
+  /** MCP Atlassian (Jira + Confluence). Bản tin buổi sáng và kiểm tra kết nối Atlassian dùng thẳng. */
   mcp: AtlassianMcpManager | null
+  /** Redmine qua MCP Gateway (ADR 0010). null = chưa cấu hình hoặc gateway chưa sẵn. */
+  redmine: RemoteMcpServer | null
+  /** XWiki qua endpoint MCP riêng (ADR 0010). */
+  xwiki: RemoteMcpServer | null
+  /**
+   * Gộp mọi MCP source cho chat. Đọc `mcp`/`redmine`/`xwiki` qua closure mỗi lần dùng, nên dựng
+   * lại một source (người dùng đổi kết nối) có hiệu lực ngay mà không phải dựng lại router.
+   */
+  readonly mcpRouter: McpToolRouter
   dispose(): Promise<void>
 }
 
@@ -180,6 +216,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   const commitments = new CommitmentRepository(store)
   const checkInState = new CheckInRepository(store)
   const memory = new MemoryRepository(store)
+  const agents = new AgentRepository(store)
   const baKnowledge = new BaKnowledgeRepository(store)
   const baDocuments = new BaDocumentRepository(store)
   const baReviews = new BaReviewRepository(store)
@@ -226,6 +263,8 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     maxFileSizeMb: settings.get().maxFileSizeMb,
   })
 
+  const fileWriter = new FileWriter(logger)
+
   const guard = new ConfirmationGuard({ logger, ttlSeconds: settings.get().approvalTtlSeconds })
   const tracker = new OperationTracker(logger)
   const codexChatDir = join(userData, 'codex-chat-workspace')
@@ -246,6 +285,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     profileId: profile.id,
     security,
     policy,
+    allowInsecureLoopback: opts.isDevelopment,
     settings,
     chatgpt,
     connections: new ConnectionService({
@@ -265,6 +305,35 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
        */
       allowInsecureLoopback: opts.isDevelopment,
       testAtlassian: async (type) => {
+        // Redmine/XWiki (ADR 0010): mỗi hệ thống có server riêng. `restart()` chạy lại đúng bước
+        // khởi chạy — với Redmine gồm cả `get_current_user`, nên API key sai lộ ra ở đây là
+        // `REDMINE_AUTH_FAILED` chứ không đợi tới lúc chat.
+        if (type === 'redmine' || type === 'xwiki') {
+          const blocker = type === 'redmine' ? redmineBlocker(services) : null
+          const server = type === 'redmine' ? services.redmine : services.xwiki
+          if (blocker !== null || server === null) {
+            return {
+              ok: false,
+              checkedAt: new Date().toISOString(),
+              errorCode:
+                blocker ??
+                (type === 'redmine'
+                  ? ERROR_CODES.REDMINE_CONFIG_REQUIRED
+                  : ERROR_CODES.XWIKI_CONFIG_REQUIRED),
+            }
+          }
+          await server.restart()
+          if (type === 'xwiki') await server.callTool('xwiki_list_wikis', {})
+          const account = server.actingAccount(type)
+          return {
+            ok: true,
+            checkedAt: new Date().toISOString(),
+            detail:
+              type === 'redmine' && account !== undefined
+                ? `Kết nối thành công — đang dùng tài khoản ${account}`
+                : 'Kết nối thành công',
+          }
+        }
         const manager = services.mcp
         if (manager === null) {
           return {
@@ -294,6 +363,7 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     activity,
     checkIns,
     memory,
+    agents,
     baKnowledge,
     baDocuments,
     baReviews,
@@ -327,15 +397,15 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
       logger,
     }),
     /**
-     * Bản tin đọc MCP qua closure vì `services.mcp` được dựng lại mỗi lần đổi kết nối Atlassian —
+     * Bản tin đọc Redmine qua closure vì `services.redmine` được dựng lại mỗi lần đổi kết nối Redmine —
      * giữ một tham chiếu cứng ở đây sẽ khoá bản tin vào manager cũ.
      */
     briefing: new DailyBriefingService({
       profileId: profile.id,
       commitments,
       settings: () => settings.get(),
-      mcp: () => services.mcp,
-      jiraBaseUrl: () => services.connections.get('jira')?.baseUrl ?? null,
+      redmine: () => services.redmine,
+      redmineBaseUrl: () => services.connections.get('redmine')?.baseUrl ?? null,
       summary: {
         resolveModel: () => models.resolveForConversation(null, null),
         buildLlmClient: (provider, timeoutMs) =>
@@ -366,11 +436,33 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
     extractionRunner,
     tempWorkspace,
     files,
+    fileWriter,
     mcp: null,
+    redmine: null,
+    xwiki: null,
+    mcpRouter: new McpToolRouter(() => [
+      services.mcp === null ? null : { label: 'Jira/Confluence', source: services.mcp },
+      services.redmine === null
+        ? null
+        : {
+            label: 'Redmine',
+            source: services.redmine,
+            unavailableCode: () => services.redmine?.unavailableCode,
+          },
+      services.xwiki === null
+        ? null
+        : {
+            label: 'XWiki',
+            source: services.xwiki,
+            unavailableCode: () => services.xwiki?.unavailableCode,
+          },
+    ]),
     dispose: async () => {
       checkIns.stop()
       await chatgpt.dispose()
       await services.mcp?.stop()
+      await services.redmine?.stop()
+      await services.xwiki?.stop()
       await extractionRunner.dispose()
       tempWorkspace.releaseAll()
       store.close()
@@ -379,7 +471,100 @@ export function bootstrapServices(opts: BootstrapOptions): NexaServices {
   }
 
   services.mcp = buildMcpManager(services, opts.onMcpStatus)
+  services.redmine = buildRedmineServer(services, opts.onMcpStatus)
+  services.xwiki = buildXwikiServer(services, opts.onMcpStatus)
   return services
+}
+
+/**
+ * Tên tool của mọi registry không được trùng nhau (ADR 0010). Kiểm một lần khi khởi động với URL
+ * giả — tên tool không phụ thuộc URL — để lỗi lập trình lộ ra ngay, không phải lần đầu model gọi.
+ */
+assertDisjointToolNames({
+  atlassian: buildToolRegistry({
+    jiraBaseUrl: 'https://x.invalid',
+    confluenceBaseUrl: 'https://x.invalid',
+  }),
+  redmine: buildRedmineTools('https://x.invalid'),
+  xwiki: buildXwikiTools('https://x.invalid'),
+})
+
+/**
+ * Lý do Redmine chưa dựng được, để "Kiểm tra kết nối" báo đúng chỗ cần sửa. `null` = đủ điều kiện.
+ *
+ * Redmine không có endpoint MCP riêng: nó đi qua URL + bearer token của kết nối `mcpGateway`.
+ */
+export function redmineBlocker(services: NexaServices): ErrorCode | null {
+  const redmine = services.connections.get('redmine')
+  if (redmine === null || !redmine.hasCredential) return ERROR_CODES.REDMINE_CONFIG_REQUIRED
+  const gateway = services.connections.get('mcpGateway')
+  if (gateway === null || !gateway.enabled || !gateway.hasCredential) {
+    return ERROR_CODES.REDMINE_GATEWAY_REQUIRED
+  }
+  return null
+}
+
+/** Dựng server Redmine từ cấu hình hiện tại. null khi chưa bật hoặc thiếu MCP Gateway. */
+export function buildRedmineServer(
+  services: NexaServices,
+  onStatus: (event: McpStatusEvent) => void,
+): RemoteMcpServer | null {
+  const redmine = services.connections.get('redmine')
+  const gateway = services.connections.get('mcpGateway')
+  if (redmine === null || !redmine.enabled || gateway === null) return null
+  if (redmineBlocker(services) !== null) return null
+
+  return new RemoteMcpServer({
+    system: 'redmine',
+    label: 'Redmine',
+    url: gateway.baseUrl,
+    ...(services.allowInsecureLoopback ? { allowInsecureLoopback: true } : {}),
+    // Đọc cả hai secret NGAY trước mỗi request (ADR-0008 biện pháp 3): không field nào giữ chúng.
+    headers: () =>
+      buildRedmineGatewayHeaders({
+        gatewayToken: services.security.readCredential('mcpGateway'),
+        apiKey: services.security.readCredential('redmine'),
+      }),
+    registry: buildRedmineTools(redmine.baseUrl),
+    features: () => services.settings.get().features,
+    logger: services.logger,
+    targetSystemUrl: redmine.baseUrl,
+    toolTimeoutMs: services.settings.get().toolTimeoutMs,
+    classifyError: classifyRedmineError,
+    // Endpoint là gateway: 401 ở bước initialize là bearer token của GATEWAY sai, không phải API key.
+    transportAuthFailedCode: ERROR_CODES.MCP_GATEWAY_AUTH_FAILED,
+    identify: identifyRedmineUser,
+    actingAccountFallback: 'Chủ sở hữu API key Redmine',
+    onStatus,
+  })
+}
+
+/** Dựng server XWiki. null khi chưa cấu hình hoặc đang tắt. */
+export function buildXwikiServer(
+  services: NexaServices,
+  onStatus: (event: McpStatusEvent) => void,
+): RemoteMcpServer | null {
+  const xwiki = services.connections.get('xwiki')
+  if (xwiki === null || !xwiki.enabled || !xwiki.hasCredential) return null
+
+  const origin = new URL(xwiki.baseUrl).origin
+  return new RemoteMcpServer({
+    system: 'xwiki',
+    label: 'XWiki',
+    url: xwiki.baseUrl,
+    // Endpoint XWiki trả 404 nếu có "/" cuối (đã kiểm với server thật) — gọi nguyên văn.
+    exactUrl: true,
+    headers: () => ({ authorization: `Bearer ${services.security.readCredential('xwiki')}` }),
+    registry: buildXwikiTools(origin),
+    features: () => services.settings.get().features,
+    logger: services.logger,
+    targetSystemUrl: origin,
+    toolTimeoutMs: services.settings.get().toolTimeoutMs,
+    classifyError: classifyXwikiError,
+    transportAuthFailedCode: ERROR_CODES.XWIKI_AUTH_FAILED,
+    actingAccountFallback: 'Chủ sở hữu token XWiki',
+    onStatus,
+  })
 }
 
 /**

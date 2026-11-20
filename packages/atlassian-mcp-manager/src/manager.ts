@@ -3,6 +3,9 @@ import {
   NexaError,
   isWriteRisk,
   type FeatureFlags,
+  type McpTargetSystem,
+  type McpToolCallOutcome,
+  type McpToolSource,
   type McpServerSpec,
   type McpStatusEvent,
   type ToolDefinition,
@@ -13,6 +16,7 @@ import {
   McpHttpClient,
   McpStdioClient,
   contentToText,
+  resolveServerToolName,
   type McpToolDescriptor,
   type McpToolResult,
 } from '@nexa/mcp-client'
@@ -76,11 +80,8 @@ export interface AtlassianMcpManagerOptions {
  */
 const MAX_LOGGED_ERROR_CHARS = 300
 
-export interface ToolCallOutcome {
-  readonly summary: ToolResultSummary
-  /** Text thô từ server — chỉ dùng nội bộ, không log. */
-  readonly rawText: string
-}
+/** Giữ tên cũ cho code đang import — cùng kiểu với `McpToolCallOutcome` (ADR 0010). */
+export type ToolCallOutcome = McpToolCallOutcome
 
 /**
  * Atlassian MCP Manager (§5.2): khởi chạy hoặc kết nối MCP Atlassian, truyền credential từ
@@ -90,7 +91,7 @@ export interface ToolCallOutcome {
  * cả hai bộ credential cùng lúc. Nếu tổ chức chốt hai server riêng thì chỗ cần sửa là class này
  * (tách thành hai client), không phải danh mục tool.
  */
-export class AtlassianMcpManager {
+export class AtlassianMcpManager implements McpToolSource {
   private client: McpTransportClient | null = null
   private serverTools = new Map<string, McpToolDescriptor>()
   /**
@@ -426,6 +427,13 @@ export class AtlassianMcpManager {
     }
   }
 
+  /** ADR 0010: URL đích cho preview. Atlassian chỉ phục vụ Jira và Confluence. */
+  targetSystemUrl(system: McpTargetSystem): string {
+    if (system === 'jira') return this.opts.jiraBaseUrl
+    if (system === 'confluence') return this.opts.confluenceBaseUrl
+    return ''
+  }
+
   /** Tool READ có gọi được ngay không (dùng khi dựng preview cho WRITE_HIGH). */
   canCallReadTool(name: string): boolean {
     const definition = this.findTool(name)
@@ -458,31 +466,6 @@ function safeHost(rawUrl: string): string {
   } catch {
     return 'unknown'
   }
-}
-
-/**
- * Khớp tên tool quy ước của Nexa (`mcpToolName`, ví dụ `jira_get_issue`) với tên THẬT server
- * công bố (ADR-0005). Thử khớp đúng tuyệt đối trước (transport stdio, package cài cục bộ); nếu
- * không có, thử khớp tên server nào tận cùng bằng `-${mcpToolName}` (gateway thêm tiền tố
- * namespace, ví dụ `atlassian-jira_get_issue`).
- *
- * Nhiều tên cùng khớp hậu tố ⇒ trả `null` thay vì đoán bừa — mơ hồ về việc gọi tool nào là một
- * lỗi cấu hình cần biết, không phải thứ nên tự động chọn một trong số đó.
- */
-function resolveServerToolName(
-  mcpToolName: string,
-  serverTools: ReadonlyMap<string, McpToolDescriptor>,
-): string | null {
-  if (serverTools.has(mcpToolName)) return mcpToolName
-
-  const suffix = `-${mcpToolName}`
-  let found: string | null = null
-  for (const name of serverTools.keys()) {
-    if (!name.endsWith(suffix)) continue
-    if (found !== null) return null
-    found = name
-  }
-  return found
 }
 
 /**

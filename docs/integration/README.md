@@ -178,6 +178,58 @@ suy ra mã Nexa từ text — **đây là heuristic dựa trên chuỗi** và s�
 
 ---
 
+## 2b. Redmine và XWiki (ADR 0010)
+
+Hai MCP server HTTP, mỗi server một `RemoteMcpServer` (`@nexa/work-mcp-servers`), gộp với
+Atlassian qua `McpToolRouter`. Danh mục thật ở `mcp-redmine-tools.json` và `mcp-xwiki-tools.json`.
+
+### Redmine — qua MCP Gateway
+
+| Cấu hình | Lấy từ |
+|---|---|
+| URL endpoint, bearer token | Kết nối **MCP Gateway** (dùng chung với Atlassian) |
+| API key Redmine | Kết nối **Redmine** → secure storage `secure://redmine/default` |
+| URL web Redmine | Kết nối **Redmine** (`baseUrl`), chỉ dùng cho preview và để dựng link `/issues/<id>` |
+
+Header mỗi request: `authorization: Bearer <gateway>`, `x-mcp-servers: redmine`,
+`x-mcp-redmine-x-redmine-api-key: <api key>` (bảng `REDMINE_GATEWAY_HEADER_KEYS`). Gateway đặt tiền
+tố cho tool (`redmine-get_issue`); `resolveServerToolName` khớp được cả tên có và không có tiền tố.
+
+Khởi chạy gọi `get_current_user` để xác nhận API key và lấy login hiển thị trong preview.
+
+| Text/trạng thái | Mã Nexa |
+|---|---|
+| HTTP 401/403 ở bước `initialize` (bearer gateway sai) | `MCP_GATEWAY_AUTH_FAILED` |
+| `HTTP 401`, `invalid api key`, `unauthorized` | `REDMINE_AUTH_FAILED` |
+| `HTTP 403`, `forbidden` (key đúng, thiếu quyền, ví dụ `list_users`) | `UPSTREAM_UNAVAILABLE` — **không** phải lỗi xác thực |
+| `timeout` | `MCP_SERVER_UNAVAILABLE` |
+| còn lại (404, 422…) | `UPSTREAM_UNAVAILABLE` |
+| Gateway chưa bật hoặc chưa có token | `REDMINE_GATEWAY_REQUIRED` |
+
+### XWiki — trực tiếp
+
+`baseUrl` là URL endpoint MCP; credential là bearer token (`secure://xwiki/default`). Endpoint trả
+`application/json` và **không** có `mcp-session-id`. Link trong kết quả (dòng `URL:`) chỉ được nhận
+nếu cùng host với endpoint.
+
+Ghi trang (`write_document`, `edit_document`) dùng `prepareWrite` để đọc dòng `Version:` của
+`get_document` và gắn `base_version` vào payload đã duyệt. Model không thấy và không điền được tham
+số này.
+
+| Text | Mã Nexa |
+|---|---|
+| HTTP 401/403 ở bước `initialize`, hoặc `401`/`unauthorized` trong text | `XWIKI_AUTH_FAILED` |
+| `Version conflict` | `XWIKI_VERSION_CONFLICT` (tính là `failed`, không phải `uncertain`) |
+| `No such document` | `UPSTREAM_UNAVAILABLE`, `safeDetail` = `xwiki-document-not-found` |
+| còn lại | `UPSTREAM_UNAVAILABLE` |
+
+### Allowlist domain
+
+Nếu `allowedDomains` trong `resources/policy.json` không rỗng, phải thêm domain XWiki (ví dụ
+`wiki.abbank.vn`). Redmine không cần thêm gì, vì nó đi qua domain gateway đã có.
+
+---
+
 ## 3. IPC renderer ↔ main
 
 **Triển khai:** `packages/shared-types/src/ipc.ts`, `apps/desktop/src/main/ipc.ts`

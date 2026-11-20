@@ -49,7 +49,7 @@ const GROUP_LABELS = {
 } as const
 
 function describeItem(item: BriefingItem): string {
-  const where = item.source === 'jira' ? `${item.reference ?? 'Jira'}: ` : ''
+  const where = item.source === 'redmine' ? `${item.reference ?? 'Redmine'}: ` : ''
   const when =
     item.reason.days === null
       ? ''

@@ -60,7 +60,13 @@ function makeReport(overrides: Partial<BaReviewReportView> = {}): BaReviewReport
     ],
     rules: [
       { id: 'R-UC-03', description: 'Luồng ngoại lệ', status: 'failed', findingCount: 1 },
-      { id: 'R-TPL-01', description: 'Mục bắt buộc', status: 'skipped', findingCount: 0, missing: 'template' },
+      {
+        id: 'R-TPL-01',
+        description: 'Mục bắt buộc',
+        status: 'skipped',
+        findingCount: 0,
+        missing: 'template',
+      },
     ],
     createdAt: '2026-08-30T00:00:00.000Z',
     ...overrides,
@@ -122,7 +128,12 @@ describe('danh mục tool BA', () => {
   it('gồm đúng năm tool đã đăng ký', () => {
     ctx = makeTempStore()
     const { registry } = setup(ctx)
-    expect(registry.list().map((tool) => tool.name).sort()).toEqual(
+    expect(
+      registry
+        .list()
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual(
       [
         BA_APPLY_TEMPLATE_TOOL,
         BA_ERROR_CODES_TOOL,

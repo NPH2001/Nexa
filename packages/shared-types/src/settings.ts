@@ -1,5 +1,7 @@
 import { z } from 'zod'
-export { RETENTION_CHOICES } from './ui-constants.js'
+import { THEME_CHOICES } from './ui-constants.js'
+export { RETENTION_CHOICES, THEME_CHOICES } from './ui-constants.js'
+export type { ThemePreference } from './ui-constants.js'
 
 /**
  * Feature flag cục bộ cho tool/write action (§13.1).
@@ -68,6 +70,31 @@ export const featureFlagsSchema = z.object({
    * (DESTRUCTIVE) — xem `manager.ts` và OPEN-QUESTIONS.md mục G1. Mặc định BẬT.
    */
   confluenceWriteHigh: z.boolean().default(true),
+  /**
+   * Redmine READ: issue, project, version, time entry, wiki, metadata attachment
+   * (openspec `add-redmine-xwiki-connectors`). Không gồm `download_attachment`.
+   */
+  redmineRead: z.boolean().default(true),
+  /**
+   * Redmine WRITE_LOW: tạo issue, comment, log time, liên kết issue, thêm watcher.
+   *
+   * Mặc định BẬT để thống nhất với OPEN-QUESTIONS G1 — mọi lời gọi vẫn phải preview + xác nhận.
+   * Xem câu hỏi mở O1 của change.
+   */
+  redmineWrite: z.boolean().default(true),
+  /**
+   * Redmine WRITE_HIGH: `update_issue` — đổi status, người được giao, hạn, field của issue đã có.
+   * Tách khỏi `redmineWrite` cùng lý do `jiraUpdate` tách khỏi `jiraCreate`.
+   */
+  redmineUpdate: z.boolean().default(true),
+  /** XWiki READ: duyệt cây, tìm kiếm, đọc tài liệu, lịch sử, link, attachment văn bản. */
+  xwikiRead: z.boolean().default(true),
+  /**
+   * XWiki WRITE_HIGH: `write_document` (tạo hoặc GHI ĐÈ cả trang) và `edit_document`.
+   * Payload thực thi luôn mang `base_version` của bản đã đọc lúc preview, nên một trang bị người
+   * khác sửa trong lúc chờ xác nhận sẽ bị XWiki từ chối thay vì ghi đè lặng lẽ.
+   */
+  xwikiWrite: z.boolean().default(true),
   /** §22.2 A8: mặc định tắt, để IT phân phối tập trung. */
   autoUpdate: z.boolean().default(false),
   /** §8.3: có lưu text đã trích xuất từ file vào DB (đã mã hoá) hay không. */
@@ -110,6 +137,16 @@ export const featureFlagsSchema = z.object({
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>
 
 export const appSettingsSchema = z.object({
+  /**
+   * Màu giao diện: `light`, `dark` hay `system` (đi theo hệ điều hành).
+   *
+   * Đây là cấu hình người dùng, KHÔNG phải feature flag — nó không mở hay khoá quyền nào, nên
+   * cố ý không nằm trong `features` và IT không ghi đè qua `forcedFeatures`.
+   *
+   * Mặc định `system`: máy công ty đã có cài đặt sáng/tối của riêng người dùng, và một app đơn lẻ
+   * tự chọn ngược lại thì lần đầu mở luôn sai.
+   */
+  theme: z.enum(THEME_CHOICES).default('system'),
   /** Opt-in hoàn toàn cho proactive check-ins; mặc định không chạy nền. */
   proactiveCheckInsEnabled: z.boolean().default(false),
   /**

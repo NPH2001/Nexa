@@ -25,6 +25,26 @@ export const ERROR_CODES = {
   MCP_GATEWAY_CONFIG_REQUIRED: 'MCP_GATEWAY_CONFIG_REQUIRED',
   /** Gateway từ chối bearer token, hoặc token đã bị thu hồi. */
   MCP_GATEWAY_AUTH_FAILED: 'MCP_GATEWAY_AUTH_FAILED',
+  /**
+   * Redmine đi qua MCP Gateway (ADR 0010): bật Redmine mà gateway chưa bật hoặc chưa có token thì
+   * không có đường nào để gọi. Mã riêng để UI chỉ đúng chỗ cần sửa — mục MCP Gateway, không phải
+   * mục Redmine.
+   */
+  REDMINE_GATEWAY_REQUIRED: 'REDMINE_GATEWAY_REQUIRED',
+  /** Chưa cấu hình kết nối Redmine (URL web + API key). */
+  REDMINE_CONFIG_REQUIRED: 'REDMINE_CONFIG_REQUIRED',
+  /** Chưa cấu hình kết nối XWiki (URL endpoint MCP + token). */
+  XWIKI_CONFIG_REQUIRED: 'XWIKI_CONFIG_REQUIRED',
+  /** Gateway chấp nhận bearer token nhưng Redmine từ chối API key. */
+  REDMINE_AUTH_FAILED: 'REDMINE_AUTH_FAILED',
+  /** Endpoint MCP XWiki từ chối bearer token (HTTP 401). */
+  XWIKI_AUTH_FAILED: 'XWIKI_AUTH_FAILED',
+  /**
+   * Trang XWiki đã đổi phiên bản kể từ lúc Nexa đọc để dựng preview (lệch `base_version`). Mã
+   * riêng vì đây là cơ chế an toàn đang chạy đúng, không phải lỗi mạng — gộp vào
+   * UPSTREAM_UNAVAILABLE sẽ khuyên người dùng "kiểm tra mạng" trong khi việc cần làm là đọc lại.
+   */
+  XWIKI_VERSION_CONFLICT: 'XWIKI_VERSION_CONFLICT',
   /** Key hợp lệ nhưng vượt hạn mức LiteLLM (§11.2). */
   LITELLM_RATE_LIMITED: 'LITELLM_RATE_LIMITED',
   /**
@@ -47,6 +67,38 @@ export const ERROR_CODES = {
   LLM_CANCELLED: 'LLM_CANCELLED',
   /** LiteLLM/MCP trả lỗi mạng hoặc 5xx. */
   UPSTREAM_UNAVAILABLE: 'UPSTREAM_UNAVAILABLE',
+  /**
+   * Gateway từ chối vì body quá lớn (HTTP 413) — gần như luôn là ảnh đính kèm.
+   *
+   * Tách khỏi `UPSTREAM_UNAVAILABLE` vì hai mã này đẩy người dùng đi hai hướng trái ngược: mã kia
+   * nói "kiểm tra kết nối mạng", còn nguyên nhân thật ở đây là mạng vẫn tốt và chính yêu cầu quá
+   * lớn. Ảnh đi lên dạng base64 nên cộng thêm ~33%, và nhiều proxy chặn ở 1–10 MB.
+   */
+  UPSTREAM_PAYLOAD_TOO_LARGE: 'UPSTREAM_PAYLOAD_TOO_LARGE',
+  /**
+   * Gateway nhận được yêu cầu, nhưng nhà cung cấp model ĐỨNG SAU nó báo lỗi hoặc quá tải.
+   *
+   * Tách khỏi `UPSTREAM_UNAVAILABLE` vì cùng một lý do đã tách `UPSTREAM_PAYLOAD_TOO_LARGE`: mã kia
+   * bảo người dùng "kiểm tra kết nối mạng nội bộ", mà ở đây mạng chắc chắn tốt — lỗi này chỉ tới
+   * được khi kết nối đã mở, đã gửi xong yêu cầu và gateway đã bắt đầu trả dòng SSE. Bảo người dùng
+   * đi kiểm tra mạng khi mạng đang chạy là đẩy họ đi sai hướng hoàn toàn.
+   *
+   * Retry được, khác `UPSTREAM_PAYLOAD_TOO_LARGE`: quá tải và lỗi tạm của nhà cung cấp thường tự
+   * hết, còn một body quá lớn thì gửi lại bao nhiêu lần cũng vẫn quá lớn.
+   */
+  UPSTREAM_PROVIDER_FAILED: 'UPSTREAM_PROVIDER_FAILED',
+  /**
+   * Gateway báo nội dung vượt cửa sổ ngữ cảnh của model.
+   *
+   * Khác `IMAGE_EXCEEDS_CONTEXT`: mã đó là phép kiểm CỦA NEXA trước khi gửi, còn mã này là phán
+   * quyết của gateway sau khi đã gửi — thường vì phần văn bản, hoặc vì cách nhà cung cấp tính
+   * token cho ảnh khác với ước lượng heuristic của Nexa.
+   */
+  CONTEXT_LENGTH_EXCEEDED: 'CONTEXT_LENGTH_EXCEEDED',
+  /** Gateway nhận request nhưng từ chối chính ảnh: không tải/giải mã được, hoặc sai định dạng. */
+  IMAGE_REJECTED_BY_UPSTREAM: 'IMAGE_REJECTED_BY_UPSTREAM',
+  /** Bộ lọc nội dung của nhà cung cấp chặn lượt này. Không phải lỗi kỹ thuật, không retry. */
+  CONTENT_FILTERED: 'CONTENT_FILTERED',
   /** URL không phải HTTPS, hostname không hợp lệ, hoặc nhúng credential (§11.2). */
   INVALID_URL: 'INVALID_URL',
   /** URL không nằm trong allowlist domain của tổ chức (§11.2). */
@@ -97,6 +149,14 @@ export const ERROR_CODES = {
    * kiểm tra file thay vì hiểu ra giới hạn thật.
    */
   DOCUMENT_REQUIRES_TEXT: 'DOCUMENT_REQUIRES_TEXT',
+  /**
+   * Ghi file xuống ổ đĩa thất bại: hết dung lượng, không có quyền, hoặc file đang bị ứng dụng
+   * khác giữ.
+   *
+   * Tách khỏi `INTERNAL_ERROR` vì đây là loại lỗi người dùng tự xử lý được — chọn thư mục khác
+   * hoặc đóng ứng dụng đang mở file — còn `INTERNAL_ERROR` thì không nói được điều gì hữu ích.
+   */
+  FILE_WRITE_FAILED: 'FILE_WRITE_FAILED',
   /** IPC payload không khớp schema Zod (§5.3). */
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   /** Lỗi không phân loại được. Không bao giờ chứa chi tiết nhạy cảm. */
@@ -180,6 +240,37 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     retryable: false,
     hint: 'Liên hệ quản trị gateway để cấp token mới, rồi cập nhật trong Cài đặt.',
   },
+  REDMINE_GATEWAY_REQUIRED: {
+    message: 'Redmine cần MCP Gateway, nhưng MCP Gateway chưa được bật hoặc chưa có token.',
+    retryable: false,
+    hint: 'Mở Cài đặt → MCP Gateway để nhập URL và bearer token, rồi kiểm tra lại Redmine.',
+  },
+  REDMINE_CONFIG_REQUIRED: {
+    message: 'Chưa cấu hình kết nối Redmine.',
+    retryable: false,
+    hint: 'Mở Cài đặt → Redmine để nhập URL Redmine và API key.',
+  },
+  XWIKI_CONFIG_REQUIRED: {
+    message: 'Chưa cấu hình kết nối XWiki.',
+    retryable: false,
+    hint: 'Mở Cài đặt → XWiki để nhập URL endpoint MCP và token.',
+  },
+  REDMINE_AUTH_FAILED: {
+    message: 'Redmine từ chối API key, hoặc tài khoản thiếu quyền.',
+    retryable: false,
+    hint: 'Lấy lại API key ở Redmine → Tài khoản của tôi → API access key, rồi cập nhật trong Cài đặt.',
+  },
+  XWIKI_VERSION_CONFLICT: {
+    message:
+      'Trang XWiki đã được sửa sau khi bạn xem bản xem trước, nên Nexa không ghi đè thay đổi đó.',
+    retryable: false,
+    hint: 'Yêu cầu lại để Nexa đọc phiên bản mới nhất của trang rồi đề xuất lại.',
+  },
+  XWIKI_AUTH_FAILED: {
+    message: 'XWiki từ chối token, hoặc token đã hết hạn.',
+    retryable: false,
+    hint: 'Tạo token mới trong XWiki rồi cập nhật ở Cài đặt → XWiki.',
+  },
 
   LITELLM_RATE_LIMITED: {
     message: 'API key đã vượt hạn mức tại LiteLLM.',
@@ -252,6 +343,35 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     retryable: true,
     hint: 'Kiểm tra kết nối mạng nội bộ.',
   },
+  UPSTREAM_PAYLOAD_TOO_LARGE: {
+    message: 'Yêu cầu quá lớn so với giới hạn của gateway.',
+    // Gửi lại y nguyên sẽ lỗi y nguyên: phải bớt đính kèm hoặc nâng giới hạn phía gateway.
+    retryable: false,
+    hint: 'Ảnh đính kèm là nguyên nhân thường gặp nhất. Hãy dùng ảnh nhỏ hơn, bớt số file trong một lượt, hạ "Dung lượng ảnh tối đa" trong Cài đặt, hoặc nhờ quản trị LiteLLM nâng giới hạn body.',
+  },
+  UPSTREAM_PROVIDER_FAILED: {
+    message: 'Dịch vụ model phía sau gateway đang lỗi hoặc quá tải.',
+    retryable: true,
+    // Không nhắc tới mạng: yêu cầu đã đi tới nơi và gateway đã trả lời, nên mạng không phải nghi
+    // phạm. Gợi ý cuối là đường đi tiếp khi lỗi lặp lại — Nexa cố ý không ghi lại câu lỗi của
+    // gateway (§11.1), nên đối chiếu mã yêu cầu với log LiteLLM là cách duy nhất biết thêm (§15.2).
+    hint: 'Kết nối vẫn tốt — lỗi đến từ phía sau gateway. Nếu bạn vừa yêu cầu một câu trả lời dài (sơ đồ, tài liệu, file), hãy thử chia nhỏ yêu cầu: lượt càng dài càng dễ bị cắt giữa đường. Nếu lặp lại, gửi mã yêu cầu cho quản trị LiteLLM để đối chiếu log.',
+  },
+  CONTEXT_LENGTH_EXCEEDED: {
+    message: 'Nội dung gửi lên vượt cửa sổ ngữ cảnh của model.',
+    retryable: false,
+    hint: 'Bớt tài liệu hoặc ảnh đính kèm, chia câu hỏi thành nhiều lượt, hoặc chọn model có cửa sổ ngữ cảnh lớn hơn.',
+  },
+  IMAGE_REJECTED_BY_UPSTREAM: {
+    message: 'Gateway không đọc được ảnh đính kèm.',
+    retryable: false,
+    hint: 'Thử ảnh PNG hoặc JPEG khác, hoặc ảnh có dung lượng nhỏ hơn.',
+  },
+  CONTENT_FILTERED: {
+    message: 'Nhà cung cấp đã chặn nội dung của lượt này.',
+    retryable: false,
+    hint: 'Diễn đạt lại câu hỏi, hoặc bỏ phần nội dung mà bộ lọc có thể đang chặn.',
+  },
   INVALID_URL: {
     message: 'URL không hợp lệ.',
     retryable: false,
@@ -321,6 +441,11 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorMeta>> = {
     retryable: false,
     hint: 'Ảnh và bản scan chưa dùng được ở Không gian Nghiệp vụ. Hãy chọn file Word, Excel, PowerPoint, PDF có lớp văn bản hoặc TXT.',
   },
+  FILE_WRITE_FAILED: {
+    message: 'Không ghi được file xuống ổ đĩa.',
+    retryable: true,
+    hint: 'Chọn thư mục khác, hoặc đóng ứng dụng đang mở file này rồi thử lại.',
+  },
   VALIDATION_FAILED: { message: 'Dữ liệu gửi lên không hợp lệ.', retryable: false },
   INTERNAL_ERROR: {
     message: 'Đã xảy ra lỗi không mong muốn.',
@@ -375,4 +500,10 @@ export class NexaError extends Error {
     if (NexaError.is(value)) return value
     return new NexaError(fallback, { cause: value })
   }
+}
+
+/** Câu báo lỗi cho người dùng: thông điệp, gợi ý và mã lỗi để họ chép lại khi báo cáo. */
+export function formatNexaErrorMessage(error: NexaError): string {
+  const hint = error.hint === undefined ? '' : ` ${error.hint}`
+  return `Mình chưa thể hoàn tất yêu cầu này. ${error.message}${hint} (Mã lỗi: ${error.code})`
 }

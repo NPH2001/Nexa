@@ -9,6 +9,7 @@ import { api } from '../bridge.js'
 import { commitThenRefresh } from '../committed-mutation.js'
 import { getMemoryLimitState, validateMemoryDraft } from './MemoryPanel.helpers.js'
 import { DestructiveActionDialog } from './DestructiveActionDialog.js'
+import { EmptyState, InlineError, LoadingSkeleton } from './StateBlocks.js'
 import type { Toast } from './Toasts.js'
 
 interface MemoryDraft {
@@ -75,8 +76,8 @@ export function MemoryPanel(props: {
       setMemories(memoryResult)
       setConversations(conversationResult)
     } catch (error) {
-      setLoadError('Không tải được memory của Nexa.')
-      onError(error, 'Không tải được memory của Nexa.')
+      setLoadError('Không tải được những điều Nexa nhớ.')
+      onError(error, 'Không tải được những điều Nexa nhớ.')
     } finally {
       setLoading(false)
     }
@@ -124,17 +125,17 @@ export function MemoryPanel(props: {
       try {
         if (editingId === null) {
           await api.memory.create(payload)
-          props.onToast({ kind: 'success', title: 'Đã lưu memory cho Nexa.' })
+          props.onToast({ kind: 'success', title: 'Đã lưu ghi nhớ cho Nexa.' })
         } else {
           await api.memory.update(editingId, payload)
-          props.onToast({ kind: 'success', title: 'Đã cập nhật memory.' })
+          props.onToast({ kind: 'success', title: 'Đã cập nhật ghi nhớ.' })
         }
         resetForm()
         await reload()
       } catch (error) {
         props.onError(
           error,
-          editingId === null ? 'Không tạo được memory.' : 'Không cập nhật được memory.',
+          editingId === null ? 'Không tạo được ghi nhớ.' : 'Không cập nhật được ghi nhớ.',
         )
       } finally {
         setBusyAction(null)
@@ -146,7 +147,7 @@ export function MemoryPanel(props: {
     void mutateFact(
       `archive:${fact.id}`,
       () => api.memory.archive(fact.id),
-      'Đã archive memory.',
+      'Đã lưu trữ ghi nhớ. Nexa không dùng nó cho tới khi bạn khôi phục.',
       reload,
     )
   }
@@ -155,7 +156,7 @@ export function MemoryPanel(props: {
     void mutateFact(
       `restore:${fact.id}`,
       () => api.memory.restore(fact.id),
-      'Đã khôi phục memory.',
+      'Đã khôi phục ghi nhớ.',
       reload,
     )
   }
@@ -172,12 +173,12 @@ export function MemoryPanel(props: {
           onCommitted: () => {
             setDeleteTarget(null)
             if (editingId === target.id) resetForm()
-            props.onToast({ kind: 'success', title: 'Đã xoá vĩnh viễn memory.' })
+            props.onToast({ kind: 'success', title: 'Đã xoá vĩnh viễn ghi nhớ.' })
           },
           onRefreshError: () =>
             props.onToast({
               kind: 'warning',
-              title: 'Đã xoá memory nhưng chưa làm mới được danh sách.',
+              title: 'Đã xoá ghi nhớ nhưng chưa làm mới được danh sách.',
             }),
         }),
       '',
@@ -189,7 +190,7 @@ export function MemoryPanel(props: {
     return (
       <section className="panel">
         <h2>Nexa nhớ</h2>
-        <p className="muted">Đang tải memory…</p>
+        <LoadingSkeleton label="Đang tải những điều Nexa nhớ…" variant="cards" rows={2} />
       </section>
     )
   }
@@ -201,13 +202,13 @@ export function MemoryPanel(props: {
           <div>
             <h2>Nexa nhớ</h2>
             <p className="muted">
-              Nexa không tự nhớ điều gì cả. Chỉ những memory bạn tạo hoặc xác nhận ở đây mới được
-              cân nhắc chèn vào các prompt về sau.
+              Nexa không tự nhớ điều gì cả. Chỉ những ghi nhớ bạn tạo hoặc xác nhận ở đây mới được
+              cân nhắc gửi kèm các câu hỏi về sau.
             </p>
           </div>
-          <div className="memory-stats" aria-label="Thống kê memory">
-            <span className="tag">{String(activeMemories.length)} active</span>
-            <span className="tag">{String(archivedMemories.length)} archived</span>
+          <div className="memory-stats" aria-label="Thống kê ghi nhớ">
+            <span className="tag">{String(activeMemories.length)} đang dùng</span>
+            <span className="tag">{String(archivedMemories.length)} đã lưu trữ</span>
           </div>
         </div>
 
@@ -223,13 +224,14 @@ export function MemoryPanel(props: {
           {limitState.message}
         </p>
         <p className="muted small">
-          Memory có `Chỉ nội bộ` sẽ không được gửi tới provider bên ngoài tổ chức. Memory có `Cho
-          phép provider ngoài` chỉ nên chứa thông tin bạn chấp nhận mang ra khỏi hạ tầng nội bộ.
+          Ghi nhớ <strong>Chỉ dùng nội bộ</strong> không bao giờ được gửi tới provider bên ngoài tổ
+          chức. Chỉ chọn <strong>Cho phép gửi ra ngoài tổ chức</strong> cho thông tin bạn chấp nhận
+          mang ra khỏi hạ tầng nội bộ.
         </p>
       </section>
 
       <section className="panel">
-        <h2>{editingId === null ? 'Thêm memory mới' : 'Sửa memory'}</h2>
+        <h2>{editingId === null ? 'Thêm ghi nhớ mới' : 'Sửa ghi nhớ'}</h2>
         <div className="memory-form">
           <label className="field memory-form-full">
             <span>Nội dung nhớ ({String(draft.content.length)}/500)</span>
@@ -247,7 +249,7 @@ export function MemoryPanel(props: {
           </label>
 
           <label className="field">
-            <span>Loại memory</span>
+            <span>Loại ghi nhớ</span>
             <select
               className="input"
               value={draft.kind}
@@ -298,12 +300,12 @@ export function MemoryPanel(props: {
               }
             >
               <option value="">
-                {draft.scope === 'conversation' ? 'Chọn hội thoại' : 'Không gắn provenance'}
+                {draft.scope === 'conversation' ? 'Chọn hội thoại' : 'Không gắn hội thoại nguồn'}
               </option>
               {conversations.map((conversation) => (
                 <option key={conversation.id} value={conversation.id}>
                   {conversation.title}
-                  {conversation.archivedAt !== null ? ' (archived)' : ''}
+                  {conversation.archivedAt !== null ? ' (đã lưu trữ)' : ''}
                 </option>
               ))}
             </select>
@@ -318,15 +320,15 @@ export function MemoryPanel(props: {
               }
             />
             <span>
-              Cho phép provider ngoài tổ chức dùng memory này
-              <span className="muted small"> — mặc định tắt để giữ memory chỉ ở đường nội bộ</span>
+              Cho phép gửi ghi nhớ này ra ngoài tổ chức
+              <span className="muted small"> — mặc định tắt: ghi nhớ chỉ dùng nội bộ</span>
             </span>
           </label>
 
           {draft.allowExternal && (
             <p className="external-warning">
-              Bạn đang chọn cho phép memory này đi cùng prompt tới provider ngoài tổ chức nếu hội
-              thoại dùng model bên ngoài. Chỉ bật khi nội dung này không nhạy cảm.
+              Bạn đang cho phép ghi nhớ này đi kèm câu hỏi tới provider ngoài tổ chức nếu hội thoại
+              dùng model bên ngoài. Chỉ bật khi nội dung này không nhạy cảm.
             </p>
           )}
 
@@ -344,8 +346,8 @@ export function MemoryPanel(props: {
                 : busyAction?.startsWith('save:')
                   ? 'Đang cập nhật…'
                   : editingId === null
-                    ? 'Lưu memory'
-                    : 'Cập nhật memory'}
+                    ? 'Lưu ghi nhớ'
+                    : 'Cập nhật ghi nhớ'}
             </button>
             {editingId !== null && (
               <button
@@ -361,9 +363,33 @@ export function MemoryPanel(props: {
         </div>
       </section>
 
+      {/* Lỗi đặt TRƯỚC danh sách: danh sách rỗng vì không tải được không được trông như
+          "chưa nhớ gì". */}
+      {loadError !== null && (
+        <section className="panel">
+          <InlineError
+            title={loadError}
+            detail="Các ghi nhớ vẫn nằm trên máy; chỉ là lần đọc này không thành."
+            retryLabel="Tải lại"
+            onRetry={() => void reload()}
+          />
+        </section>
+      )}
+
       <MemoryListSection
-        title="Memory đang hoạt động"
-        empty="Chưa có memory nào. Hãy bắt đầu bằng vài fact thật ngắn, ổn định và hữu ích."
+        title="Ghi nhớ đang dùng"
+        empty="Chưa có ghi nhớ nào. Hãy bắt đầu bằng vài điều thật ngắn, ổn định và hữu ích."
+        emptyAction={
+          loadError === null
+            ? {
+                label: 'Ghi điều đầu tiên',
+                onClick: () => {
+                  textareaRef.current?.scrollIntoView({ block: 'center' })
+                  textareaRef.current?.focus()
+                },
+              }
+            : undefined
+        }
         items={activeMemories}
         conversations={conversationMap}
         busyAction={busyAction}
@@ -374,8 +400,8 @@ export function MemoryPanel(props: {
       />
 
       <MemoryListSection
-        title="Memory đã archive"
-        empty="Chưa có memory archived."
+        title="Ghi nhớ đã lưu trữ"
+        empty="Chưa có ghi nhớ nào được lưu trữ."
         items={archivedMemories}
         conversations={conversationMap}
         busyAction={busyAction}
@@ -385,20 +411,10 @@ export function MemoryPanel(props: {
         onDelete={setDeleteTarget}
       />
 
-      {loadError !== null && (
-        <section className="panel danger-zone">
-          <h2>Không tải được memory</h2>
-          <p className="muted">{loadError}</p>
-          <button type="button" className="btn" onClick={() => void reload()}>
-            Tải lại
-          </button>
-        </section>
-      )}
-
       {deleteTarget !== null && (
         <DestructiveActionDialog
-          title="Xoá vĩnh viễn memory?"
-          description="Memory này sẽ bị xoá khỏi máy và không còn được chèn vào các prompt sau này."
+          title="Xoá vĩnh viễn ghi nhớ?"
+          description="Ghi nhớ này sẽ bị xoá khỏi máy và không còn được gửi kèm các câu hỏi sau này. Nếu chỉ tạm chưa muốn dùng, hãy chọn Lưu trữ."
           confirmLabel="Xoá vĩnh viễn"
           busy={busyAction === `delete:${deleteTarget.id}`}
           onConfirm={remove}
@@ -420,7 +436,7 @@ export function MemoryPanel(props: {
       await afterSuccess()
       if (successTitle !== '') props.onToast({ kind: 'success', title: successTitle })
     } catch (error) {
-      props.onError(error, 'Không cập nhật được memory.')
+      props.onError(error, 'Không cập nhật được ghi nhớ.')
     } finally {
       setBusyAction(null)
     }
@@ -430,6 +446,7 @@ export function MemoryPanel(props: {
 function MemoryListSection(props: {
   title: string
   empty: string
+  emptyAction?: { label: string; onClick: () => void }
   items: readonly MemoryFact[]
   conversations: ReadonlyMap<string, Conversation>
   busyAction: string | null
@@ -442,7 +459,9 @@ function MemoryListSection(props: {
     <section className="panel">
       <h2>{props.title}</h2>
       {props.items.length === 0 ? (
-        <p className="muted small">{props.empty}</p>
+        <EmptyState action={props.emptyAction}>
+          <p className="small">{props.empty}</p>
+        </EmptyState>
       ) : (
         <ul className="memory-list" aria-label={props.title}>
           {props.items.map((fact) => {
@@ -463,10 +482,10 @@ function MemoryListSection(props: {
                       className={fact.sharingPolicy === 'allow_external' ? 'external-tag' : 'tag'}
                     >
                       {fact.sharingPolicy === 'allow_external'
-                        ? 'Cho phép provider ngoài'
-                        : 'Chỉ nội bộ'}
+                        ? 'Cho phép gửi ra ngoài'
+                        : 'Chỉ dùng nội bộ'}
                     </span>
-                    {fact.status === 'archived' && <span className="tag">archived</span>}
+                    {fact.status === 'archived' && <span className="tag">Đã lưu trữ</span>}
                   </div>
                   <div className="row-actions">
                     <button
@@ -484,7 +503,7 @@ function MemoryListSection(props: {
                         onClick={() => props.onArchive(fact)}
                         disabled={props.busyAction !== null}
                       >
-                        {props.busyAction === `archive:${fact.id}` ? 'Đang archive…' : 'Archive'}
+                        {props.busyAction === `archive:${fact.id}` ? 'Đang lưu trữ…' : 'Lưu trữ'}
                       </button>
                     ) : (
                       <button
@@ -525,7 +544,7 @@ function MemoryListSection(props: {
                     </dd>
                   </div>
                   <div>
-                    <dt>Provenance</dt>
+                    <dt>Nguồn</dt>
                     <dd>
                       {fact.sourceConversationId === null
                         ? 'Không gắn hội thoại nguồn'

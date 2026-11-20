@@ -110,7 +110,10 @@ function mapActivity(row: Record<string, unknown>): ActivityEvent {
     type: String(row['activity_type']) as ActivityType,
     action: String(row['activity_action']) as ActivityAction,
     status: String(row['status']) as ActivityStatus,
-    actor: row['actor'] === null || row['actor'] === undefined ? null : (String(row['actor']) as ActivityActor),
+    actor:
+      row['actor'] === null || row['actor'] === undefined
+        ? null
+        : (String(row['actor']) as ActivityActor),
     subjectType: String(row['subject_type']) as ActivitySubjectType,
     subjectId: String(row['subject_id']),
     subjectLabel: null,

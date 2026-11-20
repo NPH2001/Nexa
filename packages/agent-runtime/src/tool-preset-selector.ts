@@ -1,4 +1,4 @@
-import type { ToolPreset } from '@nexa/shared-types'
+import { TOOL_PRESET_FLAGS, type McpTargetSystem, type ToolPreset } from '@nexa/shared-types'
 
 /**
  * Chọn preset tool cho một lượt (ADR 0009).
@@ -28,37 +28,50 @@ export function normalizeQuestion(raw: string): string {
 }
 
 /**
- * Dấu hiệu Jira. `task`/`cong viec` nằm ở đây vì trong ngữ cảnh tổ chức dùng Jira thì "tạo một
- * task" gần như luôn là Jira, không phải một việc chung chung.
+ * Từ chỉ RIÊNG Jira (ADR 0010): tên hệ thống và khái niệm chỉ Jira có (sprint, epic, board, JQL).
  */
-const JIRA_WORDS = [
-  'jira',
+const JIRA_WORDS = ['jira', 'sprint', 'backlog', 'epic', 'board', 'jql', 'story'] as const
+
+/** Từ chỉ RIÊNG Confluence. */
+const CONFLUENCE_WORDS = ['confluence', 'cql'] as const
+
+/** Từ chỉ RIÊNG Redmine — tên hệ thống và log time. */
+const REDMINE_WORDS = [
+  'redmine',
+  'log time',
+  'logtime',
+  'log gio',
+  'time entry',
+  'spent time',
+] as const
+
+/** Từ chỉ RIÊNG XWiki. */
+const XWIKI_WORDS = ['xwiki'] as const
+
+/**
+ * Từ CHUNG cho hệ thống quản lý việc (Jira hoặc Redmine). `task`/`cong viec` nằm ở đây vì "tạo
+ * một task" gần như luôn là một hệ thống issue, không phải một việc chung chung — nhưng là hệ thống
+ * NÀO thì tuỳ tổ chức đang dùng gì (xem `available` của `detectSignals`).
+ */
+const ISSUE_WORDS = [
   'issue',
   'ticket',
-  'sprint',
-  'backlog',
-  'epic',
   'bug',
   'task',
   'subtask',
   'sub-task',
   'cong viec',
-  'board',
-  'jql',
-  'story',
   'assignee',
 ] as const
 
-/** Dấu hiệu Confluence. */
-const CONFLUENCE_WORDS = [
-  'confluence',
-  'wiki',
-  'space',
-  'trang',
-  'tai lieu',
-  'page',
-  'document',
-] as const
+/** Từ CHUNG cho hệ thống tài liệu (Confluence hoặc XWiki). */
+const DOC_WORDS = ['wiki', 'space', 'trang', 'tai lieu', 'page', 'document'] as const
+
+/**
+ * Hệ thống mà từ chung trỏ tới khi caller không nói gì về hệ thống khả dụng — đúng hành vi trước
+ * ADR 0010, khi Nexa chỉ biết Jira và Confluence.
+ */
+const DEFAULT_AVAILABLE: readonly McpTargetSystem[] = ['jira', 'confluence']
 
 /**
  * Động từ chỉ ý định thay đổi dữ liệu.
@@ -103,6 +116,9 @@ const ISSUE_KEY_PATTERN = /\b([A-Z][A-Z0-9]{1,9})-\d+\b/g
  */
 const ISSUE_KEY_DENYLIST = new Set(['UTF', 'ISO', 'RFC', 'SHA', 'CVE', 'AES', 'HTTP', 'UTC', 'GMT'])
 
+/** Redmine gọi issue bằng "#1234". Phải đứng sau khoảng trắng/đầu câu để không khớp "C#1". */
+const REDMINE_ISSUE_PATTERN = /(?:^|[\s(])#\d{1,7}\b/
+
 /**
  * "trạng thái" sau khi bỏ dấu thành "trang thai", chứa "trang" — dấu hiệu Confluence.
  * "chuyển trạng thái issue" là câu Jira thuần, nên cụm này bị gỡ trước khi khớp.
@@ -122,24 +138,52 @@ function hasIssueKey(original: string): boolean {
   return false
 }
 
-/** Ba tín hiệu rời nhau, tách ra để test được từng cái và để log lý do khi cần. */
+/** Tín hiệu rời nhau, tách ra để test được từng cái và để log lý do khi cần. */
 export interface PresetSignals {
   readonly jira: boolean
   readonly confluence: boolean
+  readonly redmine: boolean
+  readonly xwiki: boolean
   readonly write: boolean
 }
 
-export function detectSignals(question: string): PresetSignals {
+/**
+ * @param available  Hệ thống đang có tool khả dụng. Từ CHUNG ("task", "trang wiki") chỉ trỏ tới
+ *   hệ thống thuộc nhóm đó đang khả dụng — người chỉ cấu hình Redmine hỏi "tạo task" phải ra
+ *   preset Redmine, không phải `jira-full` rỗng tool. Từ RIÊNG (tên hệ thống, mã issue) luôn được
+ *   tính dù hệ thống có khả dụng hay không: đó là ý người dùng.
+ */
+export function detectSignals(
+  question: string,
+  available: readonly McpTargetSystem[] = DEFAULT_AVAILABLE,
+): PresetSignals {
   const normalized = normalizeQuestion(question)
-  const forConfluence = CONFLUENCE_FALSE_FRIENDS.reduce(
+  const forDocs = CONFLUENCE_FALSE_FRIENDS.reduce(
     (text, pattern) => text.replace(pattern, ' '),
     normalized,
   )
+  const has = (words: readonly string[], text: string): boolean =>
+    words.some((w) => containsWord(text, w))
+  const genericIssue = has(ISSUE_WORDS, normalized)
+  const genericDoc = has(DOC_WORDS, forDocs)
+  const can = (system: McpTargetSystem): boolean => available.includes(system)
+
+  const jiraExplicit = has(JIRA_WORDS, normalized) || hasIssueKey(question)
+  const redmineExplicit = has(REDMINE_WORDS, normalized) || REDMINE_ISSUE_PATTERN.test(question)
+  const confluenceExplicit = has(CONFLUENCE_WORDS, forDocs)
+  const xwikiExplicit = has(XWIKI_WORDS, normalized)
+
+  // Đã gọi tên một hệ thống trong nhóm ⇒ từ chung của nhóm đó thuộc về hệ thống được gọi tên, không
+  // kéo thêm hệ thống còn lại vào ("issue Redmine #12" không cần tool Jira).
+  const issueNamed = jiraExplicit || redmineExplicit
+  const docNamed = confluenceExplicit || xwikiExplicit
 
   return {
-    jira: JIRA_WORDS.some((w) => containsWord(normalized, w)) || hasIssueKey(question),
-    confluence: CONFLUENCE_WORDS.some((w) => containsWord(forConfluence, w)),
-    write: WRITE_WORDS.some((w) => containsWord(normalized, w)),
+    jira: jiraExplicit || (genericIssue && !issueNamed && can('jira')),
+    redmine: redmineExplicit || (genericIssue && !issueNamed && can('redmine')),
+    confluence: confluenceExplicit || (genericDoc && !docNamed && can('confluence')),
+    xwiki: xwikiExplicit || (genericDoc && !docNamed && can('xwiki')),
+    write: has(WRITE_WORDS, normalized),
   }
 }
 
@@ -151,12 +195,20 @@ export function detectSignals(question: string): PresetSignals {
  * phần lãng phí thuần khiết nhất trong hành vi trước ADR 0009. Ta không chứng minh được là không
  * cần, nên chọn mức giữa; ý định write ở nhánh này đi qua đường mở rộng.
  */
-export function selectPreset(question: string): ToolPreset {
-  const { jira, confluence, write } = detectSignals(question)
+export function selectPreset(
+  question: string,
+  available: readonly McpTargetSystem[] = DEFAULT_AVAILABLE,
+): ToolPreset {
+  const signals = detectSignals(question, available)
+  const systems = (['jira', 'confluence', 'redmine', 'xwiki'] as const).filter((s) => signals[s])
 
-  if (jira && !confluence) return write ? 'jira-full' : 'jira-read'
-  if (confluence && !jira) return write ? 'confluence-full' : 'confluence-read'
-  if (jira && confluence) return write ? 'all' : 'all-read'
+  // Đúng một hệ thống ⇒ preset của hệ thống đó. Từ hai hệ thống trở lên ⇒ `all-read`/`all`: tập
+  // preset là danh sách ĐÓNG (ADR 0009), không sinh preset tổ hợp theo từng câu hỏi.
+  const [only] = systems
+  if (systems.length === 1 && only !== undefined) {
+    return `${only}-${signals.write ? 'full' : 'read'}` as ToolPreset
+  }
+  if (systems.length > 1) return signals.write ? 'all' : 'all-read'
   return 'all-read'
 }
 
@@ -166,10 +218,26 @@ export function selectPreset(question: string): ToolPreset {
  */
 export function selectPresetForHistory(
   history: readonly { role: string; content: string }[],
+  available: readonly McpTargetSystem[] = DEFAULT_AVAILABLE,
 ): ToolPreset {
   for (let i = history.length - 1; i >= 0; i--) {
     const message = history[i]
-    if (message?.role === 'user') return selectPreset(message.content)
+    if (message?.role === 'user') return selectPreset(message.content, available)
   }
   return 'all-read'
+}
+
+/**
+ * Áp trần tool của agent lên preset do bộ chọn chọn (openspec `add-custom-agents`, D2).
+ *
+ * Preset được chọn nằm TRỌN trong trần (cờ của nó là tập con cờ của trần) ⇒ giữ nguyên; ngược
+ * lại dùng trần. Kết quả luôn là một trong các preset có sẵn, nên không sinh prefix `tools` mới
+ * (ADR 0009). Phép giao chính xác theo từng cờ bị loại vì nó cho ra tổ hợp ngoài danh sách đóng.
+ *
+ * Chỉ THU HẸP: kết quả không bao giờ có cờ nào mà `ceiling` không có.
+ */
+export function clampPreset(selected: ToolPreset, ceiling: ToolPreset): ToolPreset {
+  const allowed = new Set<string>(TOOL_PRESET_FLAGS[ceiling])
+  const withinCeiling = TOOL_PRESET_FLAGS[selected].every((flag) => allowed.has(flag))
+  return withinCeiling ? selected : ceiling
 }

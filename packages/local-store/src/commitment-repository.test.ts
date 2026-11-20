@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import {
-  CommitmentRepository,
-  ConversationRepository,
-  ProfileRepository,
-} from './index.js'
+import { CommitmentRepository, ConversationRepository, ProfileRepository } from './index.js'
 import { makeTempStore, type TempStore } from '../../../tests/support/factories.js'
 
 let ctx: TempStore | null = null
@@ -93,9 +89,7 @@ describe('commitments', () => {
     })
 
     const raw = ctx.store.handle
-      .prepare(
-        'SELECT title_ciphertext, next_action_ciphertext FROM commitments WHERE id = ?',
-      )
+      .prepare('SELECT title_ciphertext, next_action_ciphertext FROM commitments WHERE id = ?')
       .get(created.id)
     expect(String(raw?.['title_ciphertext'])).not.toContain('kế hoạch pilot')
     expect(String(raw?.['next_action_ciphertext'])).not.toContain('danh sách người dùng')

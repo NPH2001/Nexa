@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NEXA_EVENTS, IPC_CHANNEL_NAMES, IPC_SCHEMAS, featureFlagsSchema } from '@nexa/shared-types'
 import { buildToolRegistry } from '@nexa/atlassian-mcp-manager'
+import { buildRedmineTools, buildXwikiTools } from '@nexa/work-mcp-servers'
 
 /**
  * Test cấu trúc — bắt loại lỗi mà unit test không thấy: một đầu dây được nối, đầu kia không.
@@ -115,10 +116,15 @@ describe('vòng đời tiến trình', () => {
 
 describe('feature flag', () => {
   const flags = Object.keys(featureFlagsSchema.parse({}))
-  const registry = buildToolRegistry({
-    jiraBaseUrl: 'https://jira.internal',
-    confluenceBaseUrl: 'https://confluence.internal',
-  })
+  // Mọi registry MCP (ADR 0010): cờ Redmine/XWiki gate tool của chính chúng.
+  const registry = [
+    ...buildToolRegistry({
+      jiraBaseUrl: 'https://jira.internal',
+      confluenceBaseUrl: 'https://confluence.internal',
+    }),
+    ...buildRedmineTools('https://redmine.internal'),
+    ...buildXwikiTools('https://wiki.internal'),
+  ]
   const gated = new Set(registry.map((t) => t.requiredFeature))
 
   it('mọi tool đều gắn với một feature flag có thật', () => {
@@ -186,11 +192,15 @@ describe('bề mặt tool của agent', () => {
     expect(names.filter((name) => MEMORY_LIKE.test(name ?? ''))).toEqual([])
   })
 
-  it('không tool Atlassian nào là tool memory', () => {
-    const registry = buildToolRegistry({
-      jiraBaseUrl: 'https://jira.internal',
-      confluenceBaseUrl: 'https://confluence.internal',
-    })
+  it('không tool MCP nào (Atlassian, Redmine, XWiki) là tool memory', () => {
+    const registry = [
+      ...buildToolRegistry({
+        jiraBaseUrl: 'https://jira.internal',
+        confluenceBaseUrl: 'https://confluence.internal',
+      }),
+      ...buildRedmineTools('https://redmine.internal'),
+      ...buildXwikiTools('https://wiki.internal'),
+    ]
 
     expect(registry.filter((tool) => MEMORY_LIKE.test(tool.name))).toEqual([])
   })
@@ -248,7 +258,7 @@ describe('nhánh lỗi của Activity không đụng tới filter', () => {
   it('thử lại chạy đúng hàm load hiện tại, không dựng đường tải thứ hai', () => {
     // `load` là useCallback phụ thuộc ba filter, nên gọi lại nó là tự khắc giữ nguyên filter.
     // Một nút thử lại gọi thẳng `api.activity.list` sẽ lách mất tính chất đó.
-    expect(view).toMatch(/onClick=\{[^}]*\bload\b[^}]*\}/)
+    expect(view).toMatch(/(?:onClick|onRetry)=\{[^}]*\bload\b[^}]*\}/)
     expect(view.split('api.activity.list').length - 1, 'có nhiều hơn một đường gọi list').toBe(1)
   })
 })
@@ -264,7 +274,7 @@ describe('nhánh lỗi của Activity không đụng tới filter', () => {
 describe('số message bị lược bỏ đi hết đường tới người dùng', () => {
   const runtime = read('packages/agent-runtime/src/agent-runtime.ts')
   const controller = read('apps/desktop/src/main/chat-controller.ts')
-  const chatView = read('apps/desktop/src/renderer/components/ChatView.tsx')
+  const chatView = read('apps/desktop/src/renderer/components/MessageBubble.tsx')
   const app = read('apps/desktop/src/renderer/App.tsx')
 
   it('runtime tính rồi trả con số ra ngoài', () => {

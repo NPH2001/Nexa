@@ -16,7 +16,7 @@ import {
 } from '@nexa/shared-types'
 import { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
 import { computePayloadHash } from '@nexa/security'
-import { EXPAND_TOOLS_TOOL_NAME } from '@nexa/shared-types'
+import { EXPAND_TOOLS_TOOL_NAME, type ToolPreset } from '@nexa/shared-types'
 import {
   AgentRuntime,
   ConfirmationGuard,
@@ -82,6 +82,8 @@ interface Harness {
   run(overrides?: {
     signal?: AbortSignal
     history?: readonly { role: MessageRole; content: string }[]
+    toolCeiling?: ToolPreset
+    agentInstructions?: string
   }): Promise<Awaited<ReturnType<AgentRuntime['runTurn']>>>
 }
 
@@ -520,7 +522,21 @@ describe('AgentRuntime — vòng lặp tool', () => {
     })
 
     await expect(h.run()).rejects.toMatchObject({ code: ERROR_CODES.MAX_TOOL_ITERATIONS })
-    expect(h.llm.turnsConsumed).toBe(3)
+    expect(h.llm.turnsConsumed).toBe(4)
+  })
+
+  it('hết hạn mức vòng thì cho model một lượt cuối để tổng hợp thay vì báo lỗi', async () => {
+    const loop: ScriptedTurn = {
+      toolCalls: [{ name: 'jira_get_issue', args: { issue_key: 'PRJ-1' } }],
+    }
+    const h = await makeHarness({
+      script: [loop, loop, loop, { text: 'Tổng hợp từ kết quả đã có.' }],
+      settings: { maxToolIterations: 3 },
+    })
+
+    const result = await h.run()
+    expect(result.text).toContain('Tổng hợp')
+    expect(h.llm.turnsConsumed).toBe(4)
   })
 
   it('dừng hẳn khi Atlassian trả lỗi xác thực ở tool READ (fail closed §3)', async () => {
@@ -917,7 +933,10 @@ describe('ảnh trong runTurn', () => {
     },
   }
 
-  function runWithImage(h: Harness, overrides: { modelSupportsVision?: boolean; contextWindowTokens?: number } = {}) {
+  function runWithImage(
+    h: Harness,
+    overrides: { modelSupportsVision?: boolean; contextWindowTokens?: number } = {},
+  ) {
     return h.runtime.runTurn({
       requestId: 'req_img',
       conversationId: '00000000-0000-4000-8000-00000000000e',
@@ -1497,5 +1516,118 @@ describe('tool cục bộ', () => {
     expect(h.confirmations).toHaveLength(0)
     expect(h.writes).toEqual([])
     expect(h.sink.records).toHaveLength(0)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// add-custom-agents — trần tool của agent chỉ thu hẹp
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('add-custom-agents — trần tool của agent', () => {
+  const HOI_GHI = 'Tạo một issue mới trong Jira'
+
+  it('không có agent ⇒ khối tools giữ nguyên như trước (byte-for-byte)', async () => {
+    const truoc = await makeHarness({ script: [{ text: 'ok' }] })
+    await truoc.run({ history: [{ role: 'user', content: HOI_JIRA_READ }] })
+    const voiAll = await makeHarness({ script: [{ text: 'ok' }] })
+    await voiAll.run({
+      history: [{ role: 'user', content: HOI_JIRA_READ }],
+      toolCeiling: 'all',
+    })
+    expect(voiAll.llm.requests[0]?.tools).toEqual(truoc.llm.requests[0]?.tools)
+  })
+
+  it('trần chỉ đọc ⇒ không có tool ghi dù câu hỏi đòi ghi', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({ history: [{ role: 'user', content: HOI_GHI }], toolCeiling: 'jira-read' })
+
+    const names = toolNames(h)
+    expect(names).toContain('jira_get_issue')
+    expect(names).not.toContain('jira_create_issue')
+    expect(names).not.toContain('jira_update_issue')
+  })
+
+  it('trần hẹp hơn lựa chọn của bộ chọn ⇒ dùng trần', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({
+      history: [{ role: 'user', content: 'Đọc bug trong sprint rồi tạo một trang Confluence' }],
+      toolCeiling: 'jira-read',
+    })
+    const names = toolNames(h)
+    expect(names.some((n) => n.startsWith('confluence_'))).toBe(false)
+    expect(names).toContain('jira_get_issue')
+  })
+
+  it('tool meta mở rộng không vượt trần: vòng sau vẫn không có tool ngoài trần', async () => {
+    const h = await makeHarness({
+      script: [{ toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] }, { text: 'xong' }],
+    })
+    await h.run({
+      history: [{ role: 'user', content: HOI_JIRA_READ }],
+      toolCeiling: 'all-read',
+    })
+
+    const sau = toolNames(h, 1)
+    expect(sau).toContain('confluence_get_page')
+    expect(sau).not.toContain('jira_create_issue')
+    expect(sau).not.toContain('confluence_create_page')
+    expect(sau).not.toContain(EXPAND_TOOLS_TOOL_NAME)
+  })
+
+  it('danh mục trả cho model chỉ liệt kê tool trong trần', async () => {
+    const h = await makeHarness({
+      script: [{ toolCalls: [{ name: EXPAND_TOOLS_TOOL_NAME, args: {} }] }, { text: 'xong' }],
+    })
+    await h.run({
+      history: [{ role: 'user', content: HOI_JIRA_READ }],
+      toolCeiling: 'all-read',
+    })
+    const messages = h.llm.requests[1]?.messages ?? []
+    const listing = String(messages[messages.length - 1]?.content)
+    expect(listing).toContain('jira_get_issue')
+    expect(listing).not.toContain('jira_create_issue')
+  })
+
+  it('preset đã bằng trần ⇒ không đưa tool meta vào khối tools', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({
+      history: [{ role: 'user', content: HOI_JIRA_READ }],
+      toolCeiling: 'jira-read',
+    })
+    expect(toolNames(h)).not.toContain(EXPAND_TOOLS_TOOL_NAME)
+  })
+
+  it('model đoán tên tool ngoài trần ⇒ bị từ chối lúc chạy, không xác nhận, không ghi', async () => {
+    const h = await makeHarness({
+      script: [
+        {
+          toolCalls: [
+            {
+              name: 'jira_create_issue',
+              args: { project_key: 'PRJ', summary: 'Lách trần', issue_type: 'Bug' },
+            },
+          ],
+        },
+        { text: 'Mình không có quyền làm việc đó.' },
+      ],
+    })
+    await h.run({
+      history: [{ role: 'user', content: HOI_JIRA_READ }],
+      toolCeiling: 'jira-read',
+    })
+
+    expect(h.confirmations).toHaveLength(0)
+    expect(h.sink.records).toHaveLength(0)
+    const messages = h.llm.requests[1]?.messages ?? []
+    expect(String(messages[messages.length - 1]?.content)).toContain('không được phép')
+  })
+
+  it('agentInstructions đi vào system message của request gửi model', async () => {
+    const h = await makeHarness({ script: [{ text: 'ok' }] })
+    await h.run({ agentInstructions: 'Hãy xưng là Trợ lý BA.' })
+
+    const system = String(h.llm.requests[0]?.messages[0]?.content)
+    expect(system.startsWith('Bạn là Nexa')).toBe(true)
+    expect(system).toContain('Hãy xưng là Trợ lý BA.')
   })
 })

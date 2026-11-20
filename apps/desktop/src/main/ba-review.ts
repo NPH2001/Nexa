@@ -328,16 +328,15 @@ function toFindingView(finding: Finding): BaFindingView {
  * ba tháng trước phải được đọc bằng đúng bộ luật đã chạy nó. Tra hụt pack thì vẫn dựng được danh
  * sách từ chính finding và phần bị bỏ qua — mất phần mô tả, không mất phần sự thật.
  */
-export function toReportView(
-  review: BaReview,
-  previous: BaReview | null,
-): BaReviewReportView {
+export function toReportView(review: BaReview, previous: BaReview | null): BaReviewReportView {
   const pack: RulePack | null = findRulePack(review.rulePackId, review.rulePackVersion)
   const countByRule = new Map<string, number>()
   for (const finding of review.findings) {
     countByRule.set(finding.ruleId, (countByRule.get(finding.ruleId) ?? 0) + 1)
   }
-  const skipped = new Map(review.skippedRules.map((entry) => [entry.ruleId, entry.missing] as const))
+  const skipped = new Map(
+    review.skippedRules.map((entry) => [entry.ruleId, entry.missing] as const),
+  )
 
   const ruleIds =
     pack !== null

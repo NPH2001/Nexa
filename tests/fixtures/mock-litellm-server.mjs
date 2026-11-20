@@ -11,13 +11,33 @@
  * In ra stdout đúng một dòng `LISTENING <port>` để tiến trình cha đọc được cổng.
  *
  * Kịch bản qua env `MOCK_SCENARIO`: ok | no-models-endpoint | auth-failed | tool-call |
- *                                   commitment-tool | slow | length | vision
+ *                                   commitment-tool | slow | length | vision | file-block
  */
 
 import { createServer } from 'node:http'
 import { stdout, env, exit } from 'node:process'
 
 const scenario = env.MOCK_SCENARIO ?? 'ok'
+
+/**
+ * `file-block`: câu trả lời có một fence drawio (openspec add-generated-file-download).
+ * Khớp `DRAWIO_SAMPLE` trong tests/e2e/app.e2e.ts — E2E so file trên đĩa với đúng chuỗi này.
+ * Có chữ có dấu để bắt lỗi encoding khi ghi file.
+ */
+const DRAWIO_SAMPLE = [
+  '<mxfile host="Nexa E2E">',
+  '  <diagram name="Đăng nhập">',
+  '    <mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>',
+  '  </diagram>',
+  '</mxfile>',
+].join('\n')
+const FILE_BLOCK_REPLY = [
+  'Đây là sơ đồ luồng đăng nhập:',
+  '```drawio filename=luong-dang-nhap.drawio',
+  DRAWIO_SAMPLE,
+  '```',
+  'Mở bằng draw.io để chỉnh tiếp.',
+].join('\n')
 /** Ghi lại mọi request để test khẳng định được cả những gì KHÔNG được gửi. */
 const received = []
 
@@ -257,6 +277,11 @@ const server = createServer((req, res) => {
             `CO-ANH ${mediaType} ${String(bytes.length)}B ${leaked ? 'CON-METADATA' : 'DA-GO-METADATA'}`,
           ),
         )
+        return
+      }
+
+      if (scenario === 'file-block') {
+        sse(res, textStream(FILE_BLOCK_REPLY))
         return
       }
 

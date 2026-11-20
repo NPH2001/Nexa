@@ -4,10 +4,12 @@ import {
   ERROR_CODES,
   NEXA_EVENTS,
   NexaError,
+  type Agent,
   type ChatSendInput,
   type ConfirmationRequest,
 } from '@nexa/shared-types'
 import { Logger, MemorySink } from '@nexa/observability'
+import { COMMITMENT_CREATE_TOOL } from './commitment-tools.js'
 import type { NexaServices } from './services.js'
 
 interface RuntimeDependencies {
@@ -39,6 +41,7 @@ const runtimeMock = vi.hoisted(() => ({
 
 vi.mock('@nexa/agent-runtime', () => ({
   MAX_COMMITMENTS_IN_CONTEXT: 10,
+  MAX_BA_KNOWLEDGE_IN_CONTEXT: 10,
   AgentRuntime: class {
     constructor(deps: RuntimeDependencies) {
       runtimeMock.deps = deps
@@ -78,7 +81,7 @@ interface Harness {
   }
 }
 
-function makeHarness(): Harness {
+function makeHarness(opts: { agent?: Agent } = {}): Harness {
   const auditRecord = vi.fn()
   const activityRecord = vi.fn()
   const appendMessage = vi.fn((input: { role: string }) => ({
@@ -115,6 +118,7 @@ function makeHarness(): Harness {
         id: CONVERSATION_ID,
         modelId: 'model-a',
         modelProvider: 'litellm',
+        agentId: opts.agent?.id ?? null,
       })),
       setModel,
       appendMessage,
@@ -136,6 +140,13 @@ function makeHarness(): Harness {
       })),
     },
     settings: { get: vi.fn(() => DEFAULT_APP_SETTINGS) },
+    agents: { get: vi.fn(() => opts.agent ?? null) },
+    // Chỉ để dựng được registry BA khi test bật cờ; không test nào gọi tool BA ở đây.
+    baKnowledge: { listForContext: vi.fn(() => []), recordUsage: vi.fn() },
+    baDocuments: {},
+    baStandards: { templates: {} },
+    baExtraction: { run: vi.fn() },
+    baReview: { run: vi.fn() },
     memory: { listForContext: listMemoryForContext },
     commitments: { listForContext: listCommitmentsForContext },
     documents: { process: processDocuments },
@@ -181,6 +192,24 @@ function makeHarness(): Harness {
       chatGptRunTurn,
       sendToRenderer,
     },
+  }
+}
+
+function makeAgent(over: Partial<Agent> = {}): Agent {
+  return {
+    id: '00000000-0000-4000-8000-0000000000a1',
+    profileId: 'profile-1',
+    name: 'Trợ lý BA',
+    icon: '📝',
+    instructions: 'Luôn trả lời bằng bảng.',
+    toolCeiling: 'redmine-read',
+    localGroups: { commitments: true, baWorkbench: true },
+    modelId: null,
+    modelProvider: null,
+    archived: false,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+    ...over,
   }
 }
 
@@ -839,5 +868,118 @@ describe('ảnh không bao giờ được lưu', () => {
     for (const [call] of h.mocks.addAttachment.mock.calls) {
       expect(call.extractedText).toBeNull()
     }
+  })
+})
+
+describe('add-custom-agents — ghép agent vào lượt chat', () => {
+  const toolSettings = {
+    ...DEFAULT_APP_SETTINGS,
+    agentCommitmentToolsEnabled: true,
+    features: { ...DEFAULT_APP_SETTINGS.features, baWorkbench: true },
+  }
+  const localToolNames = (): string[] => {
+    const registry = runtimeMock.deps?.localTools as { list(): { name: string }[] } | null
+    return registry?.list().map((d) => d.name) ?? []
+  }
+  const sendAndWait = async (h: Harness): Promise<void> => {
+    runtimeMock.runTurn.mockResolvedValueOnce({ text: 'ok', truncatedContextCount: 0 })
+    await h.controller.send(input())
+    await vi.waitFor(() => expect(runtimeMock.runTurn).toHaveBeenCalledOnce())
+  }
+
+  it('hội thoại không có agent ⇒ runtime không nhận hướng dẫn hay trần', async () => {
+    const h = makeHarness()
+    await sendAndWait(h)
+
+    const turn = runtimeMock.runTurn.mock.calls[0]?.[0]
+    expect(turn).not.toHaveProperty('agentInstructions')
+    expect(turn).not.toHaveProperty('toolCeiling')
+  })
+
+  it('truyền hướng dẫn và trần của agent vào runtime', async () => {
+    const h = makeHarness({ agent: makeAgent() })
+    await sendAndWait(h)
+
+    expect(runtimeMock.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentInstructions: 'Luôn trả lời bằng bảng.',
+        toolCeiling: 'redmine-read',
+      }),
+    )
+  })
+
+  it('agent của profile khác bị bỏ qua ⇒ chạy persona mặc định', async () => {
+    const h = makeHarness({ agent: makeAgent({ profileId: 'profile-khac' }) })
+    await sendAndWait(h)
+
+    const turn = runtimeMock.runTurn.mock.calls[0]?.[0]
+    expect(turn).not.toHaveProperty('agentInstructions')
+    expect(turn).not.toHaveProperty('toolCeiling')
+  })
+
+  it('agent đã archive vẫn được dùng cho hội thoại đã gắn nó', async () => {
+    const h = makeHarness({ agent: makeAgent({ archived: true }) })
+    await sendAndWait(h)
+
+    expect(runtimeMock.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCeiling: 'redmine-read' }),
+    )
+  })
+
+  it('không agent: tool cục bộ theo đúng setting toàn cục', async () => {
+    const h = makeHarness()
+    vi.mocked(h.services.settings.get).mockReturnValue(toolSettings)
+    await sendAndWait(h)
+
+    const names = localToolNames()
+    expect(names.some((n) => n === COMMITMENT_CREATE_TOOL)).toBe(true)
+    expect(names.length).toBeGreaterThan(1)
+  })
+
+  it('agent tắt nhóm cam kết ⇒ tool cam kết biến mất dù setting bật', async () => {
+    const h = makeHarness({
+      agent: makeAgent({ localGroups: { commitments: false, baWorkbench: true } }),
+    })
+    vi.mocked(h.services.settings.get).mockReturnValue(toolSettings)
+    await sendAndWait(h)
+
+    const names = localToolNames()
+    expect(names.some((n) => n === COMMITMENT_CREATE_TOOL)).toBe(false)
+    expect(names.length).toBeGreaterThan(0)
+  })
+
+  it('agent tắt cả hai nhóm ⇒ không có registry cục bộ', async () => {
+    const h = makeHarness({
+      agent: makeAgent({ localGroups: { commitments: false, baWorkbench: false } }),
+    })
+    vi.mocked(h.services.settings.get).mockReturnValue(toolSettings)
+    await sendAndWait(h)
+
+    expect(runtimeMock.deps?.localTools).toBeNull()
+  })
+
+  it('agent bật nhóm nhưng setting toàn cục tắt ⇒ vẫn không có tool (không nới quyền)', async () => {
+    const h = makeHarness({
+      agent: makeAgent({ localGroups: { commitments: true, baWorkbench: true } }),
+    })
+    // DEFAULT_APP_SETTINGS: agentCommitmentToolsEnabled = false, baWorkbench = false.
+    await sendAndWait(h)
+
+    expect(runtimeMock.deps?.localTools).toBeNull()
+  })
+
+  it('model ChatGPT nhận hướng dẫn agent', async () => {
+    const h = makeHarness({ agent: makeAgent() })
+    h.mocks.chatGptRunTurn.mockImplementationOnce(
+      async (turn: { onDelta(delta: string): void }) => {
+        turn.onDelta('ok')
+      },
+    )
+    await h.controller.send({ ...input(), modelId: 'gpt-5.6-sol', modelProvider: 'chatgpt' })
+
+    await vi.waitFor(() => expect(h.mocks.chatGptRunTurn).toHaveBeenCalledOnce())
+    expect(h.mocks.chatGptRunTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ agentInstructions: 'Luôn trả lời bằng bảng.' }),
+    )
   })
 })

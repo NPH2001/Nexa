@@ -61,9 +61,12 @@ const PREVIEW_CTX = { actingAccount: 'profile-hiện-tại' }
 describe('commitment tools', () => {
   it('exposes exactly the create and update tools — no delete', () => {
     const { registry } = setup()
-    expect(registry.list().map((t) => t.name).sort()).toEqual(
-      [COMMITMENT_CREATE_TOOL, COMMITMENT_UPDATE_TOOL].sort(),
-    )
+    expect(
+      registry
+        .list()
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual([COMMITMENT_CREATE_TOOL, COMMITMENT_UPDATE_TOOL].sort())
   })
 
   it('creates an agent-attributed commitment bound to the source conversation', async () => {

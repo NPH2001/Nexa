@@ -1,3 +1,5 @@
+> **Cập nhật:** nguồn issue của bản tin đã chuyển từ Jira sang Redmine (change `switch-briefing-to-redmine`). Các đoạn nhắc Jira và sprint bên dưới là bối cảnh lịch sử; hành vi hiện hành nằm ở change đó.
+
 ## Context
 
 Nexa đã có đủ mảnh ghép nhưng chưa ghép: `CommitmentRepository` giữ cam kết đã mã hoá kèm
@@ -68,9 +70,15 @@ cái người dùng thấy trên đồng hồ. `now` và timezone offset đượ
 
 ### 4. Jira: đúng một lời gọi `jira_search`, JQL do code dựng
 
-Main dựng JQL cố định dạng `assignee = currentUser() AND resolution = EMPTY ORDER BY duedate ASC`
-với `limit` trong trần của tool (tối đa 50). Người dùng không nhập JQL, model không sinh JQL,
-renderer gửi JQL cũng bị bỏ qua.
+Main dựng JQL cố định dạng `assignee = currentUser() AND resolution = EMPTY AND statusCategory !=
+Done ORDER BY duedate ASC` với `limit` trong trần của tool (tối đa 50). Người dùng không nhập JQL,
+model không sinh JQL, renderer gửi JQL cũng bị bỏ qua.
+
+Hai vế "đã xong" chứ không một: `resolution = EMPTY` bỏ việc đã có kết luận, còn `statusCategory !=
+Done` bỏ việc đã sang cột cuối (Done/Closed) mà workflow không đặt resolution — trường hợp rất hay
+gặp với board tự dựng. Lọc theo `statusCategory` thay vì viết thẳng `status NOT IN (Done, Closed)`:
+tên trạng thái khác nhau giữa các project, và một tên không tồn tại trên instance sẽ làm lỗi cả câu
+truy vấn, tức là mất luôn nguồn Jira của bản tin.
 
 Vì sao một lời gọi: `jira_get_issue_dates`/`jira_get_issue_sla` là per-issue, N issue thành N lời
 gọi và biến việc mở Today thành một cơn bão request. `jira_search` đã trả về đủ key, summary,

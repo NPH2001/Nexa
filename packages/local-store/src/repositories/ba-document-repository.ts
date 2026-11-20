@@ -139,7 +139,9 @@ export class BaDocumentRepository {
       params.push(this.store.nowIso())
       params.push(id)
 
-      this.store.handle.prepare(`UPDATE ba_documents SET ${updates.join(', ')} WHERE id = ?`).run(...params)
+      this.store.handle
+        .prepare(`UPDATE ba_documents SET ${updates.join(', ')} WHERE id = ?`)
+        .run(...params)
       this.store.log.info('ba-document-updated', { documentId: id, profileId: current.profileId })
       return this.getOrThrow(id)
     })
@@ -272,7 +274,9 @@ export class BaDocumentRepository {
   /** Số item còn cần soát — đếm được mà không phải giải mã gì (D4). */
   countNeedsReview(documentId: string): number {
     const row = this.store.handle
-      .prepare('SELECT COUNT(*) AS total FROM ba_doc_items WHERE document_id = ? AND needs_review = 1')
+      .prepare(
+        'SELECT COUNT(*) AS total FROM ba_doc_items WHERE document_id = ? AND needs_review = 1',
+      )
       .get(documentId)
     return Number(row?.['total'] ?? 0)
   }

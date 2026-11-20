@@ -113,9 +113,8 @@ export class AuditRepository {
 
   /** Dọn theo `logRetentionDays` (§8.3). */
   pruneOlderThan(cutoffIso: string): number {
-    return this.store.handle
-      .prepare('DELETE FROM local_audit WHERE created_at < ?')
-      .run(cutoffIso).changes
+    return this.store.handle.prepare('DELETE FROM local_audit WHERE created_at < ?').run(cutoffIso)
+      .changes
   }
 }
 

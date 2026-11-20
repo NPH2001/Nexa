@@ -1,8 +1,26 @@
-import { BrowserWindow, session, shell } from 'electron'
+import { BrowserWindow, nativeTheme, session, shell } from 'electron'
 import { matchesAllowlist } from '@nexa/security'
+import type { ThemePreference } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
 
 const LOCAL_RENDERER_ORIGIN = 'nexa://app'
+
+/**
+ * Màu nền của chính cửa sổ: thứ hiện ra trước khi renderer vẽ xong, và thứ lộ ra ở viền khi
+ * người dùng kéo giãn cửa sổ. Phải khớp `--bg` của đúng chủ đề trong `styles.css` — lệch nhau là
+ * mỗi lần mở app ở chủ đề tối đều loé sáng một nhịp.
+ */
+const WINDOW_BACKGROUND: Record<'light' | 'dark', string> = {
+  light: '#f5f9fe',
+  dark: '#0d1220',
+}
+
+export function windowBackgroundColor(preference: ThemePreference): string {
+  if (preference === 'system') {
+    return WINDOW_BACKGROUND[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
+  }
+  return WINDOW_BACKGROUND[preference]
+}
 
 /**
  * §5.3 — nguyên tắc IPC/renderer:
@@ -21,6 +39,7 @@ export interface WindowOptions {
   readonly logger: Logger
   readonly allowedDomains: readonly string[]
   readonly isDevelopment: boolean
+  readonly theme: ThemePreference
 }
 
 const CSP_PRODUCTION = [
@@ -59,7 +78,7 @@ export function createMainWindow(opts: WindowOptions): BrowserWindow {
     minWidth: 520,
     minHeight: 520,
     show: false,
-    backgroundColor: '#f5f9fe',
+    backgroundColor: windowBackgroundColor(opts.theme),
     title: 'Nexa',
     webPreferences: {
       preload: opts.preloadPath,

@@ -4,7 +4,7 @@
 > từ bên ngoài (admin LiteLLM, admin Atlassian, ATTT).
 > Mỗi mục có: câu hỏi → **giả định tôi đã dùng để code** → chỗ cần sửa nếu bạn quyết khác.
 >
-> Cập nhật lần cuối: 2026-08-30 (bộ luật kiểm tài liệu BA và hợp đồng ảnh nội bộ — mục I)
+> Cập nhật lần cuối: 2026-09-03 (tải xuống file do model sinh ra — mục L)
 
 ## Cách đọc
 
@@ -974,8 +974,8 @@ mục có mốc thời gian, không quan tâm mục đến từ đâu.
 
 ### K2. 🟠 `duedate` trống trên diện rộng sẽ làm bản tin loãng
 
-**Bối cảnh:** JQL của bản tin là `assignee = currentUser() AND resolution = EMPTY`, và việc chia
-nhóm dựa vào `duedate`. Nhiều team Jira không điền trường này bao giờ.
+**Bối cảnh:** JQL của bản tin là `assignee = currentUser() AND resolution = EMPTY AND
+statusCategory != Done`, và việc chia nhóm dựa vào `duedate`. Nhiều team Jira không điền trường này bao giờ.
 
 **Hậu quả:** mọi issue rơi hết vào nhóm "Đang làm", nhóm "Quá hạn"/"Đến hạn hôm nay" chỉ còn cam
 kết cục bộ, và bản tin trở thành một danh sách backlog thay vì một bản tin. v1 giảm nhẹ bằng cách
@@ -997,3 +997,68 @@ phép provider ngoài khi người dùng đã bật chia sẻ như memory? Lập
 và đổi sang cái lỏng hơn phải là một quyết định có người chịu trách nhiệm.
 
 **Sửa ở đâu:** `apps/desktop/src/main/briefing-summary.ts`, đúng một nhánh `isExternalProvider`.
+
+## L. Tải xuống file do model sinh ra (2026-09-03, openspec `add-generated-file-download`)
+
+### L1. 🟠 File nhị phân ở v2: PNG, XLSX, PDF có được ghi không?
+
+**Bối cảnh:** v1 chỉ ghi văn bản UTF-8 và giữ một allowlist danh sách trắng gồm 13 định dạng. Lý do
+là không có đường nào từ "chuỗi ký tự model sinh ra" tới một file chạy được. Nhưng yêu cầu tiếp
+theo gần như chắc chắn sẽ là "xuất luôn PNG của sơ đồ" hoặc "xuất bảng ra XLSX".
+
+**Hai câu cần trả lời trước khi mở:** (a) nội dung nhị phân phải đi qua `message.content` dưới dạng
+base64, làm phồng cả DB đã mã hoá lẫn context của các lượt sau — mức phồng đó có chấp nhận được
+không, hay cần một bảng riêng cho artifact? (b) ai chịu trách nhiệm khi một file nhị phân do model
+sinh ra được mở bằng một ứng dụng có lỗ hổng? Với văn bản, câu hỏi này không tồn tại.
+
+**Sửa ở đâu nếu mở:** `FILE_BLOCK_FORMATS` trong `packages/shared-types/src/file-blocks.ts`, cộng
+một nhánh ghi `Buffer.from(content, 'base64')` trong `apps/desktop/src/main/file-writer.ts`.
+
+### L2. 🟡 Nút "Sao chép" có đáng mở quyền clipboard cho renderer không?
+
+**Bối cảnh:** thẻ file hiện chỉ có "Tải xuống" và "Xem nội dung". Không có "Sao chép" vì
+`setPermissionCheckHandler(() => false)` trong `apps/desktop/src/main/window.ts` chặn mọi quyền web
+của renderer, kể cả clipboard — nên việc này cần một channel IPC riêng chứ không phải một dòng
+`navigator.clipboard.writeText`.
+
+**Câu hỏi cần ATTT:** mở một channel `clipboard:write` (main ghi, renderer chỉ gửi nội dung) có
+được coi là mở rộng bề mặt đáng kể không? Rẻ về mã, nhưng nó là quyền mới.
+
+### L3. 🟡 `html` có bao giờ được vào allowlist?
+
+**Bối cảnh:** `svg` được nhận, `html` thì không. Ranh giới là "Nexa có mời người dùng mở file này
+không" — và một `.html` là thứ người dùng gần như chắc chắn sẽ bấm đúp để mở, tức là chạy script do
+model sinh ra trong browser của họ.
+
+**Câu hỏi cần Product owner:** có ca dùng thật nào mà `.md` không giải quyết được? Nếu không, giữ
+nguyên và đóng câu hỏi này.
+
+## M. Kết nối Redmine và XWiki (2026-11-17, openspec `add-redmine-xwiki-connectors`, ADR 0010)
+
+### M1. 🟠 Quyền ghi Redmine/XWiki mặc định bật
+
+**Bối cảnh:** `redmineWrite`, `redmineUpdate` và `xwikiWrite` mặc định **bật**, để thống nhất với
+G1 ("full quyền"). Mọi lời gọi ghi vẫn phải qua preview và xác nhận. Ngược lại, `baWorkbench` và
+`proactiveCheckInsEnabled` mặc định tắt vì là bề mặt mới. Redmine/XWiki cũng là bề mặt mới.
+
+**Câu hỏi cần Product owner/ATTT:** giữ mặc định bật, hay tắt `xwikiWrite` (ghi đè cả trang) và
+`redmineUpdate` cho tới khi có phản hồi từ người dùng thử? IT đã khoá được cả hai qua
+`forcedFeatures` mà không phải build lại.
+
+### M2. 🟡 Link issue Redmine do Nexa tự dựng
+
+**Bối cảnh:** tool Redmine không trả URL nào (đã kiểm với server thật). Nexa dựng link
+`<URL Redmine đã cấu hình>/issues/<id>`. Nếu người dùng nhập sai URL web Redmine, link sẽ sai, còn
+tool vẫn chạy đúng vì transport đi qua gateway.
+
+**Câu hỏi:** có cần kiểm URL web Redmine lúc lưu (ví dụ gọi `<url>/issues.json?limit=1`) không? Làm
+vậy là mở thêm một chặng mạng trực tiếp từ Nexa tới Redmine, thứ hiện không tồn tại.
+
+### M3. 🟡 Từ chung "task"/"trang" khi tổ chức dùng cả Jira lẫn Redmine
+
+**Bối cảnh:** khi cả hai hệ thống đều khả dụng, câu "liệt kê task của tôi" không gọi tên hệ thống
+nào, nên bộ chọn rơi về `all-read` (gửi tool của cả bốn hệ thống). Kết quả vẫn đúng, nhưng tốn
+token hơn preset hẹp.
+
+**Câu hỏi:** có nên cho người dùng chọn "hệ thống issue mặc định" trong Cài đặt không? Nếu làm, đó
+là một cấu hình, không phải preset mới, nên tập preset của ADR 0009 vẫn giữ nguyên.

@@ -51,7 +51,10 @@ export interface BaToolDeps {
   /** Bộ mẫu chuẩn do IT phân phối. Rỗng nghĩa là tool soạn-theo-mẫu không có gì để chọn. */
   readonly templates: readonly BaTemplate[]
   /** Chạy đúng job trích xuất mà màn hình Nghiệp vụ dùng — không có đường thứ hai (D4). */
-  readonly extract: (documentId: string, sourceText: string) => Promise<{ itemCount: number; needsReviewCount: number; cached: boolean }>
+  readonly extract: (
+    documentId: string,
+    sourceText: string,
+  ) => Promise<{ itemCount: number; needsReviewCount: number; cached: boolean }>
   /** Chạy đúng bộ luật mà màn hình Nghiệp vụ dùng. Hàm thuần bên dưới, không gọi model. */
   readonly review: (documentId: string) => BaReviewReportView
   readonly logger: Logger
@@ -214,9 +217,7 @@ export function createBaToolRegistry(deps: BaToolDeps): LocalToolRegistry {
       const { document, template } = requireDocumentAndTemplate(deps, input)
       const evaluation = evaluateTemplate(deps.documents.readModel(document.id), template)
       const missing =
-        evaluation.missingRequired.length === 0
-          ? 'không có'
-          : evaluation.missingRequired.join(', ')
+        evaluation.missingRequired.length === 0 ? 'không có' : evaluation.missingRequired.join(', ')
 
       return Promise.resolve(
         localPreview({
@@ -398,7 +399,9 @@ function searchKnowledge(deps: BaToolDeps, question: string): ToolResultSummary 
   // Đếm lượt dùng: đây là nguồn của thống kê "tri thức chết" trong màn hình Nghiệp vụ.
   deps.knowledge.recordUsage(ranked.map((entry) => entry.item.id))
 
-  const lines = ranked.map((entry) => `- [${entry.item.category}] ${entry.item.title}: ${entry.item.body}`)
+  const lines = ranked.map(
+    (entry) => `- [${entry.item.category}] ${entry.item.title}: ${entry.item.body}`,
+  )
   return {
     forModel: `Tri thức nghiệp vụ đã xác nhận, liên quan nhất trước:\n${lines.join('\n')}`,
     forUser: `Đã tra ${String(ranked.length)} mục tri thức đã xác nhận.`,

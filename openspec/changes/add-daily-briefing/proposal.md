@@ -1,3 +1,5 @@
+> **Cập nhật:** nguồn issue của bản tin đã chuyển từ Jira sang Redmine (change `switch-briefing-to-redmine`). Các đoạn nhắc Jira và sprint bên dưới là bối cảnh lịch sử; hành vi hiện hành nằm ở change đó.
+
 ## Why
 
 Today đã hiển thị commitment và check-in, nhưng người dùng mở máy buổi sáng vẫn phải tự ghép ba

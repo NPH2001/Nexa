@@ -100,14 +100,11 @@ describe('resolveCommitmentTimestamp', () => {
     expect(local(resolveCommitmentTimestamp('tháng sau', lateDecember))).toBe('2027-01-30 17:00')
   })
 
-  it.each([
-    'khi nào rảnh',
-    'sớm thôi',
-    '',
-    'ngày 32 tháng 9',
-    '25h',
-  ])('refuses to guess for %s', (input) => {
-    // Fail-closed: model phải hỏi lại người dùng, không được để hệ thống chọn đại một mốc.
-    expect(() => resolveCommitmentTimestamp(input, NOW)).toThrow()
-  })
+  it.each(['khi nào rảnh', 'sớm thôi', '', 'ngày 32 tháng 9', '25h'])(
+    'refuses to guess for %s',
+    (input) => {
+      // Fail-closed: model phải hỏi lại người dùng, không được để hệ thống chọn đại một mốc.
+      expect(() => resolveCommitmentTimestamp(input, NOW)).toThrow()
+    },
+  )
 })

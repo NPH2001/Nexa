@@ -43,6 +43,22 @@ export function describeBriefingReason(reason: BriefingReasonView): string {
   return `Còn ${String(days)} ngày`
 }
 
+/**
+ * Ngày hết hạn, nói bằng mốc tuyệt đối.
+ *
+ * Bổ cho `describeBriefingReason`: câu kia nói khoảng cách ("Quá hạn 3 ngày"), câu này nói chính
+ * xác ngày nào — người dùng cần cả hai để xếp việc trong tuần.
+ *
+ * `null` khi mục chưa đặt hạn, để giao diện im lặng thay vì hiện một nhãn hạn rỗng. Không suy ra
+ * hạn từ `at`: với cam kết `at` có thể đang là lịch check-in.
+ */
+export function formatBriefingDueDate(item: BriefingItemView): string | null {
+  if (item.dueAt === null) return null
+  const date = new Date(item.dueAt)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 export interface BriefingSourceNotice {
   readonly tone: 'info' | 'warning'
   readonly message: string
@@ -61,7 +77,7 @@ export function describeBriefingSource(
 ): BriefingSourceNotice | null {
   if (source.status === 'ok') return null
 
-  const what = source.source === 'jira' ? 'Jira' : 'cam kết'
+  const what = source.source === 'redmine' ? 'Redmine' : 'cam kết'
 
   const notices: Readonly<Record<BriefingSourceStatusName, BriefingSourceNotice | null>> = {
     ok: null,
@@ -108,5 +124,5 @@ export function formatBriefingTimestamp(iso: string): string {
 }
 
 export function briefingItemKicker(item: BriefingItemView): string {
-  return item.source === 'jira' ? (item.reference ?? 'Jira') : 'Cam kết'
+  return item.source === 'redmine' ? (item.reference ?? 'Redmine') : 'Cam kết'
 }

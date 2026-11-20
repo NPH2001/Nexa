@@ -8,7 +8,10 @@ import {
   type BaKnowledgeContextItem,
 } from './index.js'
 
-function item(index: number, overrides: Partial<BaKnowledgeContextItem> = {}): BaKnowledgeContextItem {
+function item(
+  index: number,
+  overrides: Partial<BaKnowledgeContextItem> = {},
+): BaKnowledgeContextItem {
   return {
     title: `Quy tắc ${index}`,
     body: `Nội dung quy tắc số ${index}`,

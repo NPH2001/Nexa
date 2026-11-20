@@ -14,12 +14,23 @@ export type UiIconName =
   | 'globe'
   | 'building'
   | 'chevron'
+  | 'arrowLeft'
   | 'close'
   | 'stop'
   | 'file'
   | 'check'
+  | 'sun'
+  | 'moon'
+  | 'monitor'
+  | 'agent'
 
 const paths: Record<UiIconName, React.ReactNode> = {
+  agent: (
+    <>
+      <rect x="5" y="8" width="14" height="11" rx="2.5" />
+      <path d="M12 4v4M9 13h.01M15 13h.01M9.5 16.5h5" />
+    </>
+  ),
   home: (
     <>
       <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" />
@@ -88,6 +99,7 @@ const paths: Record<UiIconName, React.ReactNode> = {
     </>
   ),
   chevron: <path d="m6 9 6 6 6-6" />,
+  arrowLeft: <path d="M19 12H5m6-6-6 6 6 6" />,
   close: <path d="m6 6 12 12M6 18 18 6" />,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   file: (
@@ -96,6 +108,19 @@ const paths: Record<UiIconName, React.ReactNode> = {
     </>
   ),
   check: <path d="m5 12 4 4L19 6" />,
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 2v2.4m0 15.2V22M2 12h2.4m15.2 0H22M4.9 4.9l1.7 1.7m10.8 10.8 1.7 1.7m0-14.2-1.7 1.7M6.6 17.4l-1.7 1.7" />
+    </>
+  ),
+  moon: <path d="M20.5 14.6A8.6 8.6 0 1 1 9.4 3.5a7.1 7.1 0 0 0 11.1 11.1Z" />,
+  monitor: (
+    <>
+      <rect x="2.5" y="4" width="19" height="12.5" rx="2" />
+      <path d="M9 20.5h6m-3-4v4" />
+    </>
+  ),
 }
 
 export function UiIcon({

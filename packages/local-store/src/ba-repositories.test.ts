@@ -259,7 +259,9 @@ describe('tài liệu BA', () => {
     const model = repo.readModel(document.id)
 
     expect(model.items.map((item) => item.id).sort()).toEqual(['e-1', 'uc-1'])
-    expect(model.links).toEqual([{ from: 'uc-1', to: 'e-1', kind: 'raises', label: 'khi giỏ rỗng' }])
+    expect(model.links).toEqual([
+      { from: 'uc-1', to: 'e-1', kind: 'raises', label: 'khi giỏ rỗng' },
+    ])
   })
 
   it('mã hoá payload item — mã lỗi không đọc được trong file DB', () => {
@@ -283,9 +285,7 @@ describe('tài liệu BA', () => {
     repo.replaceModel(document.id, { items: [], links: [] })
 
     expect(repo.readModel(document.id).items).toEqual([])
-    expect(
-      ctx.store.handle.prepare('SELECT COUNT(*) AS c FROM ba_doc_links').get()?.['c'],
-    ).toBe(0)
+    expect(ctx.store.handle.prepare('SELECT COUNT(*) AS c FROM ba_doc_links').get()?.['c']).toBe(0)
   })
 
   it('từ chối link trỏ tới item ngoài mô hình', () => {
@@ -333,7 +333,9 @@ describe('tài liệu BA', () => {
     })
     repo.replaceModel(document.id, { items: [flagged], links: [] })
 
-    const row = ctx.store.handle.prepare('SELECT needs_review FROM ba_doc_items WHERE id = ?').get('r-1')
+    const row = ctx.store.handle
+      .prepare('SELECT needs_review FROM ba_doc_items WHERE id = ?')
+      .get('r-1')
     expect(Number(row?.['needs_review'])).toBe(1)
     expect(repo.readModel(document.id).items[0]?.needsReview).toBe(true)
   })

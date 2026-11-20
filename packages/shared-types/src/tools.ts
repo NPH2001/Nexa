@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { RiskLevel, ToolPreview } from './domain.js'
+import type { McpTargetSystem, RiskLevel, ToolPreview } from './domain.js'
 import type { FeatureFlags } from './settings.js'
 
 /**
@@ -14,7 +14,7 @@ export interface ToolDefinition<TInput = unknown> {
   readonly name: string
   /** Tên tool thật trên MCP server. Có thể khác `name` nếu package đổi quy ước. */
   readonly mcpToolName: string
-  readonly targetSystem: 'jira' | 'confluence'
+  readonly targetSystem: McpTargetSystem
   readonly riskLevel: RiskLevel
   /** Mô tả gửi cho LLM (tiếng Việt — người dùng và prompt đều tiếng Việt). */
   readonly description: string
@@ -23,6 +23,15 @@ export interface ToolDefinition<TInput = unknown> {
   readonly jsonSchema: Record<string, unknown>
   /** Feature flag phải bật thì tool mới khả dụng. */
   readonly requiredFeature: keyof FeatureFlags
+  /**
+   * Chốt payload cuối cùng cho tool ghi, chạy TRƯỚC `buildPreview` (ADR 0010).
+   *
+   * Dùng khi payload thực thi phải mang một giá trị chỉ đọc được từ hệ thống đích — ví dụ
+   * `base_version` của trang XWiki, để một trang bị người khác sửa trong lúc chờ xác nhận bị server
+   * từ chối thay vì ghi đè lặng lẽ. Payload trả về được validate lại theo `inputSchema`, và chính
+   * nó được xem trước, băm vào approval (ADR-0007) và thực thi.
+   */
+  readonly prepareWrite?: (input: TInput, ctx: PreviewContext) => Promise<TInput>
   /** Sinh preview cho tool write (§10.2). Bắt buộc với mọi risk khác READ. */
   readonly buildPreview?: (input: TInput, ctx: PreviewContext) => Promise<ToolPreview>
   /**
@@ -111,12 +120,22 @@ export function isWriteRisk(level: RiskLevel): boolean {
  * Vì sao là một danh sách ĐÓNG và không phải "chọn đúng tool liên quan tới câu hỏi này":
  * khối `tools` nằm ở đầu request, nên nó là prefix của prompt. Một tập tool khác nhau cho mỗi
  * câu hỏi nghĩa là một prefix mới mỗi lần ⇒ prompt cache luôn miss, và việc lọc có thể thành
- * LỖ RÒNG so với gửi cả 98 tool nhưng cache được. Sáu preset = sáu prefix khả dĩ, biết trước.
+ * LỖ RÒNG so với gửi cả 98 tool nhưng cache được. Mười preset = mười prefix khả dĩ, biết trước
+ * (sáu preset gốc của ADR 0009, cộng bốn preset Redmine/XWiki — ADR 0010).
  *
  * ĐỪNG biến cái này thành động. Xem `docs/architecture/adr/0009-tool-preset-scoping.md`.
  */
 export type ToolPreset =
-  'jira-read' | 'jira-full' | 'confluence-read' | 'confluence-full' | 'all-read' | 'all'
+  | 'jira-read'
+  | 'jira-full'
+  | 'confluence-read'
+  | 'confluence-full'
+  | 'redmine-read'
+  | 'redmine-full'
+  | 'xwiki-read'
+  | 'xwiki-full'
+  | 'all-read'
+  | 'all'
 
 const JIRA_READ_FLAGS = ['jiraRead', 'jiraSearch'] as const
 const JIRA_WRITE_FLAGS = [
@@ -129,6 +148,10 @@ const JIRA_WRITE_FLAGS = [
 ] as const
 const CONFLUENCE_READ_FLAGS = ['confluenceRead', 'confluenceSearch'] as const
 const CONFLUENCE_WRITE_FLAGS = ['confluenceWrite', 'confluenceWriteHigh'] as const
+const REDMINE_READ_FLAGS = ['redmineRead'] as const
+const REDMINE_WRITE_FLAGS = ['redmineWrite', 'redmineUpdate'] as const
+const XWIKI_READ_FLAGS = ['xwikiRead'] as const
+const XWIKI_WRITE_FLAGS = ['xwikiWrite'] as const
 
 /**
  * Preset → tập feature flag của nó. Preset là HỢP của các nhóm cờ đã có, không phải một trục
@@ -143,12 +166,25 @@ export const TOOL_PRESET_FLAGS: Readonly<Record<ToolPreset, readonly (keyof Feat
   'jira-full': [...JIRA_READ_FLAGS, ...JIRA_WRITE_FLAGS],
   'confluence-read': CONFLUENCE_READ_FLAGS,
   'confluence-full': [...CONFLUENCE_READ_FLAGS, ...CONFLUENCE_WRITE_FLAGS],
-  'all-read': [...JIRA_READ_FLAGS, ...CONFLUENCE_READ_FLAGS],
+  'redmine-read': REDMINE_READ_FLAGS,
+  'redmine-full': [...REDMINE_READ_FLAGS, ...REDMINE_WRITE_FLAGS],
+  'xwiki-read': XWIKI_READ_FLAGS,
+  'xwiki-full': [...XWIKI_READ_FLAGS, ...XWIKI_WRITE_FLAGS],
+  'all-read': [
+    ...JIRA_READ_FLAGS,
+    ...CONFLUENCE_READ_FLAGS,
+    ...REDMINE_READ_FLAGS,
+    ...XWIKI_READ_FLAGS,
+  ],
   all: [
     ...JIRA_READ_FLAGS,
     ...JIRA_WRITE_FLAGS,
     ...CONFLUENCE_READ_FLAGS,
     ...CONFLUENCE_WRITE_FLAGS,
+    ...REDMINE_READ_FLAGS,
+    ...REDMINE_WRITE_FLAGS,
+    ...XWIKI_READ_FLAGS,
+    ...XWIKI_WRITE_FLAGS,
   ],
 }
 
@@ -212,4 +248,44 @@ export interface LocalPreviewContext {
 export interface LocalToolRegistry {
   list(): readonly LocalToolDefinition[]
   get(name: string): LocalToolDefinition | undefined
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MCP source — ADR 0010
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Kết quả một lời gọi tool MCP. */
+export interface McpToolCallOutcome {
+  readonly summary: ToolResultSummary
+  /** Text thô từ server — chỉ dùng nội bộ (preview, lookup), không log. */
+  readonly rawText: string
+}
+
+/**
+ * Bề mặt một MCP server phục vụ cho runtime (ADR 0010).
+ *
+ * `AtlassianMcpManager`, mỗi `RemoteMcpServer` (Redmine, XWiki) và chính `McpToolRouter` đều thoả
+ * interface này, nên `AgentRuntime` không cần biết bên dưới có một hay nhiều server.
+ *
+ * Hai cổng giữ nguyên nghĩa như ở `AtlassianMcpManager`: `findTool` tra metadata, còn
+ * `resolveCallable` là cổng DUY NHẤT trước khi thực thi (registry ∧ feature flag ∧ server có
+ * công bố tool).
+ */
+export interface McpToolSource {
+  readonly isReady: boolean
+  /** Tool khả dụng = có trong registry ∧ cờ bật ∧ server công bố. */
+  availableTools(): ToolDefinition[]
+  findTool(name: string): ToolDefinition | null
+  resolveCallable(name: string): ToolDefinition
+  validateInput(definition: ToolDefinition, rawArgs: unknown): Record<string, unknown>
+  callTool(name: string, args: Record<string, unknown>): Promise<McpToolCallOutcome>
+  /** Tool READ gọi được ngay không — dùng khi dựng preview cho tool ghi. */
+  canCallReadTool(name: string): boolean
+  /** URL hệ thống đích hiện trong preview (§10.2 mục 1). Rỗng nếu source không phục vụ hệ thống đó. */
+  targetSystemUrl(system: McpTargetSystem): string
+  /**
+   * Tài khoản đang hành động trên hệ thống đích, nếu source biết (ví dụ Redmine lấy từ
+   * `get_current_user`). `undefined` ⇒ host dùng giá trị mặc định của mình.
+   */
+  actingAccount?(system: McpTargetSystem): string | undefined
 }

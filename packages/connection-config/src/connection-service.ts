@@ -26,12 +26,10 @@ export interface ConnectionServiceOptions {
   /** Chỉ bật trong integration test với mock server HTTP. Bản phát hành để false. */
   readonly allowInsecureLoopback?: boolean
   /**
-   * Kiểm tra kết nối MCP — cần `AtlassianMcpManager` nên host tiêm vào để tránh phụ thuộc vòng.
-   * `'mcpGateway'`: chỉ bắt tay MCP (initialize), không gọi tool cụ thể nào.
+   * Kiểm tra kết nối MCP — cần MCP source (Atlassian, Redmine, XWiki) nên host tiêm vào để tránh
+   * phụ thuộc vòng. `'mcpGateway'`: chỉ bắt tay MCP (initialize), không gọi tool cụ thể nào.
    */
-  readonly testAtlassian?: (
-    type: 'jira' | 'confluence' | 'mcpGateway',
-  ) => Promise<ConnectionTestResult>
+  readonly testAtlassian?: (type: McpConnectionType) => Promise<ConnectionTestResult>
 }
 
 /**
@@ -52,7 +50,12 @@ const MISSING_CONNECTION_CODE: Readonly<Record<ConnectionType, string>> = {
   jira: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
   confluence: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
   mcpGateway: ERROR_CODES.MCP_GATEWAY_CONFIG_REQUIRED,
+  redmine: ERROR_CODES.REDMINE_CONFIG_REQUIRED,
+  xwiki: ERROR_CODES.XWIKI_CONFIG_REQUIRED,
 }
+
+/** Mọi loại kết nối không phải LLM provider — đều đi qua một MCP source. */
+export type McpConnectionType = Exclude<ConnectionType, LlmProvider>
 
 export class ConnectionService {
   private readonly opts: ConnectionServiceOptions
@@ -197,8 +200,11 @@ export class ConnectionService {
     return { ok: true, checkedAt: new Date().toISOString(), detail: outcome.detail }
   }
 
-  /** Đích test là 'jira'/'confluence' (gọi thử một tool) hoặc 'mcpGateway' (chỉ bắt tay MCP). */
-  private async testMcp(type: 'jira' | 'confluence' | 'mcpGateway'): Promise<ConnectionTestResult> {
+  /**
+   * Đích test là 'jira'/'confluence'/'redmine'/'xwiki' (gọi thử một tool đọc) hoặc 'mcpGateway'
+   * (chỉ bắt tay MCP).
+   */
+  private async testMcp(type: McpConnectionType): Promise<ConnectionTestResult> {
     const tester = this.opts.testAtlassian
     if (tester === undefined) {
       throw new NexaError(ERROR_CODES.MCP_SERVER_UNAVAILABLE, {

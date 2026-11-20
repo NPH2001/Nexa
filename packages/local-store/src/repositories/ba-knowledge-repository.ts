@@ -98,7 +98,11 @@ export interface BaKnowledgeStats {
   readonly conflictPairs: number
   /** Tri thức chết: đã confirm nhưng chưa lần nào được dùng. Dấu hiệu research sai hướng. */
   readonly unusedConfirmed: number
-  readonly mostUsed: readonly { readonly id: string; readonly title: string; readonly useCount: number }[]
+  readonly mostUsed: readonly {
+    readonly id: string
+    readonly title: string
+    readonly useCount: number
+  }[]
 }
 
 const MOST_USED_LIMIT = 5
@@ -214,7 +218,9 @@ export class BaKnowledgeRepository {
       if (patch.sourceRef !== undefined) {
         updates.push('source_ref_ciphertext = ?')
         params.push(
-          patch.sourceRef === null ? null : this.store.cipher.encrypt(CTX.sourceRef, patch.sourceRef),
+          patch.sourceRef === null
+            ? null
+            : this.store.cipher.encrypt(CTX.sourceRef, patch.sourceRef),
         )
       }
 
@@ -222,7 +228,9 @@ export class BaKnowledgeRepository {
       params.push(this.store.nowIso())
       params.push(id)
 
-      this.store.handle.prepare(`UPDATE ba_knowledge SET ${updates.join(', ')} WHERE id = ?`).run(...params)
+      this.store.handle
+        .prepare(`UPDATE ba_knowledge SET ${updates.join(', ')} WHERE id = ?`)
+        .run(...params)
       this.store.log.info('ba-knowledge-updated', { knowledgeId: id, profileId: current.profileId })
       return this.getOrThrow(id)
     })
@@ -243,7 +251,10 @@ export class BaKnowledgeRepository {
           `UPDATE ba_knowledge SET status = 'confirmed', confirmed_at = ?, updated_at = ? WHERE id = ?`,
         )
         .run(now, now, id)
-      this.store.log.info('ba-knowledge-confirmed', { knowledgeId: id, profileId: current.profileId })
+      this.store.log.info('ba-knowledge-confirmed', {
+        knowledgeId: id,
+        profileId: current.profileId,
+      })
       return this.getOrThrow(id)
     })
   }

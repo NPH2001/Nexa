@@ -108,6 +108,7 @@ export class ConversationRepository {
       updatedAt: now,
       archivedAt: null,
       messageCount: 0,
+      agentId: null,
     }
   }
 
@@ -150,6 +151,21 @@ export class ConversationRepository {
         'UPDATE conversations SET model_id = ?, model_provider = ?, updated_at = ? WHERE id = ?',
       )
       .run(n(model?.modelId), n(model?.provider), this.store.nowIso(), id)
+  }
+
+  /** `Conversation` không mang profileId ra ngoài, nên kiểm tra quyền sở hữu cần một truy vấn riêng. */
+  isOwnedBy(id: string, profileId: string): boolean {
+    const row = this.store.handle
+      .prepare('SELECT profile_id FROM conversations WHERE id = ?')
+      .get(id)
+    return row !== undefined && String(row['profile_id']) === profileId
+  }
+
+  /** null bỏ agent, hội thoại về persona mặc định. Caller đã kiểm tra ownership. */
+  setAgent(id: string, agentId: string | null): void {
+    this.store.handle
+      .prepare('UPDATE conversations SET agent_id = ?, updated_at = ? WHERE id = ?')
+      .run(n(agentId), this.store.nowIso(), id)
   }
 
   archive(id: string): void {
@@ -479,6 +495,8 @@ export class ConversationRepository {
       updatedAt: String(row['updated_at']),
       archivedAt: row['archived_at'] === null ? null : String(row['archived_at']),
       messageCount: Number(row['message_count'] ?? 0),
+      agentId:
+        row['agent_id'] === null || row['agent_id'] === undefined ? null : String(row['agent_id']),
     }
   }
 

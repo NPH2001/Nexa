@@ -27,12 +27,11 @@ function commitment(over: Partial<BriefingCommitmentInput> = {}): BriefingCommit
 
 function issue(over: Partial<BriefingIssueInput> = {}): BriefingIssueInput {
   return {
-    key: 'DT-1',
+    key: '#1',
     summary: 'Sửa lỗi đăng nhập',
     statusName: 'In Progress',
     dueAt: null,
     updatedAt: '2026-08-31T02:00:00.000Z',
-    inActiveSprint: false,
     ...over,
   }
 }
@@ -119,6 +118,28 @@ describe('buildBriefing — check-in', () => {
     expect(itemOf(briefing, 'commitment:c1')?.reason.kind).toBe('overdue')
   })
 
+
+  it('giữ nguyên hạn hoàn thành kể cả khi lịch check-in mới là mốc quyết định nhóm', () => {
+    const briefing = build({
+      commitments: [
+        commitment({ dueAt: '2026-09-20T03:00:00.000Z', checkInAt: '2026-09-01T03:00:00.000Z' }),
+      ],
+    })
+    const item = itemOf(briefing, 'commitment:c1')
+    // `at` là lịch check-in vì nó tới trước; `dueAt` vẫn phải là hạn thật, nếu không giao diện sẽ
+    // dán nhãn "hạn" lên ngày quay lại.
+    expect(item?.at).toBe('2026-09-01T03:00:00.000Z')
+    expect(item?.dueAt).toBe('2026-09-20T03:00:00.000Z')
+  })
+
+  it('việc Redmine lấy hạn thẳng từ issue, và null khi issue chưa đặt hạn', () => {
+    const briefing = build({
+      issues: [issue({ key: '#1', dueAt: '2026-09-01T03:00:00.000Z' }), issue({ key: '#2' })],
+    })
+    expect(itemOf(briefing, 'redmine:#1')?.dueAt).toBe('2026-09-01T03:00:00.000Z')
+    expect(itemOf(briefing, 'redmine:#2')?.dueAt).toBeNull()
+  })
+
   it('không gọi là check_in_due khi lịch quay lại còn xa', () => {
     const briefing = build({
       commitments: [commitment({ checkInAt: '2026-09-04T03:00:00.000Z' })],
@@ -183,26 +204,26 @@ describe('buildBriefing — thứ tự', () => {
     expect(overdue?.items.map((i) => i.id)).toEqual(['commitment:muon', 'commitment:gan'])
   })
 
-  it('đưa issue thuộc sprint đang chạy lên trước trong in_progress', () => {
+  it('trong in_progress, hai việc cùng không hạn thì việc vừa cập nhật đứng trước', () => {
     const briefing = build({
       issues: [
-        issue({ key: 'DT-2', inActiveSprint: false, updatedAt: '2026-08-31T09:00:00.000Z' }),
-        issue({ key: 'DT-3', inActiveSprint: true, updatedAt: '2026-08-20T09:00:00.000Z' }),
+        issue({ key: '#2', updatedAt: '2026-08-20T09:00:00.000Z' }),
+        issue({ key: '#3', updatedAt: '2026-08-31T09:00:00.000Z' }),
       ],
     })
     const inProgress = briefing.groups.find((g) => g.group === 'in_progress')
-    expect(inProgress?.items.map((i) => i.id)).toEqual(['jira:DT-3', 'jira:DT-2'])
+    expect(inProgress?.items.map((i) => i.id)).toEqual(['redmine:#3', 'redmine:#2'])
   })
 
   it('trong in_progress, việc có hạn đứng trước việc không có hạn', () => {
     const briefing = build({
       issues: [
-        issue({ key: 'DT-4', dueAt: null }),
-        issue({ key: 'DT-5', dueAt: '2026-10-01T03:00:00.000Z' }),
+        issue({ key: '#4', dueAt: null }),
+        issue({ key: '#5', dueAt: '2026-10-01T03:00:00.000Z' }),
       ],
     })
     const inProgress = briefing.groups.find((g) => g.group === 'in_progress')
-    expect(inProgress?.items.map((i) => i.id)).toEqual(['jira:DT-5', 'jira:DT-4'])
+    expect(inProgress?.items.map((i) => i.id)).toEqual(['redmine:#5', 'redmine:#4'])
   })
 
   it('deterministic: dựng hai lần cho cùng một kết quả', () => {
@@ -213,7 +234,7 @@ describe('buildBriefing — thứ tự', () => {
         commitment({ id: 'a', dueAt: '2026-08-31T03:00:00.000Z' }),
         commitment({ id: 'b' }),
       ],
-      issues: [issue({ key: 'DT-9', dueAt: '2026-09-01T03:00:00.000Z' }), issue({ key: 'DT-8' })],
+      issues: [issue({ key: '#9', dueAt: '2026-09-01T03:00:00.000Z' }), issue({ key: '#8' })],
     }
     expect(buildBriefing(input)).toEqual(buildBriefing(input))
   })
@@ -222,19 +243,19 @@ describe('buildBriefing — thứ tự', () => {
     const sameUpdate = '2026-08-31T02:00:00.000Z'
     const first = build({
       issues: [
-        issue({ key: 'DT-7', updatedAt: sameUpdate }),
-        issue({ key: 'DT-6', updatedAt: sameUpdate }),
+        issue({ key: '#7', updatedAt: sameUpdate }),
+        issue({ key: '#6', updatedAt: sameUpdate }),
       ],
     })
     const second = build({
       issues: [
-        issue({ key: 'DT-6', updatedAt: sameUpdate }),
-        issue({ key: 'DT-7', updatedAt: sameUpdate }),
+        issue({ key: '#6', updatedAt: sameUpdate }),
+        issue({ key: '#7', updatedAt: sameUpdate }),
       ],
     })
     const ids = (b: typeof first) =>
       b.groups.find((g) => g.group === 'in_progress')?.items.map((i) => i.id)
-    expect(ids(first)).toEqual(['jira:DT-6', 'jira:DT-7'])
+    expect(ids(first)).toEqual(['redmine:#6', 'redmine:#7'])
     expect(ids(second)).toEqual(ids(first))
   })
 })
@@ -244,13 +265,13 @@ describe('buildBriefing — trần số mục', () => {
     const briefing = build({
       maxItemsPerGroup: 2,
       issues: [
-        issue({ key: 'DT-1', dueAt: '2026-09-01T01:00:00.000Z' }),
-        issue({ key: 'DT-2', dueAt: '2026-09-01T02:00:00.000Z' }),
-        issue({ key: 'DT-3', dueAt: '2026-09-01T03:00:00.000Z' }),
+        issue({ key: '#1', dueAt: '2026-09-01T01:00:00.000Z' }),
+        issue({ key: '#2', dueAt: '2026-09-01T02:00:00.000Z' }),
+        issue({ key: '#3', dueAt: '2026-09-01T03:00:00.000Z' }),
       ],
     })
     const dueToday = briefing.groups.find((g) => g.group === 'due_today')
-    expect(dueToday?.items.map((i) => i.id)).toEqual(['jira:DT-1', 'jira:DT-2'])
+    expect(dueToday?.items.map((i) => i.id)).toEqual(['redmine:#1', 'redmine:#2'])
     expect(dueToday?.truncatedCount).toBe(1)
     expect(briefing.totalItems).toBe(2)
     expect(briefing.truncatedTotal).toBe(1)
@@ -271,10 +292,10 @@ describe('buildBriefing — trần số mục', () => {
 })
 
 describe('buildBriefing — chuẩn hoá hai nguồn', () => {
-  it('giữ hội thoại nguồn của cam kết và issue key của Jira', () => {
+  it('giữ hội thoại nguồn của cam kết và mã issue của Redmine', () => {
     const briefing = build({
       commitments: [commitment({ sourceConversationId: 'conv-1' })],
-      issues: [issue({ key: 'DT-42' })],
+      issues: [issue({ key: '#42' })],
     })
     expect(itemOf(briefing, 'commitment:c1')).toMatchObject({
       source: 'commitment',
@@ -282,9 +303,9 @@ describe('buildBriefing — chuẩn hoá hai nguồn', () => {
       reference: null,
       detail: 'Gửi bản cuối cho pháp chế',
     })
-    expect(itemOf(briefing, 'jira:DT-42')).toMatchObject({
-      source: 'jira',
-      reference: 'DT-42',
+    expect(itemOf(briefing, 'redmine:#42')).toMatchObject({
+      source: 'redmine',
+      reference: '#42',
       sourceConversationId: null,
       detail: 'In Progress',
     })

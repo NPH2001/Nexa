@@ -35,11 +35,13 @@ function briefingWith(count = 2): Briefing {
   })
 }
 
-function deps(over: {
-  readonly enabled?: boolean
-  readonly complete?: CompleteMock
-  readonly provider?: 'litellm' | 'openai'
-} = {}) {
+function deps(
+  over: {
+    readonly enabled?: boolean
+    readonly complete?: CompleteMock
+    readonly provider?: 'litellm' | 'openai'
+  } = {},
+) {
   const sink = new MemorySink()
   const complete: CompleteMock =
     over.complete ?? (vi.fn().mockResolvedValue(reply('Có hai việc quá hạn.')) as CompleteMock)

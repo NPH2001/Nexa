@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Commitment } from '@nexa/shared-types/renderer'
 import {
   dateTimeLocalToIso,
+  formatCommitmentDate,
   getCommitmentAttention,
   sortCommitmentsForToday,
   toDateTimeLocalValue,
@@ -58,5 +59,10 @@ describe('commitment attention', () => {
     const iso = '2026-08-27T10:30:00.000Z'
     expect(dateTimeLocalToIso(toDateTimeLocalValue(iso))).toBe(iso)
     expect(dateTimeLocalToIso('')).toBeNull()
+  })
+
+  it('formatCommitmentDate ghi "Không đặt" khi chưa có mốc, ngược lại hiện ngày giờ đầy đủ', () => {
+    expect(formatCommitmentDate(null)).toBe('Không đặt')
+    expect(formatCommitmentDate(new Date(2026, 10, 9, 9, 5).toISOString())).toBe('09:05 09/11/2026')
   })
 })

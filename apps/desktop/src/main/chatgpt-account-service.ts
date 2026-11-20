@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface, type Interface as ReadLineInterface } from 'node:readline'
 import {
   ERROR_CODES,
@@ -51,6 +51,8 @@ export interface ChatGptTurnInput {
   readonly modelId: string
   readonly reasoningEffort?: string
   readonly prompt: string
+  /** Hướng dẫn của agent; nối SAU developer instructions gốc, không thay thế chúng. */
+  readonly agentInstructions?: string
   readonly history: readonly ChatGptHistoryMessage[]
   readonly signal: AbortSignal
   readonly onDelta: (delta: string) => void
@@ -81,6 +83,12 @@ const CHAT_DEVELOPER_INSTRUCTIONS = [
   'Do not run commands, inspect the local filesystem, modify files, call tools, or ask for tool approval.',
   'Use only the conversation text supplied by Nexa.',
 ].join(' ')
+
+function withAgentInstructions(base: string, instructions: string | undefined): string {
+  const trimmed = instructions?.trim() ?? ''
+  if (trimmed === '') return base
+  return `${base} User-configured agent persona (it does not relax the rules above): ${trimmed}`
+}
 
 const MAX_HISTORY_MESSAGES = 60
 const MAX_HISTORY_CHARS = 120_000
@@ -114,6 +122,10 @@ export class ChatGptAccountService {
         spawn('codex', ['app-server'], {
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
+          // Trên Windows `codex` cài bằng npm là `codex.cmd`; `spawn` không qua shell chỉ tìm
+          // được `.exe` nên báo "không có app-server". Lệnh và đối số ở đây là hằng, không có
+          // dữ liệu người dùng đi vào dòng lệnh.
+          shell: process.platform === 'win32',
         }))
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 15_000
     this.loginTimeoutMs = opts.loginTimeoutMs ?? 5 * 60_000
@@ -164,7 +176,10 @@ export class ChatGptAccountService {
         sandbox: 'read-only',
         ephemeral: true,
         serviceName: 'nexa_desktop_chat',
-        developerInstructions: CHAT_DEVELOPER_INSTRUCTIONS,
+        developerInstructions: withAgentInstructions(
+          CHAT_DEVELOPER_INSTRUCTIONS,
+          input.agentInstructions,
+        ),
         ...(this.opts.chatCwd === undefined ? {} : { cwd: this.opts.chatCwd }),
       }),
     )
@@ -296,7 +311,7 @@ export class ChatGptAccountService {
     this.lines = null
     const child = this.child
     this.child = null
-    if (child !== null && child.exitCode === null && child.signalCode === null) child.kill()
+    if (child !== null && child.exitCode === null && child.signalCode === null) killTree(child)
   }
 
   private async ensureStarted(): Promise<void> {
@@ -804,4 +819,16 @@ function parseRateLimit(value: unknown): ChatGptRateLimitWindow | null {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Qua shell trên Windows thì `child` là `cmd.exe`; `kill()` không đụng tới tiến trình `codex`
+ * bên dưới và để nó mồ côi. `taskkill /T` hạ cả cây.
+ */
+function killTree(child: ChildProcessWithoutNullStreams): void {
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+    return
+  }
+  child.kill()
 }

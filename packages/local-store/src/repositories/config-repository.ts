@@ -44,7 +44,16 @@ export class ConfigRepository {
             `INSERT INTO connections (id, profile_id, type, base_url, username, enabled, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(id, profileId, input.type, input.baseUrl, n(input.username), b(input.enabled), now, now)
+          .run(
+            id,
+            profileId,
+            input.type,
+            input.baseUrl,
+            n(input.username),
+            b(input.enabled),
+            now,
+            now,
+          )
       } else {
         this.store.handle
           .prepare(
@@ -93,9 +102,15 @@ export class ConfigRepository {
       .map(mapConnection)
   }
 
-  recordConnectionTest(profileId: string, type: ConnectionType, result: ConnectionTestResult): void {
+  recordConnectionTest(
+    profileId: string,
+    type: ConnectionType,
+    result: ConnectionTestResult,
+  ): void {
     this.store.handle
-      .prepare('UPDATE connections SET last_test_json = ?, updated_at = ? WHERE profile_id = ? AND type = ?')
+      .prepare(
+        'UPDATE connections SET last_test_json = ?, updated_at = ? WHERE profile_id = ? AND type = ?',
+      )
       .run(JSON.stringify(result), this.store.nowIso(), profileId, type)
   }
 
@@ -225,7 +240,9 @@ export class ConfigRepository {
   removeModel(profileId: string, id: string): void {
     this.store.transaction(() => {
       const model = this.getModel(id)
-      this.store.handle.prepare('DELETE FROM models WHERE id = ? AND profile_id = ?').run(id, profileId)
+      this.store.handle
+        .prepare('DELETE FROM models WHERE id = ? AND profile_id = ?')
+        .run(id, profileId)
       // Xoá model mặc định thì phải chỉ định model mặc định mới, nếu không người dùng
       // sẽ gặp MODEL_NOT_CONFIGURED ở lần chat kế tiếp mà không hiểu vì sao.
       if (model?.isDefault === true) {
@@ -239,7 +256,9 @@ export class ConfigRepository {
 
   setDefaultModel(profileId: string, id: string): void {
     this.store.transaction(() => {
-      this.store.handle.prepare('UPDATE models SET is_default = 0 WHERE profile_id = ?').run(profileId)
+      this.store.handle
+        .prepare('UPDATE models SET is_default = 0 WHERE profile_id = ?')
+        .run(profileId)
       this.store.handle
         .prepare('UPDATE models SET is_default = 1 WHERE id = ? AND profile_id = ?')
         .run(id, profileId)

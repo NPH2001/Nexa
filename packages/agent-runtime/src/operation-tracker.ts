@@ -124,7 +124,11 @@ export class OperationTracker {
     definition: ToolDefinition,
     lookup: (
       input: unknown,
-      ctx: { actingAccount: string; startedAt: string; readTool: (n: string, i: unknown) => Promise<unknown> },
+      ctx: {
+        actingAccount: string
+        startedAt: string
+        readTool: (n: string, i: unknown) => Promise<unknown>
+      },
     ) => Promise<UncertainLookupResult>,
     ctx: { actingAccount: string; readTool: (n: string, i: unknown) => Promise<unknown> },
   ): Promise<ResolveOutcome> {
@@ -215,8 +219,19 @@ export function isUncertainOutcome(error: unknown): boolean {
     case ERROR_CODES.UPSTREAM_UNAVAILABLE:
     case ERROR_CODES.LLM_TIMEOUT:
       return true
+    // 413 nghĩa là gateway đọc header rồi từ chối body — request KHÔNG được xử lý, nên đây là
+    // `failed` chứ không phải `uncertain`. Gửi lại y nguyên cũng sẽ bị từ chối y nguyên.
+    // Redmine/XWiki (ADR 0010): mã auth/config bị từ chối TRƯỚC khi áp dụng thay đổi; xung đột
+    // phiên bản XWiki là khoá lạc quan đang chạy đúng — trang chắc chắn KHÔNG bị ghi.
+    case ERROR_CODES.UPSTREAM_PAYLOAD_TOO_LARGE:
     case ERROR_CODES.ATLASSIAN_AUTH_FAILED:
     case ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED:
+    case ERROR_CODES.REDMINE_AUTH_FAILED:
+    case ERROR_CODES.REDMINE_CONFIG_REQUIRED:
+    case ERROR_CODES.REDMINE_GATEWAY_REQUIRED:
+    case ERROR_CODES.XWIKI_AUTH_FAILED:
+    case ERROR_CODES.XWIKI_CONFIG_REQUIRED:
+    case ERROR_CODES.XWIKI_VERSION_CONFLICT:
     case ERROR_CODES.TOOL_NOT_ALLOWED:
     case ERROR_CODES.TOOL_APPROVAL_REQUIRED:
     case ERROR_CODES.TOOL_APPROVAL_EXPIRED:

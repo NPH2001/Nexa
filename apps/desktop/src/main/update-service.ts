@@ -127,7 +127,11 @@ export class UpdateService {
   verifyPackage(bytes: Buffer, manifest: VersionManifest): void {
     const actual = createHash('sha256').update(bytes).digest('hex')
     if (actual.toLowerCase() !== manifest.sha256.toLowerCase()) {
-      this.log.security(SECURITY_EVENTS.updateSignatureFailed, { reason: 'checksum-mismatch' }, 'error')
+      this.log.security(
+        SECURITY_EVENTS.updateSignatureFailed,
+        { reason: 'checksum-mismatch' },
+        'error',
+      )
       throw new NexaError(ERROR_CODES.INTERNAL_ERROR, {
         safeDetail: 'installer checksum does not match the manifest',
       })

@@ -649,7 +649,11 @@ describe('search on encrypted content', () => {
     const repo = new ConversationRepository(ctx.store)
     const search = new ConversationSearch(ctx.store, repo)
     const conv = repo.create(ctx.profileId, 'Cache invalidation', null)
-    const msg = repo.appendMessage({ conversationId: conv.id, role: 'user', content: 'phiên bản một' })
+    const msg = repo.appendMessage({
+      conversationId: conv.id,
+      role: 'user',
+      content: 'phiên bản một',
+    })
 
     expect(search.search(ctx.profileId, 'phiên bản một').hits).toHaveLength(1)
 
@@ -953,6 +957,22 @@ describe('migration v2 — nâng cấp từ một DB v1 có dữ liệu', () => 
         .run(randomUUID(), ctx!.profileId, type)
     }
     expect(() => insert('mcpGateway')).not.toThrow()
+  })
+
+  it('migration v12 mở CHECK constraint cho redmine và xwiki', () => {
+    ctx = makeTempStore()
+    const insert = (type: string): void => {
+      ctx!.store.handle
+        .prepare(
+          `INSERT INTO connections (id, profile_id, type, base_url, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, 'https://work.internal', 1, 'x', 'x')`,
+        )
+        .run(randomUUID(), ctx!.profileId, type)
+    }
+    expect(() => insert('redmine')).not.toThrow()
+    expect(() => insert('xwiki')).not.toThrow()
+    expect(() => insert('mcpGateway')).not.toThrow()
+    expect(() => insert('khong-ton-tai')).toThrow()
   })
 
   it('cùng model id ở hai provider là hai bản ghi khác nhau', () => {

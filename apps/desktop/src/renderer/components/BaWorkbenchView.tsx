@@ -14,6 +14,7 @@ import type {
 import { api } from '../bridge.js'
 import { DestructiveActionDialog } from './DestructiveActionDialog.js'
 import { BankChecklistPanel } from './BankChecklistPanel.js'
+import { InlineError, LoadingSkeleton } from './StateBlocks.js'
 import type { Toast } from './Toasts.js'
 import {
   ITEM_TYPE_LABELS,
@@ -303,14 +304,9 @@ function KnowledgeTab(props: {
         </select>
       </div>
 
-      {loading && <p className="muted">Đang tải kho tri thức…</p>}
+      {loading && <LoadingSkeleton label="Đang tải kho tri thức…" rows={3} />}
       {loadError && !loading && (
-        <p className="muted">
-          Không tải được kho tri thức.{' '}
-          <button type="button" className="btn btn-small" onClick={() => void refresh()}>
-            Thử lại
-          </button>
-        </p>
+        <InlineError title="Không tải được kho tri thức." onRetry={() => void refresh()} />
       )}
       {!loading && !loadError && visible.length === 0 && (
         <p className="muted">
@@ -536,14 +532,9 @@ function DocumentsTab(props: {
         </button>
       </form>
 
-      {loading && <p className="muted">Đang tải tài liệu…</p>}
+      {loading && <LoadingSkeleton label="Đang tải tài liệu…" rows={3} />}
       {loadError && !loading && (
-        <p className="muted">
-          Không tải được danh sách tài liệu.{' '}
-          <button type="button" className="btn btn-small" onClick={() => void refresh()}>
-            Thử lại
-          </button>
-        </p>
+        <InlineError title="Không tải được danh sách tài liệu." onRetry={() => void refresh()} />
       )}
       {!loading && !loadError && documents.length === 0 && (
         <p className="muted">
@@ -819,16 +810,9 @@ function TemplatesTab(props: {
     void refresh()
   }, [refresh])
 
-  if (loading) return <p className="muted">Đang tải bộ mẫu…</p>
+  if (loading) return <LoadingSkeleton label="Đang tải bộ mẫu…" variant="cards" rows={2} />
   if (loadError || catalog === null) {
-    return (
-      <p className="muted">
-        Không tải được bộ mẫu.{' '}
-        <button type="button" className="btn btn-small" onClick={() => void refresh()}>
-          Thử lại
-        </button>
-      </p>
-    )
+    return <InlineError title="Không tải được bộ mẫu." onRetry={() => void refresh()} />
   }
 
   return (

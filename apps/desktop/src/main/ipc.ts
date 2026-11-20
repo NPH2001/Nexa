@@ -6,6 +6,7 @@ import {
   NexaError,
   fail,
   ok,
+  type ChatModelProvider,
   type Envelope,
   type IpcChannel,
 } from '@nexa/shared-types'
@@ -25,8 +26,16 @@ import {
 } from '@nexa/ba-kit'
 import type { ChatController } from './chat-controller.js'
 import type { NexaServices } from './services.js'
-import { buildMcpManager } from './services.js'
+import type { buildMcpManager } from './services.js'
 import { exportDiagnostics } from './diagnostics.js'
+import {
+  MCP_SYSTEMS,
+  createMcpLifecycle,
+  mcpSystemsAffectedBy,
+  type McpLifecycle,
+  type McpSystem,
+} from './mcp-lifecycle.js'
+import { windowBackgroundColor } from './window.js'
 
 /**
  * Đăng ký IPC.
@@ -43,6 +52,11 @@ type Handler<C extends IpcChannel> = (
 ) => unknown | Promise<unknown>
 
 type HandlerMap = { [C in IpcChannel]: Handler<C> }
+
+/** Handler của một (vài) namespace; `buildHandlers` ghép lại và vẫn phải đủ `HandlerMap`. */
+type HandlersOf<N extends string> = {
+  [C in Extract<IpcChannel, `${N}:${string}`>]: Handler<C>
+}
 
 export interface IpcContext {
   readonly services: NexaServices
@@ -91,39 +105,525 @@ export function registerIpc(ctx: IpcContext): void {
   ctx.services.logger.info('ipc-registered', { channelCount: Object.keys(IPC_SCHEMAS).length })
 }
 
+/**
+ * Bản ghi renderer trỏ tới bằng id phải tồn tại VÀ thuộc profile hiện tại. Không phân biệt hai
+ * trường hợp: renderer không được biết một id của profile khác có tồn tại hay không.
+ */
+function requireOwned<T extends { readonly profileId: string }>(
+  record: T | null,
+  profileId: string,
+  safeDetail: string,
+): T {
+  if (record === null || record.profileId !== profileId) {
+    throw new NexaError(ERROR_CODES.VALIDATION_FAILED, { safeDetail })
+  }
+  return record
+}
+
+/** Dùng chung cho `commitment:*` và `checkin:unmute` (bỏ tắt nhắc của một cam kết). */
+function requireCommitmentForCurrentProfile(services: NexaServices, id: string) {
+  return requireOwned(
+    services.commitments.get(id),
+    services.profileId,
+    'commitment not found for current profile',
+  )
+}
+
+function recordLocalMutation(
+  services: NexaServices,
+  input: {
+    type: 'memory_mutation' | 'commitment_mutation'
+    action: 'created' | 'updated' | 'archived' | 'restored' | 'deleted'
+    subjectType: 'memory' | 'commitment'
+    subjectId: string
+  },
+): void {
+  services.activity.record({
+    profileId: services.profileId,
+    status: 'success',
+    ...input,
+  })
+}
+
+/**
+ * Áp model mặc định của agent lên hội thoại MỘT LẦN lúc gắn (openspec `add-custom-agents`, D4).
+ *
+ * Model không còn khả dụng (đã xoá, provider bị chính sách tắt, ChatGPT chưa đăng nhập) thì giữ
+ * model hiện tại và không báo lỗi: việc gắn agent không được thất bại chỉ vì model phụ trợ hỏng.
+ */
+async function applyAgentModel(
+  services: NexaServices,
+  conversationId: string,
+  agent: { readonly modelId: string | null; readonly modelProvider: ChatModelProvider | null },
+): Promise<void> {
+  if (agent.modelId === null || agent.modelProvider === null) return
+  try {
+    const model =
+      agent.modelProvider === 'chatgpt'
+        ? {
+            ...(await services.chatgpt.resolveModel(agent.modelId)),
+            provider: 'chatgpt' as const,
+          }
+        : services.models.resolveForConversation(agent.modelId, agent.modelProvider)
+    if (agent.modelProvider === 'chatgpt' && !services.policy.allowDirectOpenAi) return
+    services.conversations.setModel(conversationId, {
+      modelId: model.modelId,
+      provider: model.provider,
+    })
+  } catch {
+    // Có chủ ý: xem comment ở đầu hàm.
+  }
+}
+
+async function rebuildMcp(lifecycle: McpLifecycle, systems: readonly McpSystem[]): Promise<void> {
+  for (const system of systems) await lifecycle.rebuild(system)
+}
+
 function buildHandlers(ctx: IpcContext): HandlerMap {
+  const mcpLifecycle = createMcpLifecycle(ctx.services, ctx.onMcpStatus)
+
+  return {
+    ...registerConnectionHandlers(ctx, mcpLifecycle),
+    ...registerChatGptHandlers(ctx),
+    ...registerModelHandlers(ctx),
+    ...registerConversationHandlers(ctx),
+    ...registerAgentHandlers(ctx),
+    ...registerMemoryHandlers(ctx),
+    ...registerCommitmentHandlers(ctx),
+    ...registerCheckInHandlers(ctx),
+    ...registerActivityHandlers(ctx),
+    ...registerBriefingHandlers(ctx),
+    ...registerBaHandlers(ctx),
+    ...registerChatHandlers(ctx),
+    ...registerFileHandlers(ctx),
+    ...registerToolHandlers(ctx),
+    ...registerSettingsHandlers(ctx),
+    ...registerMcpHandlers(ctx, mcpLifecycle),
+    ...registerDiagnosticsHandlers(ctx),
+    ...registerDataHandlers(ctx),
+  }
+}
+
+// ── Connections ───────────────────────────────────────────────────────
+function registerConnectionHandlers(
+  ctx: IpcContext,
+  mcpLifecycle: McpLifecycle,
+): HandlersOf<'connection'> {
+  const { services } = ctx
+
+  return {
+    'connection:list': () => services.connections.list(),
+    'connection:save': async (input) => {
+      const affected = mcpSystemsAffectedBy(input.type)
+      if (affected.length > 0) mcpLifecycle.assertIdle()
+      const connection = services.connections.save(input)
+      await rebuildMcp(mcpLifecycle, affected)
+      return connection
+    },
+    'connection:test': (input) => services.connections.test(input.type),
+    'connection:delete': async (input) => {
+      const affected = mcpSystemsAffectedBy(input.type)
+      if (affected.length > 0) mcpLifecycle.assertIdle()
+      services.connections.delete(input.type)
+      await rebuildMcp(mcpLifecycle, affected)
+      return { deleted: true }
+    },
+  }
+}
+
+// ── ChatGPT managed account (Codex App Server) ───────────────────────
+function registerChatGptHandlers(ctx: IpcContext): HandlersOf<'chatgpt'> {
+  const { services } = ctx
+
+  return {
+    'chatgpt:status': () => services.chatgpt.status(),
+    'chatgpt:models': () => {
+      if (!services.policy.allowDirectOpenAi) {
+        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+          safeDetail: 'managed ChatGPT model catalog is disabled by organisation policy',
+        })
+      }
+      return services.chatgpt.models()
+    },
+    'chatgpt:login': () => {
+      if (!services.policy.allowDirectOpenAi) {
+        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+          safeDetail: 'managed ChatGPT login is disabled by organisation policy',
+        })
+      }
+      return services.chatgpt.login()
+    },
+    // Cho phép đăng xuất kể cả khi policy vừa đổi để người dùng luôn gỡ được phiên cũ.
+    'chatgpt:logout': () => services.chatgpt.logout(),
+  }
+}
+
+// ── Models ────────────────────────────────────────────────────────────
+function registerModelHandlers(ctx: IpcContext): HandlersOf<'model'> {
+  const { services } = ctx
+
+  return {
+    'model:list': () => services.models.list(),
+    'model:add': (input) => services.models.add(input),
+    'model:remove': (input) => {
+      services.models.remove(input.id)
+      return { removed: true }
+    },
+    'model:setDefault': (input) => {
+      services.models.setDefault(input.id)
+      return { ok: true }
+    },
+    'model:verifyAll': (input) =>
+      services.models.verifyAll(
+        input.provider,
+        services.connections.buildLlmClient(input.provider, services.settings.get().llmTimeoutMs),
+      ),
+  }
+}
+
+// ── Conversations ─────────────────────────────────────────────────────
+function registerConversationHandlers(ctx: IpcContext): HandlersOf<'conversation' | 'message'> {
   const { services, chat } = ctx
-  let mcpRebuildInFlight = false
 
-  const requireMemoryFactForCurrentProfile = (id: string) => {
-    const fact = services.memory.get(id)
-    if (fact === null || fact.profileId !== services.profileId) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
-        safeDetail: 'memory fact not found for current profile',
-      })
-    }
-    return fact
-  }
+  return {
+    'conversation:list': (input) =>
+      services.conversations.list(services.profileId, {
+        includeArchived: input.includeArchived,
+        limit: input.limit,
+        offset: input.offset,
+      }),
+    'conversation:create': async (input) => {
+      if (input.modelProvider === 'chatgpt' && !services.policy.allowDirectOpenAi) {
+        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
+          safeDetail: 'managed ChatGPT conversation creation is disabled by organisation policy',
+        })
+      }
+      const model =
+        input.modelId === null || input.modelProvider === null
+          ? null
+          : input.modelProvider === 'chatgpt'
+            ? {
+                ...(await services.chatgpt.resolveModel(input.modelId)),
+                provider: 'chatgpt' as const,
+              }
+            : services.models.resolveForConversation(input.modelId, input.modelProvider)
+      return services.conversations.create(
+        services.profileId,
+        input.title,
+        model === null ? null : { modelId: model.modelId, provider: model.provider },
+      )
+    },
+    'conversation:rename': (input) => {
+      services.conversations.rename(input.id, input.title)
+      return { ok: true }
+    },
+    'conversation:delete': (input) => {
+      if (chat.isConversationActive(input.id)) {
+        throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+          safeDetail: 'conversation has an active chat turn',
+        })
+      }
+      services.conversations.delete(input.id)
+      return { ok: true }
+    },
+    'conversation:archive': (input) => {
+      services.conversations.archive(input.id)
+      return { ok: true }
+    },
+    'conversation:setAgent': async (input) => {
+      if (!services.conversations.isOwnedBy(input.conversationId, services.profileId)) {
+        throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+          safeDetail: 'conversation not found for current profile',
+        })
+      }
+      if (chat.isConversationActive(input.conversationId)) {
+        throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
+          safeDetail: 'conversation has an active chat turn',
+        })
+      }
+      if (input.agentId === null) {
+        services.conversations.setAgent(input.conversationId, null)
+        return { ok: true }
+      }
 
-  const requireCommitmentForCurrentProfile = (id: string) => {
-    const commitment = services.commitments.get(id)
-    if (commitment === null || commitment.profileId !== services.profileId) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
-        safeDetail: 'commitment not found for current profile',
-      })
-    }
-    return commitment
+      const agent = requireOwned(
+        services.agents.get(input.agentId),
+        services.profileId,
+        'agent not found for current profile',
+      )
+      // Agent đã archive không chọn mới được, nhưng hội thoại đã dùng nó từ trước thì giữ nguyên.
+      const current = services.conversations.get(input.conversationId)
+      if (agent.archived && current?.agentId !== agent.id) {
+        throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
+          safeDetail: 'archived agent cannot be assigned',
+        })
+      }
+      services.conversations.setAgent(input.conversationId, agent.id)
+      await applyAgentModel(services, input.conversationId, agent)
+      return { ok: true }
+    },
+    'conversation:search': (input) =>
+      services.search.search(services.profileId, input.query, { limit: input.limit }),
+    'message:list': (input) =>
+      services.conversations.listMessages(input.conversationId, input.limit),
+    'message:edit': (input) => {
+      services.conversations.editMessage(input.id, input.content)
+      return { ok: true }
+    },
+    'message:delete': (input) => {
+      services.conversations.deleteMessage(input.id)
+      return { ok: true }
+    },
   }
+}
 
-  const requireCheckInForCurrentProfile = (id: string) => {
-    const checkIn = services.checkInState.get(id)
-    if (checkIn === null || checkIn.profileId !== services.profileId) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
-        safeDetail: 'check-in suggestion not found for current profile',
-      })
-    }
-    return checkIn
+// ── Agent tuỳ biến ────────────────────────────────────────────────────
+function registerAgentHandlers(ctx: IpcContext): HandlersOf<'agent'> {
+  const { services } = ctx
+
+  const requireAgentForCurrentProfile = (id: string) =>
+    requireOwned(services.agents.get(id), services.profileId, 'agent not found for current profile')
+
+  return {
+    'agent:list': (input) =>
+      services.agents.list(services.profileId, { includeArchived: input.includeArchived }),
+    'agent:create': (input) => services.agents.create({ profileId: services.profileId, ...input }),
+    'agent:update': (input) => {
+      requireAgentForCurrentProfile(input.id)
+      const { id, ...patch } = input
+      return services.agents.update(id, patch)
+    },
+    'agent:archive': (input) => {
+      requireAgentForCurrentProfile(input.id)
+      return services.agents.archive(input.id)
+    },
+    'agent:restore': (input) => {
+      requireAgentForCurrentProfile(input.id)
+      return services.agents.restore(input.id)
+    },
+    'agent:delete': (input) => {
+      requireAgentForCurrentProfile(input.id)
+      services.agents.delete(input.id)
+      return { ok: true }
+    },
   }
+}
+
+// ── Memory ────────────────────────────────────────────────────────────
+function registerMemoryHandlers(ctx: IpcContext): HandlersOf<'memory'> {
+  const { services } = ctx
+
+  const requireMemoryFactForCurrentProfile = (id: string) =>
+    requireOwned(
+      services.memory.get(id),
+      services.profileId,
+      'memory fact not found for current profile',
+    )
+
+  return {
+    'memory:list': (input) =>
+      services.memory.list(services.profileId, { includeArchived: input.includeArchived }),
+    'memory:create': (input) => {
+      const fact = services.memory.create({
+        profileId: services.profileId,
+        content: input.content,
+        kind: input.kind,
+        scope: input.scope,
+        sharingPolicy: input.sharingPolicy,
+        sourceConversationId: input.sourceConversationId,
+        // Tạo fact trong UI là một hành động xác nhận rõ ràng của người dùng. Main process
+        // đóng dấu mặc định để renderer không phải là nguồn sự thật cho thời điểm xác nhận.
+        lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
+        expiresAt: input.expiresAt,
+      })
+      recordLocalMutation(services, {
+        type: 'memory_mutation',
+        action: 'created',
+        subjectType: 'memory',
+        subjectId: fact.id,
+      })
+      return fact
+    },
+    'memory:update': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      const fact = services.memory.update(input.id, {
+        content: input.content,
+        kind: input.kind,
+        scope: input.scope,
+        sharingPolicy: input.sharingPolicy,
+        sourceConversationId: input.sourceConversationId,
+        lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
+        expiresAt: input.expiresAt,
+      })
+      recordLocalMutation(services, {
+        type: 'memory_mutation',
+        action: 'updated',
+        subjectType: 'memory',
+        subjectId: fact.id,
+      })
+      return fact
+    },
+    'memory:archive': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      services.memory.archive(input.id)
+      recordLocalMutation(services, {
+        type: 'memory_mutation',
+        action: 'archived',
+        subjectType: 'memory',
+        subjectId: input.id,
+      })
+      return { ok: true }
+    },
+    'memory:restore': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      services.memory.restore(input.id)
+      recordLocalMutation(services, {
+        type: 'memory_mutation',
+        action: 'restored',
+        subjectType: 'memory',
+        subjectId: input.id,
+      })
+      return { ok: true }
+    },
+    'memory:delete': (input) => {
+      requireMemoryFactForCurrentProfile(input.id)
+      services.memory.delete(input.id)
+      recordLocalMutation(services, {
+        type: 'memory_mutation',
+        action: 'deleted',
+        subjectType: 'memory',
+        subjectId: input.id,
+      })
+      return { ok: true }
+    },
+  }
+}
+
+// ── Commitments ───────────────────────────────────────────────────────
+function registerCommitmentHandlers(ctx: IpcContext): HandlersOf<'commitment'> {
+  const { services } = ctx
+
+  return {
+    'commitment:list': (input) =>
+      services.commitments.list(services.profileId, {
+        includeCompleted: input.includeCompleted,
+      }),
+    'commitment:create': (input) => {
+      const commitment = services.commitments.create({
+        profileId: services.profileId,
+        title: input.title,
+        nextAction: input.nextAction,
+        status: input.status,
+        dueAt: input.dueAt,
+        checkInAt: input.checkInAt,
+        sourceConversationId: input.sourceConversationId,
+      })
+      recordLocalMutation(services, {
+        type: 'commitment_mutation',
+        action: 'created',
+        subjectType: 'commitment',
+        subjectId: commitment.id,
+      })
+      services.checkIns.reconcile()
+      return commitment
+    },
+    'commitment:update': (input) => {
+      requireCommitmentForCurrentProfile(services, input.id)
+      const commitment = services.commitments.update(input.id, {
+        title: input.title,
+        nextAction: input.nextAction,
+        status: input.status,
+        dueAt: input.dueAt,
+        checkInAt: input.checkInAt,
+        sourceConversationId: input.sourceConversationId,
+      })
+      recordLocalMutation(services, {
+        type: 'commitment_mutation',
+        action: 'updated',
+        subjectType: 'commitment',
+        subjectId: commitment.id,
+      })
+      services.checkIns.reconcile()
+      return commitment
+    },
+    'commitment:delete': (input) => {
+      requireCommitmentForCurrentProfile(services, input.id)
+      services.commitments.delete(input.id)
+      recordLocalMutation(services, {
+        type: 'commitment_mutation',
+        action: 'deleted',
+        subjectType: 'commitment',
+        subjectId: input.id,
+      })
+      return { ok: true }
+    },
+  }
+}
+
+// ── Proactive check-ins ─────────────────────────────────────────────
+function registerCheckInHandlers(ctx: IpcContext): HandlersOf<'checkin'> {
+  const { services } = ctx
+
+  const requireCheckInForCurrentProfile = (id: string) =>
+    requireOwned(
+      services.checkInState.get(id),
+      services.profileId,
+      'check-in suggestion not found for current profile',
+    )
+
+  return {
+    'checkin:list': () => services.checkIns.list(),
+    'checkin:setEnabled': (input) => {
+      services.settings.update({ proactiveCheckInsEnabled: input.enabled })
+      services.checkIns.reconfigure()
+      return services.checkIns.list()
+    },
+    'checkin:respond': (input) => {
+      requireCheckInForCurrentProfile(input.id)
+      return services.checkIns.respond(input.id, input.action, input.snoozeMinutes)
+    },
+    'checkin:unmute': (input) => {
+      requireCommitmentForCurrentProfile(services, input.commitmentId)
+      return { suggestion: services.checkIns.unmute(input.commitmentId) }
+    },
+  }
+}
+
+// ── Agent activity ──────────────────────────────────────────────────
+function registerActivityHandlers(ctx: IpcContext): HandlersOf<'activity'> {
+  const { services } = ctx
+
+  return {
+    'activity:list': (input) =>
+      services.activity
+        .list(services.profileId, {
+          type: input.type,
+          status: input.status,
+          actor: input.actor,
+          limit: input.limit,
+          offset: input.offset,
+        })
+        .map((event) => ({
+          ...event,
+          subjectLabel: resolveActivitySubjectLabel(services, event.subjectType, event.subjectId),
+        })),
+  }
+}
+
+// ── Bản tin công việc cá nhân ───────────────────────────────────────
+function registerBriefingHandlers(ctx: IpcContext): HandlersOf<'briefing'> {
+  const { services } = ctx
+
+  return {
+    // Không nhận tham số: JQL do main dựng, và schema đã strip mọi thứ renderer gửi kèm.
+    'briefing:get': () => services.briefing.get(),
+    'briefing:refresh': () => services.briefing.refresh(),
+  }
+}
+
+// ── BA workbench ────────────────────────────────────────────────────
+function registerBaHandlers(ctx: IpcContext): HandlersOf<'ba'> {
+  const { services } = ctx
 
   /**
    * Hàng rào cờ cho toàn bộ namespace `ba:*`.
@@ -141,35 +641,29 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
 
   const requireBaKnowledgeForCurrentProfile = (id: string) => {
     requireBaWorkbench()
-    const item = services.baKnowledge.get(id)
-    if (item === null || item.profileId !== services.profileId) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
-        safeDetail: 'ba knowledge item not found for current profile',
-      })
-    }
-    return item
+    return requireOwned(
+      services.baKnowledge.get(id),
+      services.profileId,
+      'ba knowledge item not found for current profile',
+    )
   }
 
   const requireBaDocumentForCurrentProfile = (id: string) => {
     requireBaWorkbench()
-    const document = services.baDocuments.get(id)
-    if (document === null || document.profileId !== services.profileId) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
-        safeDetail: 'ba document not found for current profile',
-      })
-    }
-    return document
+    return requireOwned(
+      services.baDocuments.get(id),
+      services.profileId,
+      'ba document not found for current profile',
+    )
   }
 
   const requireBankChecklistForCurrentProfile = (id: string) => {
     requireBaWorkbench()
-    const item = services.bankChecklists.get(id)
-    if (item === null || item.profileId !== services.profileId) {
-      throw new NexaError(ERROR_CODES.VALIDATION_FAILED, {
-        safeDetail: 'bank checklist case not found for current profile',
-      })
-    }
-    return item
+    return requireOwned(
+      services.bankChecklists.get(id),
+      services.profileId,
+      'bank checklist case not found for current profile',
+    )
   }
 
   /** Bỏ `profileId` trước khi ra renderer — renderer không cần và không được biết profile nào. */
@@ -226,334 +720,7 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     }
   }
 
-  const recordLocalMutation = (input: {
-    type: 'memory_mutation' | 'commitment_mutation'
-    action: 'created' | 'updated' | 'archived' | 'restored' | 'deleted'
-    subjectType: 'memory' | 'commitment'
-    subjectId: string
-  }): void => {
-    services.activity.record({
-      profileId: services.profileId,
-      status: 'success',
-      ...input,
-    })
-  }
-
-  const changesMcpConnection = (type: string): boolean =>
-    type === 'jira' || type === 'confluence' || type === 'mcpGateway'
-
-  const assertMcpIdle = (): void => {
-    if (mcpRebuildInFlight || services.mcp?.isLifecycleBusy === true) {
-      throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
-        safeDetail: 'cannot change MCP connection while its lifecycle is busy',
-      })
-    }
-  }
-
-  /** MCP phải dựng lại khi cấu hình kết nối đổi — credential và base URL đều nằm trong spec. */
-  const rebuildMcp = async (): Promise<void> => {
-    mcpRebuildInFlight = true
-    const previous = services.mcp
-    // Rút manager cũ khỏi service trước `await` đầu tiên: chat mới không thể giữ tham chiếu tới
-    // transport đang dừng, còn mutex chặn một save/delete/restart thứ hai chạy chen vào.
-    services.mcp = null
-    try {
-      await previous?.stop()
-      services.mcp = buildMcpManager(services, ctx.onMcpStatus)
-      if (services.mcp !== null) {
-        try {
-          await services.mcp.start()
-        } catch {
-          // Trạng thái lỗi đã được manager phát ra; không chặn việc lưu cấu hình.
-        }
-      }
-    } finally {
-      mcpRebuildInFlight = false
-    }
-  }
-
   return {
-    // ── Connections ───────────────────────────────────────────────────────
-    'connection:list': () => services.connections.list(),
-    'connection:save': async (input) => {
-      if (changesMcpConnection(input.type)) assertMcpIdle()
-      const connection = services.connections.save(input)
-      if (changesMcpConnection(input.type)) await rebuildMcp()
-      return connection
-    },
-    'connection:test': (input) => services.connections.test(input.type),
-    'connection:delete': async (input) => {
-      if (changesMcpConnection(input.type)) assertMcpIdle()
-      services.connections.delete(input.type)
-      if (changesMcpConnection(input.type)) await rebuildMcp()
-      return { deleted: true }
-    },
-
-    // ── ChatGPT managed account (Codex App Server) ───────────────────────
-    'chatgpt:status': () => services.chatgpt.status(),
-    'chatgpt:models': () => {
-      if (!services.policy.allowDirectOpenAi) {
-        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
-          safeDetail: 'managed ChatGPT model catalog is disabled by organisation policy',
-        })
-      }
-      return services.chatgpt.models()
-    },
-    'chatgpt:login': () => {
-      if (!services.policy.allowDirectOpenAi) {
-        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
-          safeDetail: 'managed ChatGPT login is disabled by organisation policy',
-        })
-      }
-      return services.chatgpt.login()
-    },
-    // Cho phép đăng xuất kể cả khi policy vừa đổi để người dùng luôn gỡ được phiên cũ.
-    'chatgpt:logout': () => services.chatgpt.logout(),
-
-    // ── Models ────────────────────────────────────────────────────────────
-    'model:list': () => services.models.list(),
-    'model:add': (input) => services.models.add(input),
-    'model:remove': (input) => {
-      services.models.remove(input.id)
-      return { removed: true }
-    },
-    'model:setDefault': (input) => {
-      services.models.setDefault(input.id)
-      return { ok: true }
-    },
-    'model:verifyAll': (input) =>
-      services.models.verifyAll(
-        input.provider,
-        services.connections.buildLlmClient(input.provider, services.settings.get().llmTimeoutMs),
-      ),
-
-    // ── Conversations ─────────────────────────────────────────────────────
-    'conversation:list': (input) =>
-      services.conversations.list(services.profileId, {
-        includeArchived: input.includeArchived,
-        limit: input.limit,
-        offset: input.offset,
-      }),
-    'conversation:create': async (input) => {
-      if (input.modelProvider === 'chatgpt' && !services.policy.allowDirectOpenAi) {
-        throw new NexaError(ERROR_CODES.PROVIDER_DISABLED_BY_POLICY, {
-          safeDetail: 'managed ChatGPT conversation creation is disabled by organisation policy',
-        })
-      }
-      const model =
-        input.modelId === null || input.modelProvider === null
-          ? null
-          : input.modelProvider === 'chatgpt'
-            ? {
-                ...(await services.chatgpt.resolveModel(input.modelId)),
-                provider: 'chatgpt' as const,
-              }
-            : services.models.resolveForConversation(input.modelId, input.modelProvider)
-      return services.conversations.create(
-        services.profileId,
-        input.title,
-        model === null ? null : { modelId: model.modelId, provider: model.provider },
-      )
-    },
-    'conversation:rename': (input) => {
-      services.conversations.rename(input.id, input.title)
-      return { ok: true }
-    },
-    'conversation:delete': (input) => {
-      if (chat.isConversationActive(input.id)) {
-        throw new NexaError(ERROR_CODES.OPERATION_ALREADY_RUNNING, {
-          safeDetail: 'conversation has an active chat turn',
-        })
-      }
-      services.conversations.delete(input.id)
-      return { ok: true }
-    },
-    'conversation:archive': (input) => {
-      services.conversations.archive(input.id)
-      return { ok: true }
-    },
-    'conversation:search': (input) =>
-      services.search.search(services.profileId, input.query, { limit: input.limit }),
-    'message:list': (input) =>
-      services.conversations.listMessages(input.conversationId, input.limit),
-    'message:edit': (input) => {
-      services.conversations.editMessage(input.id, input.content)
-      return { ok: true }
-    },
-    'message:delete': (input) => {
-      services.conversations.deleteMessage(input.id)
-      return { ok: true }
-    },
-
-    // ── Memory ────────────────────────────────────────────────────────────
-    'memory:list': (input) =>
-      services.memory.list(services.profileId, { includeArchived: input.includeArchived }),
-    'memory:create': (input) => {
-      const fact = services.memory.create({
-        profileId: services.profileId,
-        content: input.content,
-        kind: input.kind,
-        scope: input.scope,
-        sharingPolicy: input.sharingPolicy,
-        sourceConversationId: input.sourceConversationId,
-        // Tạo fact trong UI là một hành động xác nhận rõ ràng của người dùng. Main process
-        // đóng dấu mặc định để renderer không phải là nguồn sự thật cho thời điểm xác nhận.
-        lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
-        expiresAt: input.expiresAt,
-      })
-      recordLocalMutation({
-        type: 'memory_mutation',
-        action: 'created',
-        subjectType: 'memory',
-        subjectId: fact.id,
-      })
-      return fact
-    },
-    'memory:update': (input) => {
-      requireMemoryFactForCurrentProfile(input.id)
-      const fact = services.memory.update(input.id, {
-        content: input.content,
-        kind: input.kind,
-        scope: input.scope,
-        sharingPolicy: input.sharingPolicy,
-        sourceConversationId: input.sourceConversationId,
-        lastConfirmedAt: input.lastConfirmedAt ?? new Date().toISOString(),
-        expiresAt: input.expiresAt,
-      })
-      recordLocalMutation({
-        type: 'memory_mutation',
-        action: 'updated',
-        subjectType: 'memory',
-        subjectId: fact.id,
-      })
-      return fact
-    },
-    'memory:archive': (input) => {
-      requireMemoryFactForCurrentProfile(input.id)
-      services.memory.archive(input.id)
-      recordLocalMutation({
-        type: 'memory_mutation',
-        action: 'archived',
-        subjectType: 'memory',
-        subjectId: input.id,
-      })
-      return { ok: true }
-    },
-    'memory:restore': (input) => {
-      requireMemoryFactForCurrentProfile(input.id)
-      services.memory.restore(input.id)
-      recordLocalMutation({
-        type: 'memory_mutation',
-        action: 'restored',
-        subjectType: 'memory',
-        subjectId: input.id,
-      })
-      return { ok: true }
-    },
-    'memory:delete': (input) => {
-      requireMemoryFactForCurrentProfile(input.id)
-      services.memory.delete(input.id)
-      recordLocalMutation({
-        type: 'memory_mutation',
-        action: 'deleted',
-        subjectType: 'memory',
-        subjectId: input.id,
-      })
-      return { ok: true }
-    },
-
-    // ── Commitments ───────────────────────────────────────────────────────
-    'commitment:list': (input) =>
-      services.commitments.list(services.profileId, {
-        includeCompleted: input.includeCompleted,
-      }),
-    'commitment:create': (input) => {
-      const commitment = services.commitments.create({
-        profileId: services.profileId,
-        title: input.title,
-        nextAction: input.nextAction,
-        status: input.status,
-        dueAt: input.dueAt,
-        checkInAt: input.checkInAt,
-        sourceConversationId: input.sourceConversationId,
-      })
-      recordLocalMutation({
-        type: 'commitment_mutation',
-        action: 'created',
-        subjectType: 'commitment',
-        subjectId: commitment.id,
-      })
-      services.checkIns.reconcile()
-      return commitment
-    },
-    'commitment:update': (input) => {
-      requireCommitmentForCurrentProfile(input.id)
-      const commitment = services.commitments.update(input.id, {
-        title: input.title,
-        nextAction: input.nextAction,
-        status: input.status,
-        dueAt: input.dueAt,
-        checkInAt: input.checkInAt,
-        sourceConversationId: input.sourceConversationId,
-      })
-      recordLocalMutation({
-        type: 'commitment_mutation',
-        action: 'updated',
-        subjectType: 'commitment',
-        subjectId: commitment.id,
-      })
-      services.checkIns.reconcile()
-      return commitment
-    },
-    'commitment:delete': (input) => {
-      requireCommitmentForCurrentProfile(input.id)
-      services.commitments.delete(input.id)
-      recordLocalMutation({
-        type: 'commitment_mutation',
-        action: 'deleted',
-        subjectType: 'commitment',
-        subjectId: input.id,
-      })
-      return { ok: true }
-    },
-
-    // ── Proactive check-ins ─────────────────────────────────────────────
-    'checkin:list': () => services.checkIns.list(),
-    'checkin:setEnabled': (input) => {
-      services.settings.update({ proactiveCheckInsEnabled: input.enabled })
-      services.checkIns.reconfigure()
-      return services.checkIns.list()
-    },
-    'checkin:respond': (input) => {
-      requireCheckInForCurrentProfile(input.id)
-      return services.checkIns.respond(input.id, input.action, input.snoozeMinutes)
-    },
-    'checkin:unmute': (input) => {
-      requireCommitmentForCurrentProfile(input.commitmentId)
-      return { suggestion: services.checkIns.unmute(input.commitmentId) }
-    },
-
-    // ── Agent activity ──────────────────────────────────────────────────
-    'activity:list': (input) =>
-      services.activity
-        .list(services.profileId, {
-          type: input.type,
-          status: input.status,
-          actor: input.actor,
-          limit: input.limit,
-          offset: input.offset,
-        })
-        .map((event) => ({
-          ...event,
-          subjectLabel: resolveActivitySubjectLabel(services, event.subjectType, event.subjectId),
-        })),
-
-    // ── Bản tin công việc cá nhân ───────────────────────────────────────
-    // Không nhận tham số: JQL do main dựng, và schema đã strip mọi thứ renderer gửi kèm.
-    'briefing:get': () => services.briefing.get(),
-    'briefing:refresh': () => services.briefing.refresh(),
-
-    // ── BA workbench ────────────────────────────────────────────────────
     'ba:knowledge:list': (input) => {
       requireBaWorkbench()
       return services.baKnowledge
@@ -884,15 +1051,27 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         value: input.value,
       })
     },
+  }
+}
 
-    // ── Chat ──────────────────────────────────────────────────────────────
+// ── Chat ──────────────────────────────────────────────────────────────
+function registerChatHandlers(ctx: IpcContext): HandlersOf<'chat'> {
+  const { chat } = ctx
+
+  return {
     'chat:send': (input) => chat.send(input),
     'chat:cancel': (input) => {
       chat.cancel(input.requestId)
       return { ok: true }
     },
+  }
+}
 
-    // ── Files ─────────────────────────────────────────────────────────────
+// ── Files ─────────────────────────────────────────────────────────────
+function registerFileHandlers(ctx: IpcContext): HandlersOf<'file'> {
+  const { services } = ctx
+
+  return {
     'file:pick': async (input) => {
       const window = ctx.getWindow()
       if (window === null) {
@@ -904,8 +1083,26 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       services.files.release(input.fileToken)
       return { ok: true }
     },
+    /**
+     * Chiều ghi. Không nhận đường dẫn (schema không có trường nào cho nó) và không trả đường dẫn:
+     * người dùng vừa tự chọn thư mục trong hộp thoại nên họ biết file ở đâu, còn renderer thì
+     * không cần biết.
+     */
+    'file:save': async (input) => {
+      const window = ctx.getWindow()
+      if (window === null) {
+        throw new NexaError(ERROR_CODES.INTERNAL_ERROR, { safeDetail: 'no window' })
+      }
+      return services.fileWriter.save(window, input)
+    },
+  }
+}
 
-    // ── Tool confirmation ─────────────────────────────────────────────────
+// ── Tool confirmation ─────────────────────────────────────────────────
+function registerToolHandlers(ctx: IpcContext): HandlersOf<'tool'> {
+  const { services, chat } = ctx
+
+  return {
     'tool:approve': (input) => {
       chat.approve(input.operationId, input.payloadHash)
       return { ok: true }
@@ -916,8 +1113,9 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     },
     'tool:lookupUncertain': async (input) => {
       const operation = services.tracker.get(input.operationId)
-      const mcp = services.mcp
-      if (operation === null || mcp === null) {
+      // Router: operation có thể thuộc Jira, Confluence, Redmine hay XWiki (ADR 0010).
+      const mcp = services.mcpRouter
+      if (operation === null || !mcp.isReady) {
         throw new NexaError(ERROR_CODES.MCP_SERVER_UNAVAILABLE, {
           operationId: input.operationId,
         })
@@ -934,7 +1132,10 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         definition,
         definition.lookupResult,
         {
-          actingAccount: services.connections.get('jira')?.username ?? 'unknown',
+          actingAccount:
+            mcp.actingAccount(definition.targetSystem) ??
+            services.connections.get('jira')?.username ??
+            'unknown',
           readTool: async (name, toolInput) => {
             const readDefinition = mcp.resolveCallable(name)
             const validated = mcp.validateInput(readDefinition, toolInput)
@@ -984,14 +1185,20 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     'tool:listUncertain': () => services.conversations.listUncertainOperations(services.profileId),
 
     'tool:list': () =>
-      (services.mcp?.availableTools() ?? []).map((t) => ({
+      services.mcpRouter.availableTools().map((t) => ({
         name: t.name,
         description: t.description,
         riskLevel: t.riskLevel,
         targetSystem: t.targetSystem,
       })),
+  }
+}
 
-    // ── Settings & policy ─────────────────────────────────────────────────
+// ── Settings & policy ─────────────────────────────────────────────────
+function registerSettingsHandlers(ctx: IpcContext): HandlersOf<'settings' | 'policy'> {
+  const { services } = ctx
+
+  return {
     'settings:get': () => ({
       settings: services.settings.get(),
       lockedFeatures: services.settings.lockedFeatureNames(),
@@ -1004,6 +1211,11 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
     'settings:update': (input) => {
       const updated = services.settings.update(input)
       if (input.proactiveCheckInsEnabled !== undefined) services.checkIns.reconfigure()
+      // Renderer tự sơn lại giao diện, nhưng màu nền của CHÍNH cửa sổ do main giữ: nó lộ ra ở
+      // viền khi kéo giãn và là màu hiện ra trước khi renderer vẽ ở lần mở sau.
+      if (input.theme !== undefined) {
+        ctx.getWindow()?.setBackgroundColor(windowBackgroundColor(input.theme))
+      }
       // Bản tin cache theo ngày, nên đổi cờ mà không dọn cache thì người dùng phải chờ sang hôm
       // sau mới thấy thay đổi — kể cả khi họ vừa tắt đoạn dẫn của model.
       if (
@@ -1016,8 +1228,14 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       return updated
     },
     'policy:get': () => services.policy,
+  }
+}
 
-    // ── MCP ───────────────────────────────────────────────────────────────
+// ── MCP ───────────────────────────────────────────────────────────────
+function registerMcpHandlers(ctx: IpcContext, mcpLifecycle: McpLifecycle): HandlersOf<'mcp'> {
+  const { services } = ctx
+
+  return {
     'mcp:status': () =>
       services.mcp?.statusSnapshot ?? {
         system: 'jira' as const,
@@ -1025,12 +1243,18 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
         toolCount: 0,
       },
     'mcp:restart': async () => {
-      assertMcpIdle()
-      await rebuildMcp()
+      mcpLifecycle.assertIdle()
+      await rebuildMcp(mcpLifecycle, MCP_SYSTEMS)
       return services.mcp?.statusSnapshot ?? { system: 'jira' as const, state: 'stopped' as const }
     },
+  }
+}
 
-    // ── Diagnostics ───────────────────────────────────────────────────────
+// ── Diagnostics ───────────────────────────────────────────────────────
+function registerDiagnosticsHandlers(ctx: IpcContext): HandlersOf<'diagnostics'> {
+  const { services } = ctx
+
+  return {
     'diagnostics:export': () => exportDiagnostics(services),
     'diagnostics:appInfo': () => ({
       version: app.getVersion(),
@@ -1043,8 +1267,14 @@ function buildHandlers(ctx: IpcContext): HandlerMap {
       logToDisk: services.fileSink !== null,
       approvalStats: services.audit.approvalStats(services.profileId),
     }),
+  }
+}
 
-    // ── Xoá dữ liệu (§11.1) ───────────────────────────────────────────────
+// ── Xoá dữ liệu (§11.1) ───────────────────────────────────────────────
+function registerDataHandlers(ctx: IpcContext): HandlersOf<'data'> {
+  const { services } = ctx
+
+  return {
     'data:purge': (input) => {
       services.store.purgeProfile(services.profileId)
       services.search.clear()

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { detectSignals, normalizeQuestion, selectPreset, selectPresetForHistory } from './tool-preset-selector.js'
+import {
+  detectSignals,
+  normalizeQuestion,
+  selectPreset,
+  selectPresetForHistory,
+} from './tool-preset-selector.js'
 
 describe('normalizeQuestion', () => {
   it('bỏ dấu và hạ chữ thường', () => {
@@ -49,7 +54,11 @@ describe('nhận dạng dấu hiệu', () => {
   })
 
   it('không khớp nhầm tiền tố kỹ thuật thành issue key', () => {
-    for (const s of ['File này encode UTF-8 phải không', 'Theo RFC-2119 thì sao', 'Bản vá cho CVE-2024 chưa']) {
+    for (const s of [
+      'File này encode UTF-8 phải không',
+      'Theo RFC-2119 thì sao',
+      'Bản vá cho CVE-2024 chưa',
+    ]) {
       expect(detectSignals(s).jira, s).toBe(false)
     }
   })
@@ -126,5 +135,47 @@ describe('lấy câu hỏi từ history', () => {
   it('history rỗng hoặc không có message user → all-read', () => {
     expect(selectPresetForHistory([])).toBe('all-read')
     expect(selectPresetForHistory([{ role: 'system', content: 'tạo trang wiki' }])).toBe('all-read')
+  })
+})
+
+describe('ADR 0010 — Redmine và XWiki', () => {
+  const ALL = ['jira', 'confluence', 'redmine', 'xwiki'] as const
+
+  it('gọi tên Redmine ⇒ preset Redmine', () => {
+    expect(selectPreset('liệt kê issue Redmine đang giao cho tôi', ALL)).toBe('redmine-read')
+    expect(selectPreset('tạo issue Redmine cho dự án ABC', ALL)).toBe('redmine-full')
+  })
+
+  it('log time và "#123" là tín hiệu Redmine', () => {
+    expect(selectPreset('log time 2 giờ hôm nay', ALL)).toBe('redmine-read')
+    expect(selectPreset('xem #1234 giúp tôi', ALL)).toBe('redmine-read')
+    expect(detectSignals('dùng C#1 để viết', ALL).redmine).toBe(false)
+  })
+
+  it('gọi tên XWiki ⇒ preset XWiki, kể cả khi câu có chữ "trang"', () => {
+    expect(selectPreset('tìm trang hướng dẫn trên XWiki', ALL)).toBe('xwiki-read')
+    expect(selectPreset('sửa trang XWiki Sales.Plan', ALL)).toBe('xwiki-full')
+  })
+
+  it('từ chung chỉ trỏ tới hệ thống đang khả dụng', () => {
+    // Chỉ cấu hình Redmine: "tạo task" phải ra preset Redmine, không phải jira-full rỗng tool.
+    expect(selectPreset('tạo task mới', ['redmine'])).toBe('redmine-full')
+    expect(selectPreset('tìm trang hướng dẫn', ['xwiki'])).toBe('xwiki-read')
+    // Có cả Jira và Redmine: "task" mơ hồ ⇒ preset rộng.
+    expect(selectPreset('liệt kê task của tôi', ['jira', 'redmine'])).toBe('all-read')
+  })
+
+  it('gọi tên một hệ thống thì từ chung không kéo hệ thống cùng nhóm vào', () => {
+    expect(selectPreset('issue Redmine #12 sao rồi', ALL)).toBe('redmine-read')
+    expect(selectPreset('issue PRJ-12 sao rồi', ALL)).toBe('jira-read')
+  })
+
+  it('câu nhắc hai hệ thống khác nhóm ⇒ all/all-read', () => {
+    expect(selectPreset('tạo issue Redmine từ trang XWiki này', ALL)).toBe('all')
+  })
+
+  it('không truyền available ⇒ hành vi trước ADR 0010 (Jira/Confluence)', () => {
+    expect(selectPreset('tạo task mới')).toBe('jira-full')
+    expect(selectPreset('tìm trang hướng dẫn')).toBe('confluence-read')
   })
 })

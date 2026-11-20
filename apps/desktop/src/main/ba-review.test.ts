@@ -51,10 +51,7 @@ function model(): BaDocModel {
   }
 }
 
-function setup(
-  store: TempStore,
-  opts: { llm?: FakeLlm; standards?: BaStandards } = {},
-) {
+function setup(store: TempStore, opts: { llm?: FakeLlm; standards?: BaStandards } = {}) {
   const documents = new BaDocumentRepository(store.store)
   const knowledge = new BaKnowledgeRepository(store.store)
   const reviews = new BaReviewRepository(store.store)
@@ -101,11 +98,9 @@ describe('chạy review', () => {
     expect(report.rulePackVersion).toBe('1')
     expect(report.rulesTotal).toBe(15)
     expect(report.rules).toHaveLength(15)
-    expect(report.rules.filter((rule) => rule.status === 'skipped').map((rule) => rule.id)).toEqual([
-      'R-FLD-02',
-      'R-TPL-01',
-      'R-KB-01',
-    ])
+    expect(report.rules.filter((rule) => rule.status === 'skipped').map((rule) => rule.id)).toEqual(
+      ['R-FLD-02', 'R-TPL-01', 'R-KB-01'],
+    )
   })
 
   it('lưu báo cáo lại được, đọc ra đúng finding đã sinh', () => {

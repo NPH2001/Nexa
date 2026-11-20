@@ -745,6 +745,136 @@ export const MIGRATIONS: readonly Migration[] = [
       ALTER TABLE models DROP COLUMN supports_vision;
     `,
   },
+  {
+    version: 12,
+    name: 'redmine-xwiki-connections',
+    /**
+     * Thêm loại kết nối `redmine` và `xwiki` (openspec `add-redmine-xwiki-connectors`).
+     *
+     * Cùng cách làm với v2/v3: SQLite không cho sửa CHECK constraint bằng ALTER TABLE, nên phải
+     * dựng lại `connections`, đồng thời backup `credential_refs` vì bảng này tham chiếu
+     * `connections(id)` với ON DELETE CASCADE.
+     */
+    up: `
+      CREATE TABLE _mig12_connections AS SELECT * FROM connections;
+      CREATE TABLE _mig12_credential_refs AS SELECT * FROM credential_refs;
+
+      DROP TABLE credential_refs;
+      DROP TABLE connections;
+
+      CREATE TABLE connections (
+        id             TEXT PRIMARY KEY,
+        profile_id     TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        type           TEXT NOT NULL CHECK (type IN ('litellm','openai','jira','confluence','mcpGateway','redmine','xwiki')),
+        base_url       TEXT NOT NULL,
+        username       TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        last_test_json TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_connections_profile_type ON connections(profile_id, type);
+
+      CREATE TABLE credential_refs (
+        connection_id      TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+        secret_kind        TEXT NOT NULL,
+        secure_storage_key TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        PRIMARY KEY (connection_id, secret_kind)
+      );
+
+      INSERT INTO connections
+        (id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at)
+        SELECT id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at
+        FROM _mig12_connections;
+
+      INSERT INTO credential_refs (connection_id, secret_kind, secure_storage_key, created_at)
+        SELECT connection_id, secret_kind, secure_storage_key, created_at
+        FROM _mig12_credential_refs;
+
+      DROP TABLE _mig12_connections;
+      DROP TABLE _mig12_credential_refs;
+    `,
+    down: `
+      DELETE FROM connections WHERE type IN ('redmine','xwiki');
+
+      CREATE TABLE _mig12d_connections AS SELECT * FROM connections;
+      CREATE TABLE _mig12d_credential_refs AS SELECT * FROM credential_refs;
+
+      DROP TABLE credential_refs;
+      DROP TABLE connections;
+
+      CREATE TABLE connections (
+        id             TEXT PRIMARY KEY,
+        profile_id     TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        type           TEXT NOT NULL CHECK (type IN ('litellm','openai','jira','confluence','mcpGateway')),
+        base_url       TEXT NOT NULL,
+        username       TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        last_test_json TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_connections_profile_type ON connections(profile_id, type);
+
+      CREATE TABLE credential_refs (
+        connection_id      TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+        secret_kind        TEXT NOT NULL,
+        secure_storage_key TEXT NOT NULL,
+        created_at         TEXT NOT NULL,
+        PRIMARY KEY (connection_id, secret_kind)
+      );
+
+      INSERT INTO connections
+        (id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at)
+        SELECT id, profile_id, type, base_url, username, enabled, last_test_json, created_at, updated_at
+        FROM _mig12d_connections;
+
+      INSERT INTO credential_refs (connection_id, secret_kind, secure_storage_key, created_at)
+        SELECT connection_id, secret_kind, secure_storage_key, created_at
+        FROM _mig12d_credential_refs;
+
+      DROP TABLE _mig12d_connections;
+      DROP TABLE _mig12d_credential_refs;
+    `,
+  },
+  {
+    version: 13,
+    name: 'custom-agents',
+    /**
+     * Agent tuỳ biến mức persona (openspec `add-custom-agents`).
+     *
+     * `conversations.agent_id` nullable: hội thoại cũ giữ NULL và chạy với persona mặc định, nên
+     * không cần backfill. Xoá agent đặt cột về NULL chứ không xoá hội thoại. Tên và hướng dẫn
+     * được mã hoá như tiêu đề hội thoại và memory.
+     */
+    up: `
+      CREATE TABLE agents (
+        id                        TEXT PRIMARY KEY,
+        profile_id                TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        name_ciphertext           TEXT NOT NULL,
+        icon                      TEXT NOT NULL,
+        instructions_ciphertext   TEXT NOT NULL,
+        tool_ceiling              TEXT NOT NULL,
+        local_groups_json         TEXT NOT NULL,
+        model_id                  TEXT,
+        model_provider            TEXT,
+        created_at                TEXT NOT NULL,
+        updated_at                TEXT NOT NULL,
+        archived_at               TEXT
+      );
+      CREATE INDEX idx_agents_profile_archived_updated
+        ON agents(profile_id, archived_at, updated_at DESC);
+
+      ALTER TABLE conversations ADD COLUMN agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL;
+      CREATE INDEX idx_conversations_agent ON conversations(agent_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_conversations_agent;
+      ALTER TABLE conversations DROP COLUMN agent_id;
+      DROP TABLE IF EXISTS agents;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

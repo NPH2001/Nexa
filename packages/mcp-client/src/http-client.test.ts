@@ -159,6 +159,53 @@ describe('McpHttpClient — transport HTTP remote (ADR-0005)', () => {
     expect(result.isError).toBe(false)
   })
 
+  it('works with a server that never issues mcp-session-id (XWiki style) and never invents one', async () => {
+    // Endpoint MCP của XWiki trả `application/json` và KHÔNG có header `mcp-session-id` (quan sát
+    // thật 2026-11-17), trong khi gateway LiteLLM có. Client phải chạy được cả hai mà không tự
+    // bịa ra một session id.
+    const { server, url, receivedHeaders } = await startMockGateway({})
+    servers.push(server)
+    const { logger } = testLogger()
+    const client = new McpHttpClient({ url, headers: () => ({}), logger, allowInsecureLoopback: true })
+    await client.start()
+    await client.listTools()
+    await client.callTool('jira_get_issue', {})
+
+    expect(receivedHeaders.length).toBeGreaterThanOrEqual(4)
+    for (const h of receivedHeaders) expect(h).not.toHaveProperty('mcp-session-id')
+  })
+
+  it('exactUrl: calls the configured path verbatim — XWiki answers 404 on a trailing slash', async () => {
+    const seenPaths: string[] = []
+    const server = createServer((req, res) => {
+      seenPaths.push(req.url ?? '')
+      res.writeHead(404)
+      res.end()
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    servers.push(server)
+    const { port } = server.address() as AddressInfo
+    const { logger } = testLogger()
+
+    const exact = new McpHttpClient({
+      url: `http://127.0.0.1:${String(port)}/rest/wikis/xwiki/aiLLM/mcp`,
+      headers: () => ({}),
+      logger,
+      allowInsecureLoopback: true,
+      exactUrl: true,
+    })
+    await expect(exact.start()).rejects.toBeDefined()
+    const appended = new McpHttpClient({
+      url: `http://127.0.0.1:${String(port)}/mcp`,
+      headers: () => ({}),
+      logger,
+      allowInsecureLoopback: true,
+    })
+    await expect(appended.start()).rejects.toBeDefined()
+
+    expect(seenPaths).toEqual(['/rest/wikis/xwiki/aiLLM/mcp', '/mcp/'])
+  })
+
   it('sends notifications/initialized WITHOUT an id — a notification is not a request', async () => {
     // Bug thật đã gặp: gửi `id` cho một notification khiến gateway coi nó là request cần trả
     // lời và từ chối bằng -32602, làm start() thất bại ngay sau khi initialize đã thành công.

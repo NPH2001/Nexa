@@ -14,6 +14,7 @@ const WORKSPACE_PACKAGES = [
   'llm-client',
   'mcp-client',
   'atlassian-mcp-manager',
+  'work-mcp-servers',
   'connection-config',
   'daily-briefing',
   'document-checklist',

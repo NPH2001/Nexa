@@ -1,4 +1,5 @@
 import type { Commitment } from '@nexa/shared-types/renderer'
+import { formatDateTime } from './datetime-ui.js'
 
 export type CommitmentAttentionTone = 'overdue' | 'soon' | 'blocked' | 'normal' | 'paused'
 
@@ -87,15 +88,7 @@ export function dateTimeLocalToIso(value: string): string | null {
 }
 
 export function formatCommitmentDate(value: string | null): string {
-  return value === null
-    ? 'Không đặt'
-    : new Date(value).toLocaleString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
+  return value === null ? 'Không đặt' : formatDateTime(value)
 }
 
 function parseTime(value: string | null): number | null {

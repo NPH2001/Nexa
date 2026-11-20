@@ -1,4 +1,4 @@
-import { ERROR_CODES, NexaError, type LlmProvider } from '@nexa/shared-types'
+import { ERROR_CODES, NexaError, type ErrorCode, type LlmProvider } from '@nexa/shared-types'
 import type { Logger } from '@nexa/observability'
 import { joinUrl } from '@nexa/security'
 import { SseAccumulator, SseStreamError, parseNonStreamResponse } from './sse-parser.js'
@@ -6,6 +6,72 @@ import type { ChatRequest, ChatResult, ChatStreamEvent } from './types.js'
 
 /** Đủ chứa nguyên câu lỗi của gateway (`{"error":{"message":...}}`), không đủ để đổ trọn payload. */
 const MAX_LOGGED_ERROR_BODY_CHARS = 300
+
+/**
+ * Loại lỗi mà gateway báo NGAY TRONG stream, thay vì bằng HTTP status.
+ *
+ * Vì sao phải có enum này: khi lỗi tới bằng đường SSE thì không có status nào để dựa vào, và tất
+ * cả đều rơi vào `UPSTREAM_UNAVAILABLE` — "context length exceeded", "model không nhận ảnh" và
+ * "upstream provider lỗi" hiện ra giống hệt nhau, dù ba cái cần ba cách sửa khác nhau.
+ *
+ * Vì sao là enum chứ không phải chính câu lỗi: câu lỗi của gateway là error body của một POST, và
+ * repo này có một bất biến có test rằng error body của POST KHÔNG BAO GIỜ được ghi log vì nó có
+ * thể echo prompt về (§11.1). Ảnh làm điều đó cụ thể hơn — OpenAI/LiteLLM trả những câu kiểu
+ * `Invalid 'messages[1].content[1].image_url.url': data:image/png;base64,iVBORw0KG...`. Phân loại
+ * giữ được giá trị chẩn đoán mà không đưa một byte nội dung nào vào log.
+ */
+export const UPSTREAM_ERROR_CLASSES = [
+  'context_length',
+  'image_unsupported',
+  'image_invalid',
+  'rate_limited',
+  'auth',
+  'content_filter',
+  'model_unavailable',
+  'upstream_error',
+  'unclassified',
+] as const
+
+export type UpstreamErrorClass = (typeof UPSTREAM_ERROR_CLASSES)[number]
+
+/**
+ * Mẫu nhận dạng, xét theo thứ tự. Mẫu hẹp đứng trước mẫu rộng: một câu vừa có "image" vừa có
+ * "not supported" phải ra `image_unsupported`, không phải `upstream_error`.
+ */
+const UPSTREAM_ERROR_PATTERNS: readonly (readonly [UpstreamErrorClass, RegExp])[] = [
+  ['context_length', /context[\s_-]*length|maximum context|too many tokens|context window/],
+  [
+    'image_unsupported',
+    /(image|vision|multimodal)[^.]{0,40}(not support|unsupported|not enabled)|does not support image/,
+  ],
+  [
+    'image_invalid',
+    /invalid image|image_url|failed to (download|process|decode) image|corrupt.{0,10}image/,
+  ],
+  ['rate_limited', /rate limit|too many requests|quota|429/],
+  ['auth', /api key|unauthorized|authentication|invalid_api_key|permission denied|401|403/],
+  ['content_filter', /content[\s_-]*(filter|policy)|safety|responsible ?ai/],
+  ['model_unavailable', /model not found|no deployment|does not exist|unknown model|not available/],
+  [
+    'upstream_error',
+    /overloaded|internal server error|bad gateway|service unavailable|upstream|timeout|5\d\d/,
+  ],
+]
+
+/**
+ * Phân loại câu lỗi in-stream. Hàm thuần, KHÔNG giữ lại câu lỗi gốc ở bất kỳ đâu.
+ *
+ * `unclassified` là một kết quả hợp lệ, không phải thất bại: nó nói "gateway có báo lỗi, nhưng
+ * không khớp mẫu nào đã biết", và bước tiếp theo khi đó là đối chiếu request id với log LiteLLM
+ * (§15.2) — đúng cơ chế mà thiết kế đã định cho những gì Nexa cố ý không ghi lại.
+ */
+export function classifyUpstreamStreamError(message: string): UpstreamErrorClass {
+  const normalized = message.toLowerCase()
+  for (const [errorClass, pattern] of UPSTREAM_ERROR_PATTERNS) {
+    if (pattern.test(normalized)) return errorClass
+  }
+  return 'unclassified'
+}
 
 export interface OpenAiCompatibleClientOptions {
   readonly baseUrl: string
@@ -288,6 +354,14 @@ export class OpenAiCompatibleClient {
           requestId: ctx.requestId,
           safeDetail: detail,
         })
+      case 413:
+        // Body quá lớn — gần như luôn là ảnh base64. Trước đây rơi vào `default` và thành
+        // UPSTREAM_UNAVAILABLE, tức là người dùng được bảo đi kiểm tra mạng trong khi mạng
+        // không có lỗi gì. Đây là mã duy nhất trong bảng này mà người dùng tự sửa được ngay.
+        return new NexaError(ERROR_CODES.UPSTREAM_PAYLOAD_TOO_LARGE, {
+          requestId: ctx.requestId,
+          safeDetail: detail,
+        })
       default:
         return new NexaError(ERROR_CODES.UPSTREAM_UNAVAILABLE, {
           requestId: ctx.requestId,
@@ -320,12 +394,71 @@ export class OpenAiCompatibleClient {
   private mapStreamError(error: unknown, ctx: RequestContext): NexaError {
     if (NexaError.is(error)) return error
     if (error instanceof SseStreamError) {
-      return new NexaError(ERROR_CODES.UPSTREAM_UNAVAILABLE, {
+      // Trước đây cả nhánh này chỉ để lại đúng một chuỗi cố định, nên khi lỗi xảy ra thì log
+      // không phân biệt được nguyên nhân nào trong số nhiều nguyên nhân rất khác nhau. Giờ ghi
+      // LOẠI lỗi (enum), không ghi câu lỗi — xem `UPSTREAM_ERROR_CLASSES` về lý do.
+      const errorClass = classifyUpstreamStreamError(error.message)
+      this.log.warn('llm-stream-error', {
         requestId: ctx.requestId,
-        safeDetail: 'gateway reported an error inside the stream',
+        errorClass,
+        // Độ dài thôi cũng có ích: một message rỗng nghĩa là gateway trả `error` không kèm chữ.
+        messageLength: error.message.length,
+      })
+      // Loại lỗi phải quyết định MÃ LỖI, không chỉ nằm trong log: `safeDetail` không rời main
+      // process (xem `fail()` trong result.ts), nên thứ duy nhất tới được người dùng là
+      // message/hint mà catalog gắn với mã. Gộp tất cả vào UPSTREAM_UNAVAILABLE là lý do một
+      // lượt gửi ảnh cho model không-vision lại hiện ra thành "kiểm tra kết nối mạng".
+      return new NexaError(this.codeForStreamErrorClass(errorClass), {
+        requestId: ctx.requestId,
+        safeDetail: `stream error: ${errorClass}`,
       })
     }
     return NexaError.wrap(error, ERROR_CODES.UPSTREAM_UNAVAILABLE)
+  }
+
+  /**
+   * Loại lỗi in-stream → mã lỗi.
+   *
+   * Phần lớn dùng lại mã đã có, và đó là điểm chính: một lỗi tới bằng HTTP status hay tới bằng SSE
+   * thì với người dùng vẫn là cùng một vấn đề, nên phải hiện ra cùng một thông điệp và cùng một
+   * gợi ý. `unclassified` giữ `UPSTREAM_UNAVAILABLE` một cách có chủ ý — khi không biết thì nói
+   * không biết, và mã yêu cầu là đường đi tiếp (§15.2).
+   *
+   * Một ngoại lệ có chủ ý với luật đối xứng trên: `upstream_error`. HTTP 500 vẫn ra
+   * `UPSTREAM_UNAVAILABLE` (`mapHttpError`), còn cùng nguyên nhân đó tới trong stream thì ra
+   * `UPSTREAM_PROVIDER_FAILED`. Hai đường KHÔNG tương đương ở đúng điểm người dùng cần: tới được
+   * trong stream nghĩa là mạng chắc chắn đang chạy, nên lời khuyên "kiểm tra kết nối" phải biến
+   * mất. Nếu sau này nhánh 5xx của `mapHttpError` cũng đổi sang mã mới thì xoá đoạn này đi.
+   */
+  private codeForStreamErrorClass(errorClass: UpstreamErrorClass): ErrorCode {
+    switch (errorClass) {
+      case 'context_length':
+        return ERROR_CODES.CONTEXT_LENGTH_EXCEEDED
+      case 'image_unsupported':
+        return ERROR_CODES.MODEL_DOES_NOT_SUPPORT_IMAGES
+      case 'image_invalid':
+        return ERROR_CODES.IMAGE_REJECTED_BY_UPSTREAM
+      case 'content_filter':
+        return ERROR_CODES.CONTENT_FILTERED
+      case 'rate_limited':
+        return this.provider === 'openai'
+          ? ERROR_CODES.OPENAI_RATE_LIMITED
+          : ERROR_CODES.LITELLM_RATE_LIMITED
+      case 'auth':
+        return this.provider === 'openai'
+          ? ERROR_CODES.OPENAI_AUTH_FAILED
+          : ERROR_CODES.LITELLM_AUTH_FAILED
+      case 'model_unavailable':
+        return ERROR_CODES.MODEL_NOT_CONFIGURED
+      case 'upstream_error':
+        // KHÔNG dùng `UPSTREAM_UNAVAILABLE`: lỗi này chỉ tới được sau khi kết nối đã mở và gateway
+        // đã bắt đầu trả dòng SSE, nên "kiểm tra kết nối mạng nội bộ" là lời khuyên sai — mạng
+        // đang chạy. Lỗi thật gặp phải: một lượt chat kèm ảnh chết sau ~40 giây với câu lỗi loại
+        // này, trong khi lượt ngay trước đó không kèm ảnh chạy xong trong 5 giây.
+        return ERROR_CODES.UPSTREAM_PROVIDER_FAILED
+      case 'unclassified':
+        return ERROR_CODES.UPSTREAM_UNAVAILABLE
+    }
   }
 }
 

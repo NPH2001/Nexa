@@ -24,11 +24,11 @@ tham chiếu số mục của tài liệu (ví dụ `§10.2`) để đối chi�
 
 | Hạng mục                                 | Trạng thái                                                                         |
 | ---------------------------------------- | ---------------------------------------------------------------------------------- |
-| Test                                     | **1108 unit/integration** + **33 E2E** được định nghĩa (31 Linux + 2 Windows-only) |
+| Test                                     | **1408 unit/integration** + **39 E2E** được định nghĩa (37 + 2 Windows-only)       |
 | Lint · typecheck                         | sạch                                                                               |
 | Build (main/preload/renderer)            | chạy được                                                                          |
 | Chạy app thật                            | ✅ trên Linux — `window-ready` sau 304 ms                                          |
-| E2E desktop                              | ✅ 31 test Linux qua Playwright + Electron; 2 test DPAPI/startup dành cho Windows  |
+| E2E desktop                              | ✅ 37 test qua Playwright + Electron; 2 test DPAPI/startup chỉ chạy trên Windows   |
 | Đóng gói Windows                         | ⚠️ phải build trên Windows (job CI `build-windows`) — không cross-compile từ Linux |
 | Xác minh DPAPI trên Windows              | **chưa** (OPEN-QUESTIONS C1)                                                       |
 | Kết nối LiteLLM / Jira / Confluence thật | **chưa** — mới chạy với mock server (C2)                                           |
@@ -104,6 +104,8 @@ nexa/
 | API key/PAT không nằm dạng rõ trong SQLite, file config hay log                                      | §11.1       | `security.test.ts`, `connection-config.test.ts` |
 | Renderer không đọc được secret, không gọi mạng, không chạm file system                               | §5.3, §11.3 | `ipc.test.ts`, E2E CSP, `connect-src 'none'`    |
 | Đường dẫn file không bao giờ rời main process                                                        | §5.3        | `main.test.ts` → FileBroker                     |
+| Renderer không quyết định nơi ghi file: đường dẫn do hộp thoại lưu sinh ra, không đi vào lẫn ra IPC  | §5.3, §11.1 | `file-writer.test.ts`, `ipc.test.ts`            |
+| File do model sinh chỉ ghi được định dạng văn bản trong allowlist, không nhị phân, không thực thi    | §11.3       | `file-blocks.test.ts`, `file-writer.test.ts`    |
 | Tool write không chạy khi chưa xác nhận                                                              | §17.2-2     | `agent-runtime.test.ts`                         |
 | Payload đổi sau preview ⇒ approval vô hiệu                                                           | §17.2-3     | `agent-runtime.test.ts`                         |
 | Bấm xác nhận hai lần chỉ tạo một đối tượng                                                           | §17.2-4     | `agent-runtime.test.ts` + unique index          |

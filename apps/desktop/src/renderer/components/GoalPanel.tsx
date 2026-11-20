@@ -8,6 +8,7 @@ import type {
 import { api } from '../bridge.js'
 import { commitThenRefresh } from '../committed-mutation.js'
 import { DestructiveActionDialog } from './DestructiveActionDialog.js'
+import { EmptyState, InlineError, LoadingSkeleton } from './StateBlocks.js'
 import type { Toast } from './Toasts.js'
 import {
   dateTimeLocalToIso,
@@ -253,7 +254,7 @@ export function GoalPanel(props: {
           <p className="today-eyebrow">Continuity có chủ đích</p>
           <h1>Mục tiêu &amp; cam kết</h1>
           <p className="muted">
-            Nexa chỉ theo dõi những cam kết bạn tự tạo. Chat và memory không tự biến thành nghĩa vụ.
+            Nexa chỉ theo dõi những cam kết bạn tự tạo. Trò chuyện và ghi nhớ không tự biến thành nghĩa vụ.
           </p>
         </div>
         <div className="goal-stats" aria-label="Thống kê cam kết">
@@ -394,26 +395,30 @@ export function GoalPanel(props: {
 
       {loading ? (
         <section className="panel">
-          <p className="muted" role="status">
-            Đang tải cam kết…
-          </p>
+          <LoadingSkeleton label="Đang tải cam kết…" variant="cards" />
         </section>
       ) : loadError ? (
-        <section className="panel danger-zone">
-          <h2>Không tải được cam kết</h2>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => void reload().catch(() => undefined)}
-          >
-            Thử lại
-          </button>
+        <section className="panel">
+          <InlineError
+            title="Không tải được cam kết"
+            detail="Các cam kết vẫn nằm an toàn trên máy; chỉ là lần đọc này không thành."
+            onRetry={() => void reload().catch(() => undefined)}
+          />
         </section>
       ) : (
         <>
           <CommitmentSection
             title="Đang theo dõi"
             empty="Chưa có cam kết nào. Hãy bắt đầu bằng một kết quả bạn thật sự muốn tiếp tục qua nhiều phiên làm việc."
+            emptyAction={{
+              // Không dùng "Tạo cam kết…": trùng tên với nút gửi form, trình đọc màn hình đọc
+              // hai nút y hệt nhau.
+              label: 'Viết cam kết đầu tiên',
+              onClick: () => {
+                titleRef.current?.scrollIntoView({ block: 'center' })
+                titleRef.current?.focus()
+              },
+            }}
             items={activeCommitments}
             mutedCommitmentIds={mutedCommitmentIds}
             conversations={conversationMap}
@@ -457,6 +462,7 @@ export function GoalPanel(props: {
 function CommitmentSection(props: {
   title: string
   empty: string
+  emptyAction?: { label: string; onClick: () => void }
   items: readonly Commitment[]
   mutedCommitmentIds: ReadonlySet<string>
   conversations: ReadonlyMap<string, Conversation>
@@ -471,7 +477,9 @@ function CommitmentSection(props: {
     <section className="panel goal-section">
       <h2>{props.title}</h2>
       {props.items.length === 0 ? (
-        <p className="muted small">{props.empty}</p>
+        <EmptyState action={props.emptyAction}>
+          <p className="small">{props.empty}</p>
+        </EmptyState>
       ) : (
         <ul className="goal-list" aria-label={props.title}>
           {props.items.map((commitment) => {

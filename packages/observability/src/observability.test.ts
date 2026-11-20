@@ -96,6 +96,23 @@ describe('Redactor — theo pattern (secret chưa kịp đăng ký)', () => {
     expect(r.redactString('Authorization: Bearer sk-abcdef1234567890')).not.toContain('abcdef')
   })
 
+  it('che Bearer token dạng XWiki có dấu ":" và "/" (ADR 0010)', () => {
+    // Token giả cùng định dạng `xwiki:XWiki.<user>/<n>/<secret>` — không phải token thật.
+    const fake = 'xwiki:XWiki.tester/0/FakeSecretPart_QwErTy123'
+    const out = r.redactString(`request failed: Authorization: Bearer ${fake}`)
+    expect(out).not.toContain('FakeSecretPart')
+    expect(out).not.toContain('XWiki.tester')
+  })
+
+  it('che header API key Redmine theo tên trường', () => {
+    const out = r.redact({
+      'x-mcp-redmine-x-redmine-api-key': 'fake-redmine-key-value',
+      'x-mcp-servers': 'redmine',
+    }) as Record<string, string>
+    expect(out['x-mcp-redmine-x-redmine-api-key']).not.toContain('fake-redmine')
+    expect(out['x-mcp-servers']).toBe('redmine')
+  })
+
   it('che JWT', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r'
     expect(r.redactString(`token=${jwt}`)).not.toContain('eyJhbGci')
@@ -281,7 +298,13 @@ describe('FileSink', () => {
   })
 
   it('tự tắt thay vì làm sập app khi không ghi được', () => {
-    const sink = new FileSink({ dir: '/khong/the/tao/duoc/thu/muc/nay' })
+    // Một file thường không thể làm thư mục cha, nên `mkdir` chắc chắn thất bại — trên cả POSIX
+    // lẫn Windows. Đường dẫn kiểu '/khong/the/tao/duoc' thì không: trên Windows nó chỉ là
+    // 'D:\khong\the\...' và tạo được, khiến test vừa xanh sai vừa rác ổ đĩa.
+    const blocker = join(dir, 'khong-phai-thu-muc')
+    writeFileSync(blocker, '')
+
+    const sink = new FileSink({ dir: join(blocker, 'log') })
     expect(sink.active).toBe(false)
     expect(() =>
       sink.write({ ts: 'x', level: 'info', category: 'application', event: 'e' }),

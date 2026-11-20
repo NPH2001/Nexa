@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { LLM_PROVIDERS, type ChatModelProvider, type LlmProvider } from './provider.js'
+import type { ToolPreset } from './tools.js'
 
 /** Vai trò message. `tool` dùng cho kết quả tool trả về model (§7.3). */
 export const MESSAGE_ROLES = ['system', 'user', 'assistant', 'tool'] as const
@@ -34,6 +35,50 @@ export interface Conversation {
   readonly updatedAt: string
   readonly archivedAt: string | null
   readonly messageCount: number
+  /** Agent đang gắn; `null` ⇒ persona mặc định. */
+  readonly agentId: string | null
+}
+
+/**
+ * Biểu tượng agent: danh sách ĐÓNG, không nhận chuỗi tự do. Giữ UI ổn định và không cho một
+ * chuỗi tuỳ ý (kể cả rất dài) đi vào DB qua trường chỉ để trang trí.
+ */
+export const AGENT_ICONS = ['🤖', '📝', '📊', '🔍', '📚', '🧭', '🛠️', '💡'] as const
+export type AgentIcon = (typeof AGENT_ICONS)[number]
+
+export const AGENT_NAME_MAX = 60
+export const AGENT_INSTRUCTIONS_MAX = 4_000
+
+/**
+ * Nhóm tool cục bộ agent được dùng. Công tắc này chỉ THU HẸP: registry chỉ được ghép khi cả
+ * setting toàn cục lẫn công tắc agent cùng bật.
+ */
+export interface AgentLocalGroups {
+  readonly commitments: boolean
+  readonly baWorkbench: boolean
+}
+
+/**
+ * Agent tuỳ biến mức persona (openspec `add-custom-agents`).
+ *
+ * `toolCeiling` là TRẦN: preset do bộ chọn theo ngữ cảnh chọn được giao với trần này, nên agent
+ * chỉ thu hẹp cái model thấy, không nới quyền và không đụng tới Confirmation Guard.
+ */
+export interface Agent {
+  readonly id: string
+  readonly profileId: string
+  readonly name: string
+  readonly icon: AgentIcon
+  /** Nối SAU prompt gốc; không bao giờ thay thế nó. */
+  readonly instructions: string
+  readonly toolCeiling: ToolPreset
+  readonly localGroups: AgentLocalGroups
+  /** `modelId` và `modelProvider` cùng có hoặc cùng vắng. */
+  readonly modelId: string | null
+  readonly modelProvider: ChatModelProvider | null
+  readonly archived: boolean
+  readonly createdAt: string
+  readonly updatedAt: string
 }
 
 export const MEMORY_FACT_KINDS = ['identity', 'preference', 'goal', 'constraint', 'note'] as const
@@ -661,7 +706,7 @@ export interface ToolPreview {
    * mạng. Preview vẫn bắt buộc: người dùng phải thấy rõ cái gì sắp bị ghi, kể cả khi đích đến
    * không phải hệ thống bên ngoài.
    */
-  readonly targetSystem: 'jira' | 'confluence' | 'local'
+  readonly targetSystem: McpTargetSystem | 'local'
   /** Rỗng với `local` — không có hệ thống đích để hiển thị URL. */
   readonly targetSystemUrl: string
   /** Mục 2: hành động cụ thể, tiếng Việt. */
@@ -726,8 +771,29 @@ export type { ChatModelProvider } from './provider.js'
  * bộ (ví dụ LiteLLM MCP gateway) — thay thế cho việc Nexa tự spawn `uvx mcp-atlassian` bằng
  * stdio khi hạ tầng tổ chức chỉ cung cấp một endpoint HTTP có sẵn. Xem ADR-0005.
  */
-export const CONNECTION_TYPES = ['litellm', 'openai', 'jira', 'confluence', 'mcpGateway'] as const
+export const CONNECTION_TYPES = [
+  'litellm',
+  'openai',
+  'jira',
+  'confluence',
+  'mcpGateway',
+  /**
+   * Redmine (openspec `add-redmine-xwiki-connectors`). `baseUrl` là URL WEB Redmine — dùng cho
+   * preview và đối chiếu host của link — còn transport đi qua kết nối `mcpGateway`. Credential là
+   * API key Redmine.
+   */
+  'redmine',
+  /** XWiki: `baseUrl` là URL endpoint MCP của XWiki, credential là bearer token. */
+  'xwiki',
+] as const
 export type ConnectionType = (typeof CONNECTION_TYPES)[number]
+
+/**
+ * Hệ thống bên ngoài mà một tool MCP tác động tới. Mỗi hệ thống thuộc đúng một MCP source
+ * (xem `McpToolRouter`), nên đây cũng là khoá để tìm URL đích cho preview.
+ */
+export const MCP_TARGET_SYSTEMS = ['jira', 'confluence', 'redmine', 'xwiki'] as const
+export type McpTargetSystem = (typeof MCP_TARGET_SYSTEMS)[number]
 
 export function isLlmConnection(type: ConnectionType): type is LlmProvider {
   return (LLM_PROVIDERS as readonly string[]).includes(type)
@@ -833,13 +899,9 @@ export interface ModelConfig {
 // ── Bản tin công việc cá nhân (openspec `add-daily-briefing`) ─────────────
 
 export type BriefingGroupName = 'overdue' | 'due_today' | 'due_this_week' | 'in_progress'
-export type BriefingSourceName = 'commitment' | 'jira'
+export type BriefingSourceName = 'commitment' | 'redmine'
 export type BriefingReasonKindName =
-  | 'overdue'
-  | 'due_today'
-  | 'due_this_week'
-  | 'in_progress'
-  | 'check_in_due'
+  'overdue' | 'due_today' | 'due_this_week' | 'in_progress' | 'check_in_due'
 
 /**
  * Vì sao một nguồn không có dữ liệu.
@@ -883,8 +945,9 @@ export interface BriefingItemView {
   readonly group: BriefingGroupName
   readonly reason: BriefingReasonView
   readonly at: string | null
+  /** Hạn hoàn thành, ISO 8601. Khác `at`: `at` có thể đang là lịch check-in của cam kết. */
+  readonly dueAt: string | null
   readonly updatedAt: string
-  readonly inActiveSprint: boolean
 }
 
 export interface BriefingGroupView {

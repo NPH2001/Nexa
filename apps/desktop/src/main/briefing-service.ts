@@ -7,9 +7,9 @@ import type {
 } from '@nexa/shared-types'
 import type { CommitmentRepository } from '@nexa/local-store'
 import type { Logger } from '@nexa/observability'
-import type { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
-import type { AppSettings } from '@nexa/shared-types'
-import { fetchBriefingIssues, type BriefingJiraResult } from './briefing-jira.js'
+import type { AppSettings, McpToolSource } from '@nexa/shared-types'
+import { redmineIssueUrl } from '@nexa/work-mcp-servers'
+import { fetchBriefingIssues, type BriefingRedmineResult } from './briefing-redmine.js'
 import { summarizeBriefing, type BriefingSummaryDeps } from './briefing-summary.js'
 
 /**
@@ -18,7 +18,7 @@ import { summarizeBriefing, type BriefingSummaryDeps } from './briefing-summary.
  * Bề mặt CHỈ ĐỌC: service này không tạo, sửa, hoàn thành hay xoá cam kết, không sinh check-in, và
  * không gọi tool ghi nào. Vì thế nó không chạm Confirmation Guard — không có gì để xác nhận.
  *
- * Cache nằm trong RAM theo `profile + ngày địa phương`, không xuống SQLite: nội dung Jira là dữ
+ * Cache nằm trong RAM theo `profile + ngày địa phương`, không xuống SQLite: nội dung Redmine là dữ
  * liệu tạm, một bản sao trên đĩa là một bản sao phải mã hoá, phải purge và phải giải thích.
  */
 
@@ -28,7 +28,7 @@ const BRIEFING_COMMITMENT_STATUSES = new Set(['active', 'blocked'])
 /**
  * Hỏng tạm thời thì KHÔNG cache.
  *
- * Cache một lần Jira chết nghĩa là người dùng phải bấm Làm mới bằng tay mới thoát khỏi nó, cho
+ * Cache một lần Redmine chết nghĩa là người dùng phải bấm Làm mới bằng tay mới thoát khỏi nó, cho
  * tới hết ngày. Các trạng thái còn lại (`not_configured`, `disabled_by_policy`, `unauthenticated`)
  * thì ngược lại: chúng chỉ đổi khi người dùng đi sửa cấu hình, và lúc đó cache đã bị dọn theo
  * `settings:update` rồi — thử lại mỗi lần mở Today chỉ tốn một lời gọi vô ích.
@@ -44,8 +44,8 @@ export interface DailyBriefingDeps {
   readonly profileId: string
   readonly commitments: CommitmentRepository
   readonly settings: () => AppSettings
-  readonly mcp: () => AtlassianMcpManager | null
-  readonly jiraBaseUrl: () => string | null
+  readonly redmine: () => Pick<McpToolSource, 'callTool'> | null
+  readonly redmineBaseUrl: () => string | null
   readonly summary: Omit<BriefingSummaryDeps, 'enabled' | 'logger'>
   readonly logger: Logger
   readonly now?: () => Date
@@ -53,9 +53,10 @@ export interface DailyBriefingDeps {
   readonly timeZoneOffsetMinutes?: () => number
 }
 
-function issueUrl(baseUrl: string | null, key: string): string | null {
+/** `reference` có dạng `#123`; không đọc được id thì không có liên kết. */
+function issueUrl(baseUrl: string | null, reference: string): string | null {
   if (baseUrl === null) return null
-  return `${baseUrl.replace(/\/+$/, '')}/browse/${key}`
+  return redmineIssueUrl(baseUrl, reference.replace(/^#/, '')) ?? null
 }
 
 export class DailyBriefingService {
@@ -118,27 +119,25 @@ export class DailyBriefingService {
     sources: readonly BriefingSourceStateView[],
     summary: DailyBriefingView['summary'],
   ): DailyBriefingView {
-    const baseUrl = this.deps.jiraBaseUrl()
+    const baseUrl = this.deps.redmineBaseUrl()
     const groups: BriefingGroupView[] = briefing.groups.map((group) => ({
       group: group.group,
       truncatedCount: group.truncatedCount,
-      items: group.items.map(
-        (item): BriefingItemView => ({
-          id: item.id,
-          source: item.source,
-          title: item.title,
-          detail: item.detail,
-          reference: item.reference,
-          url: item.reference === null ? null : issueUrl(baseUrl, item.reference),
-          sourceConversationId: item.sourceConversationId,
-          status: item.status,
-          group: item.group,
-          reason: item.reason,
-          at: item.at,
-          updatedAt: item.updatedAt,
-          inActiveSprint: item.inActiveSprint,
-        }),
-      ),
+      items: group.items.map((item): BriefingItemView => ({
+        id: item.id,
+        source: item.source,
+        title: item.title,
+        detail: item.detail,
+        reference: item.reference,
+        url: item.reference === null ? null : issueUrl(baseUrl, item.reference),
+        sourceConversationId: item.sourceConversationId,
+        status: item.status,
+        group: item.group,
+        reason: item.reason,
+        at: item.at,
+        dueAt: item.dueAt,
+        updatedAt: item.updatedAt,
+      })),
     }))
 
     return {
@@ -174,12 +173,12 @@ export class DailyBriefingService {
     const started = Date.now()
     const now = this.now()
 
-    // Cam kết trước: phần cục bộ không được phụ thuộc vào việc Jira có sống hay không.
+    // Cam kết trước: phần cục bộ không được phụ thuộc vào việc Redmine có sống hay không.
     const commitments = this.loadCommitments()
 
-    const jira: BriefingJiraResult = await fetchBriefingIssues({
-      mcp: this.deps.mcp(),
-      jiraSearchEnabled: settings.features.jiraSearch,
+    const redmine: BriefingRedmineResult = await fetchBriefingIssues({
+      redmine: this.deps.redmine(),
+      redmineReadEnabled: settings.features.redmineRead,
       logger: this.log,
       now: this.now,
     })
@@ -188,7 +187,7 @@ export class DailyBriefingService {
       now,
       timeZoneOffsetMinutes: this.offsetMinutes(),
       commitments,
-      issues: jira.issues,
+      issues: redmine.issues,
     })
 
     const sources: BriefingSourceStateView[] = [
@@ -200,11 +199,11 @@ export class DailyBriefingService {
         truncatedCount: 0,
       },
       {
-        source: 'jira',
-        status: jira.status,
-        fetchedAt: jira.fetchedAt,
-        itemCount: jira.issues.length,
-        truncatedCount: jira.truncatedCount,
+        source: 'redmine',
+        status: redmine.status,
+        fetchedAt: redmine.fetchedAt,
+        itemCount: redmine.issues.length,
+        truncatedCount: redmine.truncatedCount,
       },
     ]
 
@@ -215,15 +214,15 @@ export class DailyBriefingService {
     })
 
     const view = this.toView(briefing, sources, summary)
-    if (!TRANSIENT_SOURCE_STATUSES.has(jira.status)) {
+    if (!TRANSIENT_SOURCE_STATUSES.has(redmine.status)) {
       this.cache = { localDate: view.localDate, view }
     }
 
     // Chỉ số đếm và enum. Tiêu đề cam kết và tiêu đề issue không bao giờ vào log.
     this.log.info('briefing-built', {
       commitmentCount: commitments.length,
-      jiraStatus: jira.status,
-      jiraCount: jira.issues.length,
+      redmineStatus: redmine.status,
+      redmineCount: redmine.issues.length,
       totalItems: view.totalItems,
       summaryStatus: summary.status,
       durationMs: Date.now() - started,

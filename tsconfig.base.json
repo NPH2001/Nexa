@@ -32,10 +32,13 @@
       "@nexa/llm-client": ["packages/llm-client/src/index.ts"],
       "@nexa/mcp-client": ["packages/mcp-client/src/index.ts"],
       "@nexa/atlassian-mcp-manager": ["packages/atlassian-mcp-manager/src/index.ts"],
+      "@nexa/work-mcp-servers": ["packages/work-mcp-servers/src/index.ts"],
       "@nexa/connection-config": ["packages/connection-config/src/index.ts"],
       "@nexa/document-processor": ["packages/document-processor/src/index.ts"],
+      "@nexa/document-checklist": ["packages/document-checklist/src/index.ts"],
       "@nexa/agent-runtime": ["packages/agent-runtime/src/index.ts"],
       "@nexa/ba-kit": ["packages/ba-kit/src/index.ts"],
+      "@nexa/daily-briefing": ["packages/daily-briefing/src/index.ts"],
       "@nexa/observability": ["packages/observability/src/index.ts"],
       "@nexa/ui-components": ["packages/ui-components/src/index.ts"]
     }

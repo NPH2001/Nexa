@@ -137,9 +137,7 @@ describe('activity timeline repository', () => {
 
     // Không nêu actor ⇒ 'user': mọi đường ghi có trước cột này đều do người dùng bấm.
     const byUser = repo.list(ctx.profileId, { actor: 'user', limit: 200, offset: 0 })
-    expect(byUser.map((event) => event.subjectId)).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-    ])
+    expect(byUser.map((event) => event.subjectId)).toEqual(['11111111-1111-4111-8111-111111111111'])
 
     const byAgent = repo.list(ctx.profileId, { actor: 'agent', limit: 200, offset: 0 })
     expect(byAgent.map((event) => event.subjectId)).toEqual([

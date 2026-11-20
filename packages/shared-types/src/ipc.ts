@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { IPC_CHANNEL_NAMES, type IpcChannelName } from './channels.js'
 import {
   ACTIVITY_ACTORS,
+  AGENT_ICONS,
+  AGENT_INSTRUCTIONS_MAX,
+  AGENT_NAME_MAX,
   ACTIVITY_STATUSES,
   ACTIVITY_TYPES,
   ACTIVITY_SUBJECT_TYPES,
@@ -19,8 +22,11 @@ import {
   memoryFactKindSchema,
   memoryFactScopeSchema,
   memorySharingPolicySchema,
+  type McpTargetSystem,
 } from './domain.js'
+import { FILE_BLOCK_FORMATS, MAX_FILE_BLOCK_BYTES, MAX_FILE_NAME_LENGTH } from './file-blocks.js'
 import { appSettingsSchema } from './settings.js'
+import { TOOL_PRESETS, type ToolPreset } from './tools.js'
 
 /**
  * Hợp đồng IPC giữa renderer và main.
@@ -175,6 +181,69 @@ export const memoryUpdateSchema = z
   })
 
 export const memoryRefSchema = z.object({ id: z.string().uuid() })
+
+// ── Agent tuỳ biến ───────────────────────────────────────────────────────
+
+const agentFieldsSchema = {
+  name: z.string().trim().min(1).max(AGENT_NAME_MAX),
+  icon: z.enum(AGENT_ICONS),
+  instructions: z.string().max(AGENT_INSTRUCTIONS_MAX),
+  toolCeiling: z.enum(TOOL_PRESETS as [ToolPreset, ...ToolPreset[]]),
+  localGroups: z.object({ commitments: z.boolean(), baWorkbench: z.boolean() }),
+  modelId: z.string().min(1).max(200).nullable(),
+  modelProvider: chatModelProviderSchema.nullable(),
+}
+
+/** Model của agent: cùng có hoặc cùng vắng — một model id không có provider thì mơ hồ. */
+const agentModelPairIsConsistent = (v: {
+  modelId?: string | null | undefined
+  modelProvider?: string | null | undefined
+}): boolean =>
+  (v.modelId === undefined) === (v.modelProvider === undefined) &&
+  (v.modelId === null) === (v.modelProvider === null)
+
+export const agentListSchema = z.object({ includeArchived: z.boolean().default(false) })
+
+export const agentCreateSchema = z
+  .object({
+    ...agentFieldsSchema,
+    instructions: agentFieldsSchema.instructions.default(''),
+    icon: agentFieldsSchema.icon.default('🤖'),
+    toolCeiling: agentFieldsSchema.toolCeiling.default('all'),
+    localGroups: agentFieldsSchema.localGroups.default({ commitments: true, baWorkbench: true }),
+    modelId: agentFieldsSchema.modelId.default(null),
+    modelProvider: agentFieldsSchema.modelProvider.default(null),
+  })
+  .strict()
+  .refine(agentModelPairIsConsistent, {
+    message: 'modelId and modelProvider must be set together.',
+  })
+
+export const agentUpdateSchema = z
+  .object({ id: z.string().uuid() })
+  .extend({
+    name: agentFieldsSchema.name.optional(),
+    icon: agentFieldsSchema.icon.optional(),
+    instructions: agentFieldsSchema.instructions.optional(),
+    toolCeiling: agentFieldsSchema.toolCeiling.optional(),
+    localGroups: agentFieldsSchema.localGroups.optional(),
+    modelId: agentFieldsSchema.modelId.optional(),
+    modelProvider: agentFieldsSchema.modelProvider.optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 1, {
+    message: 'At least one editable agent field must be provided.',
+  })
+  .refine(agentModelPairIsConsistent, {
+    message: 'modelId and modelProvider must be set together.',
+  })
+
+export const agentRefSchema = z.object({ id: z.string().uuid() })
+
+export const conversationSetAgentSchema = z.object({
+  conversationId: z.string().uuid(),
+  agentId: z.string().uuid().nullable(),
+})
 
 // ── Commitments / goals ──────────────────────────────────────────────────
 
@@ -479,6 +548,27 @@ export const filePickSchema = z.object({
 
 export const fileReleaseSchema = z.object({ fileToken: z.string().uuid() })
 
+/**
+ * Ghi một khối nội dung do model sinh ra xuống ổ đĩa (openspec `add-generated-file-download`).
+ *
+ * Đối xứng với `filePickSchema` ở một điểm quan trọng nhất: **không có trường đường dẫn nào.**
+ * Renderer gửi nội dung và một tên gợi ý; nơi ghi do `dialog.showSaveDialog` quyết định. Zod strip
+ * mọi key lạ, nên một `path` gửi kèm sẽ không tới được handler.
+ *
+ * `fileName` vẫn được chuẩn hoá lại ở main bằng `normalizeFileName` — schema này chỉ chặn được độ
+ * dài, không chặn được `..` hay tên thiết bị Windows.
+ */
+export const fileSaveSchema = z.object({
+  fileName: z.string().min(1).max(MAX_FILE_NAME_LENGTH),
+  format: z.enum(FILE_BLOCK_FORMATS),
+  /**
+   * Trần thô ở biên IPC. Zod đếm KÝ TỰ, còn trần thật là byte UTF-8 — nên đây chỉ chặn payload
+   * vô lý; phép đo đúng nằm ở `FileWriter` bằng `utf8ByteLength`.
+   */
+  content: z.string().min(1).max(MAX_FILE_BLOCK_BYTES),
+})
+export type FileSaveInput = z.infer<typeof fileSaveSchema>
+
 // ── Tool confirmation (EPIC-08) ───────────────────────────────────────────
 
 export const toolApproveSchema = z.object({
@@ -542,9 +632,17 @@ export const IPC_SCHEMAS = {
   'conversation:delete': conversationRefSchema,
   'conversation:archive': conversationRefSchema,
   'conversation:search': conversationSearchSchema,
+  'conversation:setAgent': conversationSetAgentSchema,
   'message:list': messageListSchema,
   'message:edit': messageEditSchema,
   'message:delete': messageRefSchema,
+
+  'agent:list': agentListSchema,
+  'agent:create': agentCreateSchema,
+  'agent:update': agentUpdateSchema,
+  'agent:archive': agentRefSchema,
+  'agent:restore': agentRefSchema,
+  'agent:delete': agentRefSchema,
 
   'memory:list': memoryListSchema,
   'memory:create': memoryCreateSchema,
@@ -602,6 +700,7 @@ export const IPC_SCHEMAS = {
 
   'file:pick': filePickSchema,
   'file:release': fileReleaseSchema,
+  'file:save': fileSaveSchema,
 
   'tool:approve': toolApproveSchema,
   'tool:cancel': toolCancelSchema,
@@ -675,7 +774,7 @@ export interface ToolStatusEvent {
 }
 
 export interface McpStatusEvent {
-  readonly system: 'jira' | 'confluence'
+  readonly system: McpTargetSystem
   readonly state: 'stopped' | 'starting' | 'ready' | 'error'
   readonly errorCode?: string
   readonly toolCount?: number

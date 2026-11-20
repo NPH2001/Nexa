@@ -132,6 +132,102 @@ async function configureLiteLlm(h: Harness, apiKey = 'sk-e2e-0123456789abcdef'):
   await expect(h.page.getByText('model-a')).toBeVisible()
 }
 
+/**
+ * Điền và lưu kết nối Jira ở tab Jira đang mở, rồi CHỜ cho tới khi MCP khởi động xong.
+ * Lưu xong là MCP bị khởi động lại; bấm tiếp ngay (gửi câu hỏi, làm mới bản tin) thì gặp đúng
+ * lúc nó chưa sẵn sàng và fail theo độ trễ của máy chứ không theo logic.
+ */
+async function connectJira(h: Harness): Promise<void> {
+  // `connection:save` từ chối (OPERATION_ALREADY_RUNNING) nếu MCP tự khởi động lúc mở app còn
+  // đang chạy. Máy chậm thì test bấm Lưu trúng khoảng đó, nên phải chờ nó xong trước.
+  await expect(h.page.getByText('Đang kết nối Jira/Confluence…')).toHaveCount(0, {
+    timeout: 25_000,
+  })
+  // Toast "Đã lưu cấu hình kết nối." của lần lưu LiteLLM có thể còn trên màn hình; để nguyên thì
+  // dòng chờ bên dưới pass nhầm dù lần lưu Jira bị từ chối.
+  const closeToast = h.page.getByLabel('Đóng thông báo')
+  while ((await closeToast.count()) > 0) await closeToast.first().click()
+  await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
+  await h.page
+    .getByLabel('Tên đăng nhập')
+    .or(h.page.locator('.field input').nth(1))
+    .fill('nguyen.van.a')
+  await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
+  await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(h.page.getByText('Đã lưu cấu hình kết nối.')).toBeVisible({ timeout: 10_000 })
+  await expect(h.page.getByText(/Jira\/Confluence sẵn sàng/)).toBeVisible({ timeout: 25_000 })
+}
+
+/** Khớp các hằng trong tests/fixtures/mock-mcp-gateway-server.mjs. */
+const MOCK_GATEWAY_TOKEN = 'GW-e2e-0123456789'
+const MOCK_REDMINE_API_KEY = 'RM-e2e-0123456789'
+const MOCK_REDMINE_URL = 'http://127.0.0.1:9/redmine'
+
+/** Khởi chạy mock MCP Gateway (Redmine) và đọc cổng nó tự chọn. */
+function startMockGateway(): Promise<{ proc: ChildProcessWithoutNullStreams; port: number }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      process.execPath,
+      [join(ROOT, 'tests/fixtures/mock-mcp-gateway-server.mjs')],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    )
+    const timer = setTimeout(() => reject(new Error('mock gateway không khởi động')), 10_000)
+    proc.stdout.setEncoding('utf8')
+    proc.stdout.on('data', (chunk: string) => {
+      const match = /LISTENING (\d+)/.exec(chunk)
+      if (match?.[1] !== undefined) {
+        clearTimeout(timer)
+        resolve({ proc, port: Number(match[1]) })
+      }
+    })
+    proc.on('error', reject)
+  })
+}
+
+/** Các lời gọi tool mà mock gateway đã nhận, để test khẳng định main gọi đúng và chỉ đọc. */
+async function gatewayCalls(
+  port: number,
+): Promise<Array<{ tool: string; args: Record<string, unknown> }>> {
+  const response = await fetch(`http://127.0.0.1:${String(port)}/__calls`)
+  return (await response.json()) as Array<{ tool: string; args: Record<string, unknown> }>
+}
+
+/**
+ * Lưu kết nối MCP Gateway rồi Redmine qua đúng giao diện, rồi bấm "Kiểm tra kết nối" ở Redmine.
+ *
+ * Redmine đi qua gateway nên cần cả hai. Bước kiểm tra vừa xác nhận ba header gateway đòi hỏi
+ * (mock trả 401 nếu thiếu), vừa chờ server Redmine khởi động xong trước khi test đi tiếp.
+ */
+async function connectRedmine(h: Harness, gatewayPort: number): Promise<void> {
+  const closeToasts = async (): Promise<void> => {
+    const closeToast = h.page.getByLabel('Đóng thông báo')
+    while ((await closeToast.count()) > 0) await closeToast.first().click()
+  }
+
+  await h.page.getByRole('tab', { name: 'MCP Gateway' }).click()
+  await closeToasts()
+  await h.page
+    .locator('.field input')
+    .first()
+    .fill(`http://127.0.0.1:${String(gatewayPort)}/mcp`)
+  await h.page.locator('input[type="password"]').fill(MOCK_GATEWAY_TOKEN)
+  await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(h.page.getByText('Đã lưu cấu hình kết nối.')).toBeVisible({ timeout: 10_000 })
+
+  await h.page.getByRole('tab', { name: 'Redmine' }).click()
+  await closeToasts()
+  await h.page.locator('.field input').first().fill(MOCK_REDMINE_URL)
+  await h.page.locator('input[type="password"]').fill(MOCK_REDMINE_API_KEY)
+  await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(h.page.getByText('Đã lưu cấu hình kết nối.')).toBeVisible({ timeout: 10_000 })
+
+  await h.page.getByRole('button', { name: 'Kiểm tra kết nối' }).click()
+  // Câu này hiện ở cả dòng trạng thái lẫn thông báo; chỉ cần một trong hai.
+  await expect(h.page.getByText(/đang dùng tài khoản nguyen\.van\.a/).first()).toBeVisible({
+    timeout: 15_000,
+  })
+}
+
 /** Log ứng dụng trên đĩa — nơi duy nhất quan sát được thông báo OS từ ngoài tiến trình. */
 function readAppLog(userDataDir: string): string {
   const path = join(userDataDir, 'logs', 'nexa.log')
@@ -175,7 +271,7 @@ test.describe('E2E — cấu hình và chat', () => {
       await expect(
         h.page.getByRole('heading', { name: 'Mình tiếp tục việc gì hôm nay?' }),
       ).toBeVisible()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
 
       const selector = h.page.getByLabel('Chọn model')
       await expect(selector).toBeVisible()
@@ -214,7 +310,7 @@ test.describe('E2E — cấu hình và chat', () => {
   test('giao diện sáng giữ chat, sao chép và bố cục ở các cỡ cửa sổ', async () => {
     const h = await launch({ codexScenario: 'authenticated' })
     try {
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page.getByLabel('Nội dung câu hỏi').fill('hi')
       await h.page.getByRole('button', { name: 'Gửi', exact: true }).click()
       const firstReply = h.page.locator('.message-assistant').first()
@@ -305,8 +401,8 @@ test.describe('E2E — cấu hình và chat', () => {
     const h = await launch()
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
 
       const composer = h.page.getByLabel('Nội dung câu hỏi')
       const vietnameseText = 'Tôi đang nhập tiếng Việt có đầy đủ dấu.'
@@ -361,8 +457,8 @@ test.describe('E2E — cấu hình và chat', () => {
     try {
       await configureLiteLlm(h)
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
 
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Xin chào Nexa')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
@@ -383,9 +479,9 @@ test.describe('E2E — cấu hình và chat', () => {
 
       await h.page.getByRole('tab', { name: 'Nexa nhớ' }).click()
       await h.page.getByLabel(/Nội dung nhớ/).fill('Ưu tiên câu trả lời ngắn và có checklist.')
-      await h.page.getByLabel('Loại memory').selectOption('preference')
-      await h.page.getByRole('button', { name: 'Lưu memory' }).click()
-      await expect(h.page.getByText('Đã lưu memory cho Nexa.')).toBeVisible()
+      await h.page.getByLabel('Loại ghi nhớ').selectOption('preference')
+      await h.page.getByRole('button', { name: 'Lưu ghi nhớ' }).click()
+      await expect(h.page.getByText('Đã lưu ghi nhớ cho Nexa.')).toBeVisible()
       await expect(h.page.getByText('Ưu tiên câu trả lời ngắn và có checklist.')).toBeVisible()
 
       const captureDir = process.env['NEXA_CAPTURE_VISUALS']
@@ -414,7 +510,7 @@ test.describe('E2E — cấu hình và chat', () => {
         await h.page.setViewportSize({ width: 1280, height: 860 })
       }
 
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Lập kế hoạch hôm nay')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
       await expect(h.page.getByText('Xin chào, đây là câu trả lời từ mock LiteLLM.')).toBeVisible({
@@ -446,7 +542,7 @@ test.describe('E2E — cấu hình và chat', () => {
     const h = await launch()
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
       await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
 
       await expect(h.page.getByRole('heading', { name: 'Mục tiêu & cam kết' })).toBeVisible()
@@ -532,7 +628,7 @@ test.describe('E2E — cấu hình và chat', () => {
         while ((await closeButtons.count()) > 0) await closeButtons.first().click()
       }
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
       await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
 
       const titles = {
@@ -604,7 +700,7 @@ test.describe('E2E — cấu hình và chat', () => {
       await expect(h.page.getByRole('heading', { name: 'Hoạt động' })).toBeVisible()
       await h.page.getByLabel('Loại hoạt động').selectOption('suggestion')
       await h.page.getByLabel('Trạng thái').selectOption('muted')
-      const activity = h.page.getByRole('list', { name: 'Timeline hoạt động' })
+      const activity = h.page.getByRole('list', { name: 'Dòng thời gian hoạt động' })
       await expect(activity.getByText(titles.mute)).toBeVisible()
       await expect(activity.getByText('Đã tắt nhắc', { exact: true }).first()).toBeVisible()
       await expect(activity.getByText(titles.snooze)).toHaveCount(0)
@@ -642,7 +738,7 @@ test.describe('E2E — cấu hình và chat', () => {
     const h = await launch()
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
 
       // ── Hai công tắc, và chúng phải mặc định TẮT ────────────────────────
       await h.page.getByRole('button', { name: 'Cài đặt' }).click()
@@ -679,7 +775,10 @@ test.describe('E2E — cấu hình và chat', () => {
       // CI Windows cũng như Linux có libnotify.
       const notificationsSupported = await osToggle.isEnabled()
       if (notificationsSupported) {
-        await osToggle.check()
+        // Không dùng `check()`: công tắc này chỉ đổi sau một vòng IPC lưu cài đặt, còn `check()`
+        // đòi trạng thái đổi ngay sau cú bấm nên fail tuỳ theo độ trễ của máy.
+        await osToggle.click()
+        await expect(osToggle).toBeChecked()
         await expect(contentToggle).toBeEnabled()
         // Cố ý KHÔNG bật nội dung — đây là mặc định cần kiểm chứng.
         await expect(contentToggle).not.toBeChecked()
@@ -753,8 +852,8 @@ test.describe('E2E — cấu hình và chat', () => {
     const h = await launch({ litellmScenario: 'length' })
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
 
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Cho tôi một báo cáo dài')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
@@ -771,14 +870,14 @@ test.describe('E2E — cấu hình và chat', () => {
     const h = await launch({ litellmScenario: 'slow' })
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
 
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Lượt chat đang chờ')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
       await expect(h.page.getByRole('button', { name: 'Dừng' })).toBeVisible()
 
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await expect(h.page.getByRole('button', { name: 'Đang xử lý…' })).toBeDisabled()
       await expect(h.page.getByRole('button', { name: 'Dừng' })).toHaveCount(0)
 
@@ -795,8 +894,8 @@ test.describe('E2E — cấu hình và chat', () => {
     const h = await launch()
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
 
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Nội dung ban đầu')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
@@ -934,16 +1033,10 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
 
       // Cấu hình Jira để MCP khởi động được.
       await h.page.getByRole('tab', { name: 'Jira' }).click()
-      await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
-      await h.page
-        .getByLabel('Tên đăng nhập')
-        .or(h.page.locator('.field input').nth(1))
-        .fill('nguyen.van.a')
-      await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
-      await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+      await connectJira(h)
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Tạo giúp tôi một task')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
 
@@ -971,13 +1064,14 @@ test.describe('E2E — xác nhận thao tác thay đổi dữ liệu (§10.2)', 
 })
 
 test.describe('E2E — bản tin công việc cá nhân (openspec add-daily-briefing)', () => {
-  test('bản tin hiện từ cam kết khi chưa có Jira, rồi có thêm việc Jira sau khi kết nối', async () => {
+  test('bản tin hiện từ cam kết khi chưa có Redmine, rồi có thêm việc Redmine sau khi kết nối', async () => {
     const h = await launch()
+    const gateway = await startMockGateway()
     try {
       await configureLiteLlm(h)
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
 
-      // Một cam kết quá hạn: đủ để bản tin có việc mà không cần Jira.
+      // Một cam kết quá hạn: đủ để bản tin có việc mà không cần Redmine.
       await h.page.getByRole('button', { name: 'Mục tiêu' }).click()
       await h.page.getByLabel(/Kết quả muốn đạt/).fill('Gửi báo cáo vận hành tháng 8')
       await h.page.getByLabel(/Bước tiếp theo/).fill('Xin số liệu từ phòng Kế toán')
@@ -989,13 +1083,13 @@ test.describe('E2E — bản tin công việc cá nhân (openspec add-daily-brie
       await h.page.getByRole('button', { name: 'Hôm nay' }).click()
       const briefing = h.page.getByRole('region', { name: 'Việc cần làm' })
 
-      // Nguồn cục bộ chạy được dù chưa cấu hình Jira.
+      // Nguồn cục bộ chạy được dù chưa cấu hình Redmine.
       const overdue = briefing.getByRole('list', { name: 'Quá hạn' })
       await expect(overdue.getByText('Gửi báo cáo vận hành tháng 8')).toBeVisible()
       await expect(overdue.getByText('Quá hạn 1 ngày')).toBeVisible()
 
       // Nguồn thiếu phải NÓI RA, không được im lặng thành "không có việc nào".
-      await expect(briefing.getByText(/Chưa kết nối Jira/)).toBeVisible()
+      await expect(briefing.getByText(/Chưa kết nối Redmine/)).toBeVisible()
       await expect(briefing.getByText(/Chưa gồm lịch họp/)).toBeVisible()
 
       const captureDir = process.env['NEXA_CAPTURE_VISUALS']
@@ -1004,25 +1098,19 @@ test.describe('E2E — bản tin công việc cá nhân (openspec add-daily-brie
         const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
         while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
         await h.page.screenshot({
-          path: join(captureDir, 'briefing-no-jira-default.png'),
+          path: join(captureDir, 'briefing-no-redmine-default.png'),
           fullPage: true,
         })
       }
 
-      // Kết nối Jira rồi làm mới ⇒ việc được giao xuất hiện, chia đúng nhóm.
+      // Kết nối Redmine rồi mở lại Hôm nay ⇒ việc được giao xuất hiện, chia đúng nhóm. KHÔNG bấm
+      // "Làm mới": lưu kết nối phải tự dọn cache bản tin, nếu không dòng "chưa kết nối" ở trên
+      // còn nằm lại tới hết ngày.
       await h.page.getByRole('button', { name: 'Cài đặt' }).click()
-      await h.page.getByRole('tab', { name: 'Jira' }).click()
-      await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
-      await h.page
-        .getByLabel('Tên đăng nhập')
-        .or(h.page.locator('.field input').nth(1))
-        .fill('nguyen.van.a')
-      await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
-      await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+      await connectRedmine(h, gateway.port)
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
       await h.page.getByRole('button', { name: 'Hôm nay' }).click()
-      await briefing.getByRole('button', { name: 'Làm mới' }).click()
 
       await expect(overdue.getByText('Rà soát log pilot tuần này')).toBeVisible({ timeout: 25_000 })
       await expect(
@@ -1033,9 +1121,28 @@ test.describe('E2E — bản tin công việc cá nhân (openspec add-daily-brie
       await expect(
         briefing.getByRole('list', { name: 'Đang làm' }).getByText('Dọn backlog kỹ thuật'),
       ).toBeVisible()
-      // Cam kết cục bộ vẫn còn nguyên bên cạnh việc Jira.
+      // Cam kết cục bộ vẫn còn nguyên bên cạnh việc Redmine.
       await expect(overdue.getByText('Gửi báo cáo vận hành tháng 8')).toBeVisible()
-      await expect(briefing.getByText(/Chưa kết nối Jira/)).toHaveCount(0)
+      await expect(briefing.getByText(/Chưa kết nối Redmine/)).toHaveCount(0)
+
+      // Mã `#id` và liên kết dựng từ URL Redmine đã cấu hình, không phải URL gateway.
+      await expect(overdue.getByText('#501')).toBeVisible()
+      await expect(overdue.getByRole('link', { name: 'Mở trên Redmine' })).toHaveAttribute(
+        'href',
+        `${MOCK_REDMINE_URL}/issues/501`,
+      )
+
+      // Bản tin chỉ đọc: đúng một lời gọi `search_issues` với bộ lọc cố định. `get_current_user`
+      // chỉ đến từ lúc khởi động server và bước kiểm tra kết nối. (Mock trả isError nếu bộ lọc lệch.)
+      const calls = await gatewayCalls(gateway.port)
+      const searches = calls.filter((c) => c.tool === 'redmine-search_issues')
+      expect(searches).toHaveLength(1)
+      expect(searches[0]?.args).toMatchObject({ assigned_to_id: 'me', status: 'open' })
+      expect(
+        calls.filter(
+          (c) => c.tool !== 'redmine-search_issues' && c.tool !== 'redmine-get_current_user',
+        ),
+      ).toEqual([])
 
       if (captureDir !== undefined && captureDir !== '') {
         const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
@@ -1050,6 +1157,7 @@ test.describe('E2E — bản tin công việc cá nhân (openspec add-daily-brie
         await h.page.setViewportSize({ width: 1280, height: 860 })
       }
     } finally {
+      gateway.proc.kill('SIGTERM')
       await h.close()
     }
   })
@@ -1071,8 +1179,8 @@ test.describe('E2E — cam kết từ hội thoại', () => {
       await commitmentToolToggle.click()
       await expect(commitmentToolToggle).toBeChecked()
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page
         .getByPlaceholder(/Nhập câu hỏi/)
         .fill('Thứ 6 tuần sau tôi phải gửi báo cáo quý cho sếp')
@@ -1099,7 +1207,7 @@ test.describe('E2E — cam kết từ hội thoại', () => {
 
       await h.page.getByRole('button', { name: 'Hoạt động' }).click()
       await h.page.getByLabel('Nguồn').selectOption('agent')
-      const timeline = h.page.getByRole('list', { name: 'Timeline hoạt động' })
+      const timeline = h.page.getByRole('list', { name: 'Dòng thời gian hoạt động' })
       await expect(timeline.getByText('Nexa đề xuất').first()).toBeVisible()
     } finally {
       await h.close()
@@ -1116,16 +1224,10 @@ test.describe('E2E — thu hẹp danh mục tool theo ngữ cảnh (ADR 0009)', 
       // Cấu hình Jira để MCP khởi động được — mock MCP công bố cả tool Jira lẫn Confluence,
       // nên đây đúng là tình huống preset phải lọc bớt.
       await h.page.getByRole('tab', { name: 'Jira' }).click()
-      await h.page.locator('.field input').first().fill('http://127.0.0.1:9/jira')
-      await h.page
-        .getByLabel('Tên đăng nhập')
-        .or(h.page.locator('.field input').nth(1))
-        .fill('nguyen.van.a')
-      await h.page.locator('input[type="password"]').fill('PAT-e2e-0123456789')
-      await h.page.getByRole('button', { name: 'Lưu', exact: true }).click()
+      await connectJira(h)
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Tìm trang wiki về quy trình onboarding')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
       await expect(h.page.getByText('Xin chào, đây là câu trả lời từ mock LiteLLM.')).toBeVisible({
@@ -1158,14 +1260,77 @@ test.describe('E2E — thu hẹp danh mục tool theo ngữ cảnh (ADR 0009)', 
   })
 })
 
+test.describe('E2E — agent tuỳ biến (openspec add-custom-agents)', () => {
+  test('agent chỉ đọc đổi prompt và thu hẹp tool thật sự gửi tới model', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('tab', { name: 'Jira' }).click()
+      await connectJira(h)
+
+      // Tạo agent qua đúng màn hình người dùng thấy.
+      await h.page.getByRole('button', { name: 'Agent', exact: true }).click()
+      await h.page.getByLabel(/^Tên/).fill('Trợ lý chỉ đọc')
+      await h.page.getByLabel(/^Hướng dẫn/).fill('Luôn trả lời bằng đúng một câu ngắn.')
+      await h.page.getByLabel('Phạm vi công cụ tối đa').selectOption('jira-read')
+      await h.page.getByRole('button', { name: 'Tạo agent' }).click()
+      await expect(h.page.getByText('Đã tạo agent.')).toBeVisible({ timeout: 10_000 })
+      await expect(h.page.getByRole('heading', { name: /Trợ lý chỉ đọc/ })).toBeVisible()
+
+      const captureDir = process.env['NEXA_CAPTURE_VISUALS']
+      if (captureDir !== undefined && captureDir !== '') {
+        mkdirSync(captureDir, { recursive: true })
+        const toastCloseButtons = h.page.getByLabel('Đóng thông báo')
+        while ((await toastCloseButtons.count()) > 0) await toastCloseButtons.first().click()
+        await h.page.setViewportSize({ width: 1280, height: 860 })
+        await h.page.screenshot({ path: join(captureDir, 'agents-default.png'), fullPage: true })
+      }
+
+      // Chọn agent trong hội thoại mới rồi hỏi một câu đòi GHI.
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
+      await h.page.getByLabel('Chọn agent').selectOption({ label: '🤖 Trợ lý chỉ đọc' })
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Tạo giúp tôi một issue Jira mới')
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+      await expect(h.page.getByText('Xin chào, đây là câu trả lời từ mock LiteLLM.')).toBeVisible({
+        timeout: 25_000,
+      })
+
+      const received = (await (
+        await fetch(`http://127.0.0.1:${String(h.litellmPort)}/__received`)
+      ).json()) as { url: string; body: string }[]
+      const chat = received.filter((r) => r.url === '/v1/chat/completions')
+      const body = JSON.parse(chat[chat.length - 1]?.body ?? '{}') as {
+        messages?: { role: string; content: string }[]
+        tools?: { function: { name: string } }[]
+      }
+
+      if (captureDir !== undefined && captureDir !== '') {
+        await h.page.screenshot({ path: join(captureDir, 'agents-chat.png'), fullPage: true })
+      }
+
+      // Prompt gốc đứng trước, hướng dẫn agent nối sau.
+      const system = body.messages?.find((m) => m.role === 'system')?.content ?? ''
+      expect(system.startsWith('Bạn là Nexa')).toBe(true)
+      expect(system).toContain('Luôn trả lời bằng đúng một câu ngắn.')
+
+      // Trần chỉ đọc: câu hỏi đòi ghi cũng không làm tool ghi xuất hiện.
+      const names = (body.tools ?? []).map((t) => t.function.name)
+      expect(names).toContain('jira_get_issue')
+      expect(names).not.toContain('jira_create_issue')
+    } finally {
+      await h.close()
+    }
+  })
+})
+
 test.describe('E2E — lịch sử tồn tại qua các lần khởi động', () => {
   test('hội thoại được lưu và đọc lại sau khi mở lại app', async () => {
     const first = await launch()
     let userDataDir: string
     try {
       await configureLiteLlm(first)
-      await first.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await first.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await first.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await first.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await first.page.getByPlaceholder(/Nhập câu hỏi/).fill('Câu hỏi cần nhớ')
       await first.page.getByRole('button', { name: 'Gửi' }).click()
       await expect(first.page.locator('.message-user').getByText('Câu hỏi cần nhớ')).toBeVisible()
@@ -1201,6 +1366,93 @@ test.describe('E2E — lịch sử tồn tại qua các lần khởi động', (
   })
 })
 
+/** Khớp `DRAWIO_SAMPLE` trong tests/fixtures/mock-litellm-server.mjs (kịch bản `file-block`). */
+const DRAWIO_SAMPLE = [
+  '<mxfile host="Nexa E2E">',
+  '  <diagram name="Đăng nhập">',
+  '    <mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>',
+  '  </diagram>',
+  '</mxfile>',
+].join('\n')
+const DRAWIO_FILE_NAME = 'luong-dang-nhap.drawio'
+const DRAWIO_QUESTION = 'Vẽ giúp sơ đồ luồng đăng nhập'
+
+/**
+ * Bấm Tải xuống ở thẻ file rồi chờ toast "Đã lưu".
+ *
+ * Hộp thoại Lưu native là thứ DUY NHẤT bị thay — không kịch bản hoá được từ renderer. IPC
+ * `file:save`, việc main kiểm lại khối và `FileWriter` đều là mã thật.
+ */
+async function downloadDrawio(app: ElectronApplication, page: Page, target: string): Promise<void> {
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = () => Promise.resolve({ canceled: false, filePath: filePath as string })
+  }, target)
+  const download = page.getByRole('button', { name: `Tải xuống ${DRAWIO_FILE_NAME}` })
+  await expect(download).toBeVisible({ timeout: 20_000 })
+  await download.click()
+  await expect(page.getByText(`Đã lưu ${DRAWIO_FILE_NAME}`)).toBeVisible({ timeout: 10_000 })
+}
+
+test.describe('E2E — tải file sinh ra trong câu trả lời (openspec add-generated-file-download)', () => {
+  test('khối drawio thành thẻ file, tải xuống ra đúng từng ký tự trong fence', async () => {
+    const h = await launch({ litellmScenario: 'file-block' })
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
+      await h.page.getByPlaceholder(/Nhập câu hỏi/).fill(DRAWIO_QUESTION)
+      await h.page.getByRole('button', { name: 'Gửi' }).click()
+
+      const target = join(h.userDataDir, DRAWIO_FILE_NAME)
+      await downloadDrawio(h.app, h.page, target)
+      expect(readFileSync(target, 'utf8')).toBe(DRAWIO_SAMPLE)
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('mở lại app, hội thoại cũ vẫn có thẻ file và vẫn tải xuống được', async () => {
+    const first = await launch({ litellmScenario: 'file-block' })
+    let userDataDir: string
+    try {
+      await configureLiteLlm(first)
+      await first.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await first.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
+      await first.page.getByPlaceholder(/Nhập câu hỏi/).fill(DRAWIO_QUESTION)
+      await first.page.getByRole('button', { name: 'Gửi' }).click()
+      await expect(
+        first.page.getByRole('button', { name: `Tải xuống ${DRAWIO_FILE_NAME}` }),
+      ).toBeVisible({ timeout: 20_000 })
+
+      userDataDir = first.userDataDir
+      await first.app.close()
+      first.litellm.kill('SIGTERM')
+    } catch (error) {
+      await first.close()
+      throw error
+    }
+
+    // Lần mở thứ hai không có LiteLLM: thẻ file phải dựng lại từ `message.content` đã lưu.
+    const second = await electron.launch({
+      args: [DESKTOP, `--user-data-dir=${userDataDir}`, '--no-sandbox'],
+      env: electronEnvironment(),
+    })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      const recentConversations = page.getByRole('region', { name: 'Hội thoại gần đây' })
+      await recentConversations.getByRole('button', { name: new RegExp(DRAWIO_QUESTION) }).click()
+
+      const target = join(userDataDir, DRAWIO_FILE_NAME)
+      await downloadDrawio(second, page, target)
+      expect(readFileSync(target, 'utf8')).toBe(DRAWIO_SAMPLE)
+    } finally {
+      await second.close()
+      rmSync(userDataDir, { recursive: true, force: true })
+    }
+  })
+})
+
 test.describe('E2E — đính kèm ảnh (openspec add-multi-format-file-upload)', () => {
   test('ảnh đi tới model đã gỡ metadata, và bị chặn ở model chỉ đọc chữ', async () => {
     const h = await launch({ litellmScenario: 'vision' })
@@ -1225,7 +1477,7 @@ test.describe('E2E — đính kèm ảnh (openspec add-multi-format-file-upload)
           Promise.resolve({ canceled: false, filePaths: [picked as string] })
       }, imagePath)
 
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       const selector = h.page.getByLabel('Chọn model')
       await selector.selectOption('litellm:model-a')
 
@@ -1321,8 +1573,8 @@ test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
       await configureLiteLlm(h)
       await configureOpenAi(h)
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page.getByLabel('Chọn model').selectOption('openai:gpt-4o')
 
       await expect(h.page.getByText(/nằm ngoài tổ chức/)).toBeVisible()
@@ -1338,17 +1590,113 @@ test.describe('E2E — provider ngoài tổ chức (OPEN-QUESTIONS F1)', () => {
       await configureLiteLlm(h)
       await configureOpenAi(h)
 
-      await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
-      await h.page.getByRole('button', { name: '+ Hội thoại mới' }).first().click()
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      await h.page.getByRole('button', { name: 'Hội thoại mới', exact: true }).first().click()
       await h.page.getByLabel('Chọn model').selectOption('openai:gpt-4o')
 
       await h.page.getByPlaceholder(/Nhập câu hỏi/).fill('Xin chào model ngoài')
       await h.page.getByRole('button', { name: 'Gửi' }).click()
 
       // Chính sách chặn TÀI LIỆU, không kiểm duyệt chat — người dùng vẫn tự gõ được gì họ muốn.
-      await expect(h.page.getByText(/câu trả lời từ mock/)).toBeVisible({ timeout: 20_000 })
+      // Test này chạy ~19s khi máy rảnh nên 20s không còn chỗ thở lúc máy tải; 45s vẫn bắt được
+      // trường hợp gửi thật sự bị chặn.
+      await expect(h.page.getByText(/câu trả lời từ mock/)).toBeVisible({ timeout: 45_000 })
     } finally {
       await h.close()
+    }
+  })
+})
+
+test.describe('E2E — bàn phím và màu giao diện (openspec add-ui-ux-refresh)', () => {
+  test('Ctrl+K vào ô tìm, Ctrl+N tạo hội thoại, và cả hai đứng yên khi dialog đang mở', async () => {
+    const h = await launch()
+    try {
+      await configureLiteLlm(h)
+      await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
+      const list = h.page.getByRole('navigation', { name: 'Danh sách hội thoại' })
+      const conversations = list.locator('.conversation-item')
+      const search = h.page.getByLabel('Tìm trong hội thoại')
+
+      await h.page.keyboard.press('Control+K')
+      await expect(search).toBeFocused()
+
+      const before = await conversations.count()
+      await h.page.keyboard.press('Control+N')
+      await expect(conversations).toHaveCount(before + 1)
+      await expect(h.page.getByPlaceholder(/Nhập câu hỏi/)).toBeVisible()
+
+      await list.getByLabel('Xoá hội thoại').first().click()
+      const dialog = h.page.getByRole('alertdialog')
+      await expect(dialog).toBeVisible()
+      await h.page.keyboard.press('Control+N')
+      await h.page.keyboard.press('Control+K')
+      // Khẳng định một việc KHÔNG xảy ra thì phải chờ quá thời gian nó sẽ xảy ra: tạo hội thoại
+      // là một vòng IPC + SQLite cục bộ, xong trong vài chục ms.
+      await h.page.waitForTimeout(1_000)
+      await expect(dialog).toBeVisible()
+      await expect(search).not.toBeFocused()
+      await expect(conversations).toHaveCount(before + 1)
+      await h.page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('phím mũi tên đi qua các mục Cài đặt, và màu đã chọn còn sau khi mở lại app', async () => {
+    const first = await launch()
+    let userDataDir: string
+    try {
+      // Chưa có kết nối nào ⇒ app mở thẳng Cài đặt ở mục LiteLLM.
+      const tab = (name: string) => first.page.getByRole('tab', { name, exact: true })
+      await expect(tab('LiteLLM')).toHaveAttribute('aria-selected', 'true')
+      await tab('LiteLLM').focus()
+
+      await first.page.keyboard.press('ArrowDown')
+      await expect(tab('OpenAI')).toBeFocused()
+      await expect(tab('OpenAI')).toHaveAttribute('aria-selected', 'true')
+      await first.page.keyboard.press('End')
+      await expect(tab('Chẩn đoán')).toBeFocused()
+      // Đi quá cuối thì vòng về đầu, và ngược lại.
+      await first.page.keyboard.press('ArrowDown')
+      await expect(tab('LiteLLM')).toBeFocused()
+      await first.page.keyboard.press('ArrowUp')
+      await expect(tab('Chẩn đoán')).toBeFocused()
+      await first.page.keyboard.press('ArrowUp')
+      await expect(tab('Giao diện')).toBeFocused()
+      await expect(tab('Giao diện')).toHaveAttribute('aria-selected', 'true')
+
+      const dark = first.page
+        .getByRole('group', { name: 'Màu giao diện' })
+        .getByRole('button', { name: 'Tối' })
+      await dark.click()
+      // `aria-pressed` chỉ đổi sau khi main đã ghi vào SQLite, nên đóng app sau dòng này là an toàn.
+      await expect(dark).toHaveAttribute('aria-pressed', 'true')
+      await expect(first.page.locator('html')).toHaveAttribute('data-theme', 'dark')
+
+      userDataDir = first.userDataDir
+      await first.app.close()
+      first.litellm.kill('SIGTERM')
+    } catch (error) {
+      await first.close()
+      throw error
+    }
+
+    const second = await electron.launch({
+      args: [DESKTOP, `--user-data-dir=${userDataDir}`, '--no-sandbox'],
+      env: electronEnvironment(),
+    })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+      await page.getByRole('tab', { name: 'Giao diện', exact: true }).click()
+      await expect(
+        page.getByRole('group', { name: 'Màu giao diện' }).getByRole('button', { name: 'Tối' }),
+      ).toHaveAttribute('aria-pressed', 'true')
+    } finally {
+      await second.close()
+      rmSync(userDataDir, { recursive: true, force: true })
     }
   })
 })
@@ -1366,7 +1714,7 @@ test.describe('E2E — không gian Nghiệp vụ (BA)', () => {
     const toggle = h.page.getByLabel('Bật không gian Nghiệp vụ')
     await toggle.click()
     await expect(toggle).toBeChecked()
-    await h.page.getByRole('button', { name: '← Quay lại hội thoại' }).click()
+    await h.page.getByRole('button', { name: 'Quay lại hội thoại' }).click()
   }
 
   test('đích Nghiệp vụ chỉ hiện khi cờ được bật', async () => {

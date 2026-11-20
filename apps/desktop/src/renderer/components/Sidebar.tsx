@@ -4,6 +4,10 @@ import { api } from '../bridge.js'
 import type { View } from '../App.js'
 import { UiIcon } from './UiIcon.js'
 import { NexaMark } from './NexaMark.js'
+import { SHORTCUT_HINTS } from '../shortcuts-ui.js'
+
+/** Để phím tắt Ctrl+K (App) đặt con trỏ vào ô tìm kiếm. */
+export const SIDEBAR_SEARCH_ID = 'sidebar-search'
 
 interface SearchState {
   query: string
@@ -85,6 +89,8 @@ export function Sidebar(props: {
           type="button"
           className={`btn btn-block ${props.view === 'today' ? 'btn-active' : ''}`}
           aria-current={props.view === 'today' ? 'page' : undefined}
+          aria-keyshortcuts={SHORTCUT_HINTS.today.aria}
+          title={SHORTCUT_HINTS.today.label}
           onClick={() => props.onChangeView('today')}
         >
           <UiIcon name="home" />
@@ -94,6 +100,8 @@ export function Sidebar(props: {
           type="button"
           className={`btn btn-block ${props.view === 'goals' ? 'btn-active' : ''}`}
           aria-current={props.view === 'goals' ? 'page' : undefined}
+          aria-keyshortcuts={SHORTCUT_HINTS.goals.aria}
+          title={SHORTCUT_HINTS.goals.label}
           onClick={() => props.onChangeView('goals')}
         >
           <UiIcon name="target" />
@@ -103,6 +111,8 @@ export function Sidebar(props: {
           type="button"
           className={`btn btn-block ${props.view === 'activity' ? 'btn-active' : ''}`}
           aria-current={props.view === 'activity' ? 'page' : undefined}
+          aria-keyshortcuts={SHORTCUT_HINTS.activity.aria}
+          title={SHORTCUT_HINTS.activity.label}
           onClick={() => props.onChangeView('activity')}
         >
           <UiIcon name="activity" />
@@ -113,6 +123,8 @@ export function Sidebar(props: {
             type="button"
             className={`btn btn-block ${props.view === 'ba' ? 'btn-active' : ''}`}
             aria-current={props.view === 'ba' ? 'page' : undefined}
+            aria-keyshortcuts={SHORTCUT_HINTS.ba.aria}
+            title={SHORTCUT_HINTS.ba.label}
             onClick={() => props.onChangeView('ba')}
           >
             <UiIcon name="book" />
@@ -121,8 +133,18 @@ export function Sidebar(props: {
         )}
         <button
           type="button"
+          className={`btn btn-block ${props.view === 'agents' ? 'btn-active' : ''}`}
+          aria-current={props.view === 'agents' ? 'page' : undefined}
+          onClick={() => props.onChangeView('agents')}
+        >
+          <UiIcon name="agent" />
+          Agent
+        </button>
+        <button
+          type="button"
           className="btn btn-primary btn-block"
-          aria-label="+ Hội thoại mới"
+          aria-keyshortcuts={SHORTCUT_HINTS.newConversation.aria}
+          title={`Hội thoại mới (${SHORTCUT_HINTS.newConversation.label})`}
           onClick={props.onCreate}
         >
           <UiIcon name="plus" />
@@ -131,10 +153,12 @@ export function Sidebar(props: {
         <div className="sidebar-search">
           <UiIcon name="search" />
           <input
+            id={SIDEBAR_SEARCH_ID}
             type="search"
             className="input"
             aria-label="Tìm trong hội thoại"
-            placeholder="Tìm trong hội thoại…"
+            aria-keyshortcuts={SHORTCUT_HINTS.focusSearch.aria}
+            placeholder="Tìm trong hội thoại… (Ctrl+K)"
             value={search.query}
             onChange={(e) => runSearch(e.target.value)}
           />
@@ -233,11 +257,15 @@ export function Sidebar(props: {
         <McpBadge status={props.mcpStatus} />
         <button
           type="button"
-          className={`btn btn-block ${props.view === 'settings' ? 'btn-active' : ''}`}
+          className="btn btn-block"
+          aria-keyshortcuts={props.view === 'settings' ? undefined : SHORTCUT_HINTS.settings.aria}
+          title={props.view === 'settings' ? undefined : SHORTCUT_HINTS.settings.label}
           onClick={() => props.onChangeView(props.view === 'settings' ? 'chat' : 'settings')}
         >
-          <UiIcon name={props.view === 'settings' ? 'chevron' : 'settings'} />
-          {props.view === 'settings' ? '← Quay lại hội thoại' : 'Cài đặt'}
+          {/* Đang ở Cài đặt thì nút này là đường quay về, không phải mục đang chọn: không
+              `aria-current`, và chỉ một mũi tên (trước đây có cả icon lẫn ký tự "←"). */}
+          <UiIcon name={props.view === 'settings' ? 'arrowLeft' : 'settings'} />
+          {props.view === 'settings' ? 'Quay lại hội thoại' : 'Cài đặt'}
         </button>
       </div>
     </aside>

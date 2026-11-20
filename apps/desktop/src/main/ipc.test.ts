@@ -9,6 +9,7 @@ import {
 import { Logger, MemorySink } from '@nexa/observability'
 import type { ChatController } from './chat-controller.js'
 import type { NexaServices } from './services.js'
+import type * as ServicesModule from './services.js'
 
 type RegisteredHandler = (_event: unknown, rawInput: unknown) => Promise<Envelope<unknown>>
 
@@ -50,11 +51,47 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.1.0-test' },
 }))
 
-const { registerIpc } = await import('./ipc.js')
+// Builder Redmine giữ hành vi thật (harness không có kết nối ⇒ null); test vòng đời MCP chỉ đè
+// một lần bằng `mockReturnValueOnce` để có server giả.
+vi.mock('./services.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof ServicesModule>()
+  return { ...actual, buildRedmineServer: vi.fn(actual.buildRedmineServer) }
+})
 
+const { registerIpc } = await import('./ipc.js')
+const { buildRedmineServer } = await import('./services.js')
+
+function fakeWorkServer(): {
+  isLifecycleBusy: boolean
+  start: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+} {
+  return { isLifecycleBusy: false, start: vi.fn(), stop: vi.fn() }
+}
+
+const CONVERSATION_ID = '00000000-0000-4000-8000-000000000001'
+const AGENT_ID = '00000000-0000-4000-8000-0000000000a1'
 const BA_DOCUMENT_ID = '00000000-0000-4000-8000-0000000000ba'
 const FILE_TOKEN = '00000000-0000-4000-8000-0000000000f1'
 const BANK_CASE_ID = '00000000-0000-4000-8000-0000000000bc'
+
+function makeAgent(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: AGENT_ID,
+    profileId: 'profile-test',
+    name: 'Trợ lý BA',
+    icon: '📝',
+    instructions: '',
+    toolCeiling: 'all',
+    localGroups: { commitments: true, baWorkbench: true },
+    modelId: null,
+    modelProvider: null,
+    archived: false,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+    ...over,
+  }
+}
 
 function registerHarness(
   getWindow: () => unknown = () => null,
@@ -67,6 +104,8 @@ function registerHarness(
   readonly conversationCreate: ReturnType<typeof vi.fn>
   readonly isConversationActive: ReturnType<typeof vi.fn>
   readonly documentsProcess: ReturnType<typeof vi.fn>
+  readonly fileWriterSave: ReturnType<typeof vi.fn>
+  readonly briefingInvalidate: ReturnType<typeof vi.fn>
   readonly baExtractionRun: ReturnType<typeof vi.fn>
   readonly bankExtract: ReturnType<typeof vi.fn>
   readonly modelResolve: ReturnType<typeof vi.fn>
@@ -77,6 +116,17 @@ function registerHarness(
   readonly chatGptLogin: ReturnType<typeof vi.fn>
   readonly chatGptLogout: ReturnType<typeof vi.fn>
   readonly chatGptResolveModel: ReturnType<typeof vi.fn>
+  readonly agentGet: ReturnType<typeof vi.fn>
+  readonly agentList: ReturnType<typeof vi.fn>
+  readonly agentCreate: ReturnType<typeof vi.fn>
+  readonly agentUpdate: ReturnType<typeof vi.fn>
+  readonly agentArchive: ReturnType<typeof vi.fn>
+  readonly agentRestore: ReturnType<typeof vi.fn>
+  readonly agentDelete: ReturnType<typeof vi.fn>
+  readonly conversationGet: ReturnType<typeof vi.fn>
+  readonly conversationIsOwnedBy: ReturnType<typeof vi.fn>
+  readonly conversationSetAgent: ReturnType<typeof vi.fn>
+  readonly conversationSetModel: ReturnType<typeof vi.fn>
   readonly memoryGet: ReturnType<typeof vi.fn>
   readonly memoryList: ReturnType<typeof vi.fn>
   readonly memoryCreate: ReturnType<typeof vi.fn>
@@ -103,6 +153,7 @@ function registerHarness(
   readonly searchClear: ReturnType<typeof vi.fn>
   readonly mcpStop: ReturnType<typeof vi.fn>
   readonly mcp: { isLifecycleBusy: boolean; stop: ReturnType<typeof vi.fn> }
+  readonly services: NexaServices
   readonly sink: MemorySink
 } {
   const sink = new MemorySink()
@@ -155,6 +206,20 @@ function registerHarness(
     supportedReasoningEfforts: [],
     inputModalities: ['text'],
   }))
+  const agentGet = vi.fn()
+  const agentList = vi.fn(() => [])
+  const agentCreate = vi.fn((input) => ({ ...makeAgent(), ...input }))
+  const agentUpdate = vi.fn((id: string, patch: Record<string, unknown>) => ({
+    ...makeAgent({ id }),
+    ...patch,
+  }))
+  const agentArchive = vi.fn((id: string) => ({ ...makeAgent({ id }), archived: true }))
+  const agentRestore = vi.fn((id: string) => ({ ...makeAgent({ id }), archived: false }))
+  const agentDelete = vi.fn()
+  const conversationGet = vi.fn(() => ({ id: CONVERSATION_ID, agentId: null }))
+  const conversationIsOwnedBy = vi.fn(() => true)
+  const conversationSetAgent = vi.fn()
+  const conversationSetModel = vi.fn()
   const memoryGet = vi.fn()
   const memoryList = vi.fn(() => [])
   const memoryCreate = vi.fn((input) => ({ ...makeMemoryFact(), ...input }))
@@ -196,6 +261,8 @@ function registerHarness(
   const documentsProcess = vi.fn()
   const filesResolve = vi.fn(() => [{ path: '/tmp/x', fileName: 'x', sizeBytes: 1 }])
   const filesReleaseAll = vi.fn()
+  const fileWriterSave = vi.fn(async () => ({ saved: true, fileName: 'a.drawio' }))
+  const briefingInvalidate = vi.fn()
   const bankExtract = vi.fn(() => ({ documentType: 'other', fields: [], needsReview: true }))
   const baExtractionRun = vi.fn(() => ({
     model: { items: [], links: [] },
@@ -215,7 +282,23 @@ function registerHarness(
       logout: chatGptLogout,
       resolveModel: chatGptResolveModel,
     },
-    conversations: { create: conversationCreate, delete: conversationDelete },
+    conversations: {
+      create: conversationCreate,
+      delete: conversationDelete,
+      get: conversationGet,
+      isOwnedBy: conversationIsOwnedBy,
+      setAgent: conversationSetAgent,
+      setModel: conversationSetModel,
+    },
+    agents: {
+      get: agentGet,
+      list: agentList,
+      create: agentCreate,
+      update: agentUpdate,
+      archive: agentArchive,
+      restore: agentRestore,
+      delete: agentDelete,
+    },
     memory: {
       get: memoryGet,
       list: memoryList,
@@ -252,6 +335,8 @@ function registerHarness(
     models: { resolveForConversation: modelResolve },
     documents: { process: documentsProcess },
     files: { resolve: filesResolve, releaseAll: filesReleaseAll, release: vi.fn() },
+    fileWriter: { save: fileWriterSave },
+    briefing: { invalidate: briefingInvalidate },
     baDocuments: { get: vi.fn(() => ({ id: BA_DOCUMENT_ID, profileId: 'profile-test' })) },
     baExtraction: { run: baExtractionRun },
     bankChecklists: {
@@ -281,6 +366,8 @@ function registerHarness(
     conversationCreate,
     isConversationActive,
     documentsProcess,
+    fileWriterSave,
+    briefingInvalidate,
     baExtractionRun,
     bankExtract,
     modelResolve,
@@ -291,6 +378,17 @@ function registerHarness(
     chatGptLogin,
     chatGptLogout,
     chatGptResolveModel,
+    agentGet,
+    agentList,
+    agentCreate,
+    agentUpdate,
+    agentArchive,
+    agentRestore,
+    agentDelete,
+    conversationGet,
+    conversationIsOwnedBy,
+    conversationSetAgent,
+    conversationSetModel,
     memoryGet,
     memoryList,
     memoryCreate,
@@ -317,6 +415,7 @@ function registerHarness(
     searchClear,
     mcpStop,
     mcp,
+    services,
     sink,
   }
 }
@@ -513,6 +612,41 @@ describe('registerIpc', () => {
     expect(result).toMatchObject({ error: { code: ERROR_CODES.INTERNAL_ERROR } })
   })
 
+  it('file:save thất bại an toàn khi cửa sổ đã đóng và không gọi writer', async () => {
+    const h = registerHarness(() => null)
+
+    const result = await h.handlers.get('file:save')?.(
+      {},
+      { fileName: 'a.drawio', format: 'drawio', content: '<mxfile/>' },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.INTERNAL_ERROR } })
+    expect(h.fileWriterSave).not.toHaveBeenCalled()
+  })
+
+  it('file:save chuyển cửa sổ và input đã xác thực cho FileWriter', async () => {
+    const window = { id: 'main-window' }
+    const h = registerHarness(() => window)
+    const input = { fileName: 'a.drawio', format: 'drawio', content: '<mxfile/>' }
+
+    const result = await h.handlers.get('file:save')?.({}, input)
+
+    expect(h.fileWriterSave).toHaveBeenCalledWith(window, input)
+    expect(result).toMatchObject({ data: { saved: true } })
+  })
+
+  it('file:save từ chối payload sai trước khi chạm FileWriter', async () => {
+    const h = registerHarness(() => ({ id: 'main-window' }))
+
+    const result = await h.handlers.get('file:save')?.(
+      {},
+      { fileName: '', format: 'drawio', content: '<mxfile/>' },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.fileWriterSave).not.toHaveBeenCalled()
+  })
+
   it('trả success envelope và chuyển đúng request id cho chat cancel', async () => {
     const h = registerHarness()
 
@@ -570,6 +704,45 @@ describe('registerIpc', () => {
     expect(h.connectionSave).toHaveBeenCalledWith(input)
     expect(h.mcpStop).not.toHaveBeenCalled()
     expect(result).toMatchObject({ data: input })
+  })
+
+  it.each(['redmine', 'mcpGateway'])(
+    'dọn cache bản tin khi lưu kết nối %s — bản tin lấy việc từ Redmine',
+    async (type) => {
+      const h = registerHarness()
+
+      await h.handlers.get('connection:save')?.(
+        {},
+        { type, baseUrl: 'https://redmine.corp.local', username: null, secret: 'k', enabled: true },
+      )
+
+      expect(h.briefingInvalidate).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('dọn cache bản tin khi xoá kết nối Redmine', async () => {
+    const h = registerHarness()
+
+    await h.handlers.get('connection:delete')?.({}, { type: 'redmine' })
+
+    expect(h.briefingInvalidate).toHaveBeenCalledTimes(1)
+  })
+
+  it('không dọn cache bản tin khi lưu kết nối không liên quan tới Redmine', async () => {
+    const h = registerHarness()
+
+    await h.handlers.get('connection:save')?.(
+      {},
+      {
+        type: 'xwiki',
+        baseUrl: 'https://wiki.corp.local',
+        username: null,
+        secret: 'k',
+        enabled: true,
+      },
+    )
+
+    expect(h.briefingInvalidate).not.toHaveBeenCalled()
   })
 
   it('định tuyến đăng nhập ChatGPT qua service main-process', async () => {
@@ -644,6 +817,125 @@ describe('registerIpc', () => {
     await expect(restart).resolves.toMatchObject({ data: { state: 'stopped' } })
   })
 
+  const workInput = (type: string) => ({
+    type,
+    baseUrl: 'https://work.corp.local',
+    username: type === 'jira' ? 'tester' : null,
+    secret: 'k',
+    enabled: true,
+  })
+
+  it('lỗi start của source Redmine không chặn việc lưu cấu hình', async () => {
+    const h = registerHarness()
+    const next = fakeWorkServer()
+    next.start.mockRejectedValueOnce(new Error('gateway down'))
+    vi.mocked(buildRedmineServer).mockReturnValueOnce(next as never)
+
+    const result = await h.handlers.get('connection:save')?.({}, workInput('redmine'))
+
+    expect(h.connectionSave).toHaveBeenCalledWith(workInput('redmine'))
+    expect(next.start).toHaveBeenCalledOnce()
+    expect(h.services.redmine).toBe(next)
+    expect(h.briefingInvalidate).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ data: workInput('redmine') })
+  })
+
+  it('rút source Redmine cũ ra trước khi chờ nó dừng và chặn thao tác thứ hai tới khi xong', async () => {
+    const h = registerHarness()
+    const previous = fakeWorkServer()
+    let finishStop: (() => void) | undefined
+    previous.stop.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStop = resolve
+        }),
+    )
+    h.services.redmine = previous as never
+
+    const save = h.handlers.get('connection:save')?.({}, workInput('redmine'))
+    await vi.waitFor(() => expect(previous.stop).toHaveBeenCalledOnce())
+    expect(h.services.redmine).toBeNull()
+
+    const concurrent = await h.handlers.get('connection:save')?.({}, workInput('xwiki'))
+    expect(concurrent).toMatchObject({ error: { code: ERROR_CODES.OPERATION_ALREADY_RUNNING } })
+    expect(h.connectionSave).toHaveBeenCalledTimes(1)
+
+    finishStop?.()
+    await expect(save).resolves.toMatchObject({ data: workInput('redmine') })
+    const after = await h.handlers.get('connection:save')?.({}, workInput('xwiki'))
+    expect(after).toMatchObject({ data: workInput('xwiki') })
+  })
+
+  it.each([
+    ['jira', { atlassian: true, redmine: false, xwiki: false }],
+    ['mcpGateway', { atlassian: true, redmine: true, xwiki: false }],
+    ['redmine', { atlassian: false, redmine: true, xwiki: false }],
+    ['xwiki', { atlassian: false, redmine: false, xwiki: true }],
+    ['openai', { atlassian: false, redmine: false, xwiki: false }],
+  ])('lưu kết nối %s chỉ dựng lại đúng source bị ảnh hưởng', async (type, expected) => {
+    const h = registerHarness()
+    const redmine = fakeWorkServer()
+    const xwiki = fakeWorkServer()
+    h.services.redmine = redmine as never
+    h.services.xwiki = xwiki as never
+
+    await h.handlers.get('connection:save')?.({}, workInput(type))
+
+    expect({
+      atlassian: h.mcpStop.mock.calls.length > 0,
+      redmine: redmine.stop.mock.calls.length > 0,
+      xwiki: xwiki.stop.mock.calls.length > 0,
+    }).toEqual(expected)
+  })
+
+  it.each([
+    ['ba:knowledge:delete', 'baKnowledge'],
+    ['ba:document:delete', 'baDocuments'],
+    ['ba:checklist:delete', 'bankChecklists'],
+  ])('%s từ chối bản ghi của profile khác trước khi ghi', async (channel, repo) => {
+    const h = registerHarness()
+    const store = {
+      get: vi.fn(() => ({ id: BA_DOCUMENT_ID, profileId: 'profile-other' })),
+      delete: vi.fn(),
+    }
+    Object.assign(h.services, { [repo]: store })
+
+    const result = await h.handlers.get(channel)?.({}, { id: BA_DOCUMENT_ID })
+
+    expect(store.get).toHaveBeenCalledWith(BA_DOCUMENT_ID)
+    expect(store.delete).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+  })
+
+  it('chặn namespace ba:* theo cờ trước cả khi tra bản ghi', async () => {
+    const h = registerHarness()
+    const store = { get: vi.fn(() => ({ id: BA_DOCUMENT_ID, profileId: 'profile-test' })) }
+    Object.assign(h.services, {
+      baDocuments: store,
+      settings: { get: () => ({ features: { baWorkbench: false } }) },
+    })
+
+    const result = await h.handlers.get('ba:document:read')?.({}, { id: BA_DOCUMENT_ID })
+
+    expect(store.get).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+  })
+
+  it('restart MCP thủ công dựng lại cả ba source', async () => {
+    const h = registerHarness()
+    const redmine = fakeWorkServer()
+    const xwiki = fakeWorkServer()
+    h.services.redmine = redmine as never
+    h.services.xwiki = xwiki as never
+
+    await h.handlers.get('mcp:restart')?.({}, {})
+
+    expect(h.mcpStop).toHaveBeenCalledOnce()
+    expect(redmine.stop).toHaveBeenCalledOnce()
+    expect(xwiki.stop).toHaveBeenCalledOnce()
+    expect(h.briefingInvalidate).toHaveBeenCalledTimes(1)
+  })
+
   it('xác thực policy/model trước khi tạo hội thoại gắn provider', async () => {
     const h = registerHarness()
     h.modelResolve.mockImplementationOnce(() => {
@@ -690,6 +982,185 @@ describe('registerIpc', () => {
     expect(h.chatGptResolveModel).not.toHaveBeenCalled()
     expect(h.conversationCreate).not.toHaveBeenCalled()
     expect(result).toMatchObject({ error: { code: ERROR_CODES.PROVIDER_DISABLED_BY_POLICY } })
+  })
+
+  it('agent:list chỉ hỏi theo profile hiện tại', async () => {
+    const h = registerHarness()
+    const agent = makeAgent()
+    h.agentList.mockReturnValueOnce([agent])
+
+    const result = await h.handlers.get('agent:list')?.({}, { includeArchived: true })
+
+    expect(h.agentList).toHaveBeenCalledWith('profile-test', { includeArchived: true })
+    expect(result).toMatchObject({ data: [agent] })
+  })
+
+  it('agent:create luôn bind profile hiện tại, từ chối profileId do renderer gửi', async () => {
+    const h = registerHarness()
+    const sent = await h.handlers.get('agent:create')?.(
+      {},
+      { name: 'BA', profileId: 'profile-khac' },
+    )
+    expect(sent).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.agentCreate).not.toHaveBeenCalled()
+
+    await h.handlers.get('agent:create')?.({}, { name: 'BA' })
+    expect(h.agentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: 'profile-test', name: 'BA', toolCeiling: 'all' }),
+    )
+  })
+
+  it('agent:update/archive/restore/delete từ chối agent của profile khác', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent({ profileId: 'profile-khac' }))
+
+    for (const [channel, payload] of [
+      ['agent:update', { id: AGENT_ID, name: 'Mới' }],
+      ['agent:archive', { id: AGENT_ID }],
+      ['agent:restore', { id: AGENT_ID }],
+      ['agent:delete', { id: AGENT_ID }],
+    ] as const) {
+      const result = await h.handlers.get(channel)?.({}, payload)
+      expect(result, channel).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    }
+    expect(h.agentUpdate).not.toHaveBeenCalled()
+    expect(h.agentArchive).not.toHaveBeenCalled()
+    expect(h.agentRestore).not.toHaveBeenCalled()
+    expect(h.agentDelete).not.toHaveBeenCalled()
+  })
+
+  it('agent:update chuyển patch sạch (không có id) cho repository', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent())
+
+    await h.handlers.get('agent:update')?.({}, { id: AGENT_ID, name: 'Tên mới' })
+
+    expect(h.agentUpdate).toHaveBeenCalledWith(AGENT_ID, { name: 'Tên mới' })
+  })
+
+  it('conversation:setAgent từ chối hội thoại không thuộc profile', async () => {
+    const h = registerHarness()
+    h.conversationIsOwnedBy.mockReturnValueOnce(false)
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.conversationSetAgent).not.toHaveBeenCalled()
+  })
+
+  it('conversation:setAgent từ chối khi lượt chat của hội thoại còn chạy', async () => {
+    const h = registerHarness()
+    h.isConversationActive.mockReturnValueOnce(true)
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.OPERATION_ALREADY_RUNNING } })
+    expect(h.conversationSetAgent).not.toHaveBeenCalled()
+  })
+
+  it('conversation:setAgent từ chối agent của profile khác', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent({ profileId: 'profile-khac' }))
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.conversationSetAgent).not.toHaveBeenCalled()
+  })
+
+  it('conversation:setAgent bỏ agent bằng null mà không đụng tới model', async () => {
+    const h = registerHarness()
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: null },
+    )
+
+    expect(result).toMatchObject({ data: { ok: true } })
+    expect(h.conversationSetAgent).toHaveBeenCalledWith(CONVERSATION_ID, null)
+    expect(h.conversationSetModel).not.toHaveBeenCalled()
+  })
+
+  it('không cho gắn agent đã archive vào hội thoại chưa dùng nó', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent({ archived: true }))
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ error: { code: ERROR_CODES.VALIDATION_FAILED } })
+    expect(h.conversationSetAgent).not.toHaveBeenCalled()
+  })
+
+  it('hội thoại đã gắn agent trước khi archive vẫn gắn lại được', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent({ archived: true }))
+    h.conversationGet.mockReturnValue({ id: CONVERSATION_ID, agentId: AGENT_ID })
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ data: { ok: true } })
+    expect(h.conversationSetAgent).toHaveBeenCalledWith(CONVERSATION_ID, AGENT_ID)
+  })
+
+  it('gắn agent có model còn khả dụng thì đổi model của hội thoại', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent({ modelId: 'gpt-x', modelProvider: 'litellm' }))
+
+    await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(h.conversationSetAgent).toHaveBeenCalledWith(CONVERSATION_ID, AGENT_ID)
+    expect(h.conversationSetModel).toHaveBeenCalledWith(CONVERSATION_ID, {
+      modelId: 'gpt-x',
+      provider: 'litellm',
+    })
+  })
+
+  it('model của agent đã bị xoá thì vẫn gắn được, giữ model hiện tại, không lỗi', async () => {
+    const h = registerHarness()
+    h.agentGet.mockReturnValue(makeAgent({ modelId: 'da-xoa', modelProvider: 'litellm' }))
+    h.modelResolve.mockImplementationOnce(() => {
+      throw new NexaError(ERROR_CODES.MODEL_NOT_CONFIGURED)
+    })
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ data: { ok: true } })
+    expect(h.conversationSetAgent).toHaveBeenCalledWith(CONVERSATION_ID, AGENT_ID)
+    expect(h.conversationSetModel).not.toHaveBeenCalled()
+  })
+
+  it('agent dùng ChatGPT khi policy tắt provider ngoài thì không đổi model', async () => {
+    const h = registerHarness(() => null, false)
+    h.agentGet.mockReturnValue(makeAgent({ modelId: 'gpt-5.6-sol', modelProvider: 'chatgpt' }))
+
+    const result = await h.handlers.get('conversation:setAgent')?.(
+      {},
+      { conversationId: CONVERSATION_ID, agentId: AGENT_ID },
+    )
+
+    expect(result).toMatchObject({ data: { ok: true } })
+    expect(h.conversationSetModel).not.toHaveBeenCalled()
   })
 
   it('liệt kê memory theo profile hiện tại', async () => {

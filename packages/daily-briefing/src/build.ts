@@ -62,9 +62,9 @@ function toItem(opts: {
   readonly status: string
   readonly at: string | null
   readonly atMs: number | null
+  readonly dueAt: string | null
   readonly driver: TimestampDriver | null
   readonly updatedAt: string
-  readonly inActiveSprint: boolean
   readonly todayIndex: number
   readonly offsetMinutes: number
 }): BriefingItem {
@@ -82,8 +82,8 @@ function toItem(opts: {
     group,
     reason: { kind: reasonKindFor(group, opts.driver), at: opts.at, days: dayDelta },
     at: opts.at,
+    dueAt: opts.dueAt,
     updatedAt: opts.updatedAt,
-    inActiveSprint: opts.inActiveSprint,
   }
 }
 
@@ -120,9 +120,9 @@ function commitmentToItem(
     status: commitment.status,
     at,
     atMs,
+    dueAt: commitment.dueAt,
     driver,
     updatedAt: commitment.updatedAt,
-    inActiveSprint: false,
     todayIndex,
     offsetMinutes,
   })
@@ -134,8 +134,8 @@ function issueToItem(
   offsetMinutes: number,
 ): BriefingItem {
   return toItem({
-    id: `jira:${issue.key}`,
-    source: 'jira',
+    id: `redmine:${issue.key}`,
+    source: 'redmine',
     title: issue.summary,
     detail: issue.statusName,
     reference: issue.key,
@@ -143,9 +143,9 @@ function issueToItem(
     status: issue.statusName,
     at: issue.dueAt,
     atMs: parseTimestamp(issue.dueAt),
+    dueAt: issue.dueAt,
     driver: issue.dueAt === null ? null : 'due',
     updatedAt: issue.updatedAt,
-    inActiveSprint: issue.inActiveSprint,
     todayIndex,
     offsetMinutes,
   })
@@ -159,13 +159,11 @@ function compareDated(a: BriefingItem, b: BriefingItem): number {
 }
 
 /**
- * Trong nhóm "đang làm": việc của sprint đang chạy lên trước, rồi tới việc có hạn (gần trước),
+ * Trong nhóm "đang làm": việc có hạn (gần trước) lên trước,
  * rồi tới việc vừa động vào gần đây. Tie-break cuối cùng luôn là id, để hai lần dựng không bao
  * giờ đảo thứ tự của hai mục ngang điểm.
  */
 function compareInProgress(a: BriefingItem, b: BriefingItem): number {
-  if (a.inActiveSprint !== b.inActiveSprint) return a.inActiveSprint ? -1 : 1
-
   const aAt = parseTimestamp(a.at)
   const bAt = parseTimestamp(b.at)
   if (aAt !== null && bAt !== null && aAt !== bAt) return aAt - bAt
@@ -180,7 +178,7 @@ function compareInProgress(a: BriefingItem, b: BriefingItem): number {
 }
 
 /**
- * Dựng bản tin từ cam kết cục bộ và issue Jira đã chuẩn hoá.
+ * Dựng bản tin từ cam kết cục bộ và issue Redmine đã chuẩn hoá.
  *
  * Hàm thuần: không đọc đồng hồ hệ thống, không gọi mạng, không ném lỗi cho dữ liệu thiếu mốc thời
  * gian — một mục không có hạn là một mục đang làm, không phải một lỗi.

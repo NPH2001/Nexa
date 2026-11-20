@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type {
+  BriefingItemView,
   CheckInSuggestion,
   Commitment,
   Conversation,
@@ -8,12 +9,14 @@ import type {
 } from '@nexa/shared-types/renderer'
 import { api, events } from '../bridge.js'
 import { getCommitmentAttention, sortCommitmentsForToday } from './commitment-ui.js'
+import { InlineError, LoadingSkeleton } from './StateBlocks.js'
 import {
   BRIEFING_GROUP_LABELS,
   BRIEFING_GROUP_TONES,
   briefingItemKicker,
   describeBriefingReason,
   describeBriefingSource,
+  formatBriefingDueDate,
   formatBriefingTimestamp,
   isBriefingSourceBroken,
 } from './briefing-ui.js'
@@ -37,6 +40,18 @@ export function describeCheckInReason(
   return triggerKind === 'due'
     ? `Đến hạn từ ${formatRelativeDate(triggerAt)}`
     : `Đã tới lúc check-in từ ${formatRelativeDate(triggerAt)}`
+}
+
+/**
+ * Nhãn ngày hết hạn của một mục bản tin.
+ *
+ * Tách thành component nhỏ thay vì gọi thẳng trong JSX: nó cần một biến trung gian để không định
+ * dạng ngày hai lần, và trả `null` khi mục chưa đặt hạn — im lặng đúng chỗ chứ không hiện nhãn rỗng.
+ */
+function BriefingDueDate(props: { item: BriefingItemView }): React.JSX.Element | null {
+  const due = formatBriefingDueDate(props.item)
+  if (due === null) return null
+  return <span className="muted small">Hạn {due}</span>
 }
 
 export function TodayView(props: {
@@ -76,7 +91,7 @@ export function TodayView(props: {
       setCommitments(commitmentResult)
     } catch (error) {
       setOverviewFailed(true)
-      onError(error, 'Không tải được tổng quan Today.')
+      onError(error, 'Không tải được tổng quan hôm nay.')
     } finally {
       setOverviewLoading(false)
     }
@@ -98,7 +113,7 @@ export function TodayView(props: {
   }, [onError])
 
   /**
-   * Bản tin tải riêng khỏi phần tổng quan: nó chờ Jira, còn cam kết và hội thoại thì không —
+   * Bản tin tải riêng khỏi phần tổng quan: nó chờ Redmine, còn cam kết và hội thoại thì không —
    * gộp chung sẽ khiến cả Today đứng hình vì một lời gọi mạng.
    */
   const loadBriefing = useCallback(
@@ -215,21 +230,17 @@ export function TodayView(props: {
         {/* Phạm vi nguồn nói thẳng: Nexa chưa có connector lịch nào được duyệt, và im lặng ở
             đây sẽ khiến người dùng tưởng bản tin đã bao gồm lịch họp trong ngày. */}
         <p className="muted small">
-          Tổng hợp từ cam kết trong Nexa và việc được giao trên Jira. Chưa gồm lịch họp — Nexa chưa
+          Tổng hợp từ cam kết trong Nexa và việc được giao trên Redmine. Chưa gồm lịch họp — Nexa chưa
           kết nối với lịch của bạn.
         </p>
 
         {briefingLoading ? (
-          <p className="muted" role="status">
-            Đang dựng bản tin…
-          </p>
+          <LoadingSkeleton label="Đang dựng bản tin…" rows={4} />
         ) : briefingFailed || briefing === null ? (
-          <div className="today-empty">
-            <p>Không dựng được bản tin hôm nay.</p>
-            <button type="button" className="btn" onClick={() => void loadBriefing()}>
-              Thử lại
-            </button>
-          </div>
+          <InlineError
+            title="Không dựng được bản tin hôm nay."
+            onRetry={() => void loadBriefing()}
+          />
         ) : !briefing.enabled ? (
           <div className="today-empty">
             <p>Bản tin đang tắt trong Cài đặt.</p>
@@ -263,9 +274,9 @@ export function TodayView(props: {
                       Thử lại
                     </button>
                   )}
-                  {source.status === 'not_configured' && source.source === 'jira' && (
+                  {source.status === 'not_configured' && source.source === 'redmine' && (
                     <button type="button" className="link" onClick={props.onOpenSettings}>
-                      Kết nối Jira
+                      Kết nối Redmine
                     </button>
                   )}
                 </div>
@@ -307,6 +318,7 @@ export function TodayView(props: {
                             >
                               {describeBriefingReason(item.reason)}
                             </span>
+                            <BriefingDueDate item={item} />
                             {item.source === 'commitment' ? (
                               <button type="button" className="link" onClick={props.onOpenGoals}>
                                 Mở cam kết
@@ -319,7 +331,7 @@ export function TodayView(props: {
                                   target="_blank"
                                   rel="noreferrer"
                                 >
-                                  Mở trên Jira
+                                  Mở trên Redmine
                                 </a>
                               )
                             )}
@@ -381,7 +393,7 @@ export function TodayView(props: {
         <section className="today-card today-card-wide" aria-labelledby="today-checkins-title">
           <div className="today-card-head">
             <div>
-              <p className="today-kicker">Proactive check-in</p>
+              <p className="today-kicker">Nhắc việc chủ động</p>
               <h2 id="today-checkins-title">Cần check-in</h2>
             </div>
             <div className="today-card-tools">
@@ -406,21 +418,17 @@ export function TodayView(props: {
             trong Cài đặt và mặc định tắt.
           </p>
           {checkInLoading ? (
-            <p className="muted" role="status">
-              Đang tải check-in…
-            </p>
+            <LoadingSkeleton label="Đang tải check-in…" rows={2} />
           ) : checkInFailed ? (
-            <div className="today-empty">
-              <p>Không tải được danh sách check-in.</p>
-              <button type="button" className="btn" onClick={() => void loadCheckIns()}>
-                Thử lại
-              </button>
-            </div>
+            <InlineError
+              title="Không tải được danh sách check-in."
+              onRetry={() => void loadCheckIns()}
+            />
           ) : !checkInsEnabled ? (
             <div className="today-empty">
               <p>
-                Nexa đang không nhắc việc chủ động. Bạn cần bật opt-in trước khi Today surface các
-                check-in đến hạn.
+                Nexa đang không nhắc việc chủ động. Bật nhắc việc để màn Hôm nay hiện các check-in
+                đến hạn.
               </p>
               <div className="actions">
                 <button
@@ -540,13 +548,9 @@ export function TodayView(props: {
             <span className="today-count">{String(goals.length)}</span>
           </div>
           {overviewLoading ? (
-            <p className="muted" role="status">
-              Đang tải mục tiêu…
-            </p>
+            <LoadingSkeleton label="Đang tải mục tiêu…" rows={3} />
           ) : overviewFailed ? (
-            <button type="button" className="btn" onClick={() => void loadOverview()}>
-              Thử tải lại
-            </button>
+            <InlineError title="Không tải được mục tiêu." onRetry={() => void loadOverview()} />
           ) : goals.length === 0 ? (
             <div className="today-empty">
               <p>Chưa có cam kết nào đang được theo dõi.</p>
@@ -603,7 +607,7 @@ export function TodayView(props: {
             </div>
           </dl>
           <p className="muted small">
-            Nexa không tự lưu memory, không tự tạo cam kết và chưa chạy tác vụ nền thay bạn. Mọi
+            Nexa không tự lưu ghi nhớ, không tự tạo cam kết và chưa chạy tác vụ nền thay bạn. Mọi
             hành động thay đổi dữ liệu vẫn chờ bạn xác nhận.
           </p>
           <button type="button" className="btn" onClick={props.onOpenSettings}>

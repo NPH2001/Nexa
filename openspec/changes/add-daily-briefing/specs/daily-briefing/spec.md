@@ -7,9 +7,11 @@ lấy về. Model SHALL NOT quyết định mục nào xuất hiện, thuộc nh
 một tập dữ liệu vào và cùng một mốc thời gian, hệ thống SHALL trả về cùng một danh sách theo cùng
 thứ tự.
 
+
 #### Scenario: Cùng dữ liệu cho cùng kết quả
 - **WHEN** bản tin được dựng hai lần trên cùng tập commitment/issue và cùng thời điểm tham chiếu
 - **THEN** hai kết quả có cùng số mục, cùng nhóm và cùng thứ tự
+
 
 #### Scenario: Không có model vẫn có bản tin
 - **WHEN** không có model nào được cấu hình
@@ -19,15 +21,29 @@ thứ tự.
 
 Hệ thống SHALL xếp mỗi mục vào đúng một nhóm trong tập cố định: `overdue`, `due_today`,
 `due_this_week`, `in_progress`. Hệ thống SHALL tính nhóm từ mốc thời gian của mục so với ngày địa
-phương của máy, và SHALL hiển thị lý do bằng ngày hoặc trạng thái thay vì điểm ưu tiên.
+phương của máy, và SHALL hiển thị lý do bằng ngày hoặc trạng thái thay vì điểm ưu tiên. Với mục có
+hạn hoàn thành, hệ thống SHALL hiển thị thêm ngày hết hạn dưới dạng ngày tháng tuyệt đối bên cạnh
+lý do tương đối, và SHALL NOT hiện nhãn hạn cho mục chưa đặt hạn.
+
 
 #### Scenario: Cam kết quá hạn từ hôm qua
 - **WHEN** một commitment `active` có `dueAt` trước đầu ngày hôm nay
 - **THEN** mục đó nằm nhóm `overdue` và nêu số ngày đã quá hạn
 
+
 #### Scenario: Cam kết không có mốc thời gian
 - **WHEN** một commitment `active` không có `dueAt` lẫn `checkInAt`
 - **THEN** mục đó nằm nhóm `in_progress` và không được gán hạn giả
+
+
+#### Scenario: Mục có hạn hoàn thành
+- **WHEN** một mục có hạn hoàn thành
+- **THEN** bản tin hiện cả khoảng cách ("Quá hạn 3 ngày") lẫn ngày hết hạn tuyệt đối
+
+
+#### Scenario: Cam kết có lịch check-in tới trước hạn
+- **WHEN** một commitment có `checkInAt` sớm hơn `dueAt`
+- **THEN** nhóm và lý do tính theo `checkInAt`, còn nhãn ngày hết hạn vẫn là `dueAt`
 
 #### Scenario: Ranh giới ngày theo giờ máy
 - **WHEN** một issue có `duedate` đúng ngày hôm nay theo múi giờ địa phương
@@ -36,12 +52,20 @@ phương của máy, và SHALL hiển thị lý do bằng ngày hoặc trạng t
 ### Requirement: Khối Jira là read-only và có trần rõ ràng
 
 Hệ thống SHALL lấy issue bằng tool Jira READ đã có trong registry, với JQL do code dựng từ danh
-tính người dùng hiện tại. Hệ thống SHALL NOT nhận JQL từ model hay từ renderer, SHALL giới hạn số
-issue trả về, và SHALL NOT gọi bất kỳ tool ghi nào trong luồng bản tin.
+tính người dùng hiện tại. Truy vấn SHALL loại issue đã hoàn tất, theo cả hai cách một workflow có
+thể đánh dấu: đã có resolution, hoặc đã ở nhóm trạng thái kết thúc (Done/Closed). Hệ thống SHALL
+NOT nhận JQL từ model hay từ renderer, SHALL giới hạn số issue trả về, và SHALL NOT gọi bất kỳ tool
+ghi nào trong luồng bản tin.
+
 
 #### Scenario: Renderer gửi JQL tuỳ ý
 - **WHEN** renderer gọi IPC bản tin kèm một chuỗi JQL
 - **THEN** main process bỏ qua chuỗi đó và dùng truy vấn đã dựng sẵn
+
+
+#### Scenario: Issue đã đóng nhưng workflow không đặt resolution
+- **WHEN** một issue được giao cho người dùng đang ở trạng thái thuộc nhóm Done (ví dụ `Done`, `Closed`) mà `resolution` vẫn trống
+- **THEN** issue đó không xuất hiện trên bản tin
 
 #### Scenario: Vượt trần số issue
 - **WHEN** truy vấn Jira trả về nhiều issue hơn trần đã cấu hình
@@ -54,9 +78,11 @@ người dùng chưa có danh tính Jira, hoặc lời gọi tool lỗi/timeout,
 commitment và SHALL đánh dấu nguồn Jira là không lấy được kèm lý do và một hành động khôi phục.
 Hệ thống SHALL NOT trình bày một nguồn lỗi như là "không có việc nào".
 
+
 #### Scenario: MCP chưa kết nối
 - **WHEN** người dùng mở Today mà MCP Atlassian chưa cấu hình
 - **THEN** bản tin hiện phần commitment bình thường và nói rõ chưa kết nối Jira nên chưa có việc từ Jira
+
 
 #### Scenario: Lời gọi Jira timeout
 - **WHEN** tool Jira vượt `toolTimeoutMs`
@@ -70,13 +96,16 @@ bớt, gộp, đổi thứ tự hay đổi mốc thời gian của mục nào. K
 về nội dung không hợp lệ, hệ thống SHALL hiển thị bản tin không kèm tóm tắt thay vì báo lỗi cả
 bản tin.
 
+
 #### Scenario: Model trả về thêm việc không có thật
 - **WHEN** model trả về đoạn văn nhắc tới một việc không nằm trong danh sách đã chốt
 - **THEN** danh sách mục hiển thị không đổi, vì chỉ đoạn văn được đọc lại và nó không phải nguồn dữ liệu
 
+
 #### Scenario: Model lỗi
 - **WHEN** lời gọi model thất bại
 - **THEN** bản tin vẫn hiển thị đủ mọi nhóm và mục, kèm dấu hiệu tóm tắt không dựng được
+
 
 #### Scenario: Tóm tắt tắt mặc định
 - **WHEN** người dùng chưa bật tóm tắt
@@ -86,6 +115,7 @@ bản tin.
 
 Hệ thống SHALL nêu rõ phạm vi nguồn dữ liệu của bản tin. Vì chưa có calendar connector nào được
 duyệt, bản tin SHALL NOT ngụ ý rằng nó đã bao gồm lịch họp trong ngày.
+
 
 #### Scenario: Người dùng đọc bản tin buổi sáng
 - **WHEN** bản tin hiển thị
@@ -97,9 +127,11 @@ Hệ thống SHALL bind mọi truy vấn bản tin vào profile hiện tại tro
 NOT tạo, sửa, hoàn thành hay xoá commitment, SHALL NOT sinh check-in suggestion, và SHALL NOT ghi
 nội dung Jira hay nội dung commitment vào log, audit hay activity row.
 
+
 #### Scenario: Mở bản tin nhiều lần
 - **WHEN** người dùng mở và làm mới bản tin nhiều lần trong ngày
 - **THEN** không có commitment nào bị thay đổi và không có check-in nào được sinh ra
+
 
 #### Scenario: Ghi nhật ký
 - **WHEN** hệ thống ghi log cho một lần dựng bản tin
@@ -112,9 +144,11 @@ Hệ thống SHALL cache bản tin đã dựng theo profile và theo ngày đị
 tường minh, và SHALL hiển thị thời điểm dữ liệu được lấy. Cache SHALL NOT tồn tại sau khi tiến
 trình kết thúc.
 
+
 #### Scenario: Mở lại Today trong cùng buổi sáng
 - **WHEN** người dùng rời Today rồi quay lại trong cùng ngày
 - **THEN** bản tin hiện ngay từ cache và không có lời gọi Jira mới
+
 
 #### Scenario: Sang ngày mới
 - **WHEN** người dùng mở Today sau khi ngày địa phương đã đổi

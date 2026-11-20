@@ -15,6 +15,7 @@ import { BridgeError, api, events } from './bridge.js'
 import { Sidebar } from './components/Sidebar.js'
 import { ChatView } from './components/ChatView.js'
 import { TodayView } from './components/TodayView.js'
+import { AgentsView } from './components/AgentsView.js'
 import { GoalPanel } from './components/GoalPanel.js'
 import { ActivityTimelineView } from './components/ActivityTimelineView.js'
 import { BaWorkbenchView } from './components/BaWorkbenchView.js'
@@ -22,6 +23,8 @@ import { SettingsView } from './components/SettingsView.js'
 import { ConfirmationDialog } from './components/ConfirmationDialog.js'
 import { DestructiveActionDialog } from './components/DestructiveActionDialog.js'
 import { Toasts, type Toast } from './components/Toasts.js'
+import { appendToast, toastLifetimeMs } from './components/toast-ui.js'
+import { NexaMark } from './components/NexaMark.js'
 import { UncertainBanner } from './components/UncertainBanner.js'
 import {
   beginChatActivity,
@@ -30,8 +33,11 @@ import {
   type ChatActivity,
 } from './chat-activity.js'
 import { commitThenRefresh } from './committed-mutation.js'
+import { useTheme } from './use-theme.js'
+import { useGlobalShortcuts } from './use-global-shortcuts.js'
+import { SIDEBAR_SEARCH_ID } from './components/Sidebar.js'
 
-export type View = 'today' | 'goals' | 'activity' | 'ba' | 'chat' | 'settings'
+export type View = 'today' | 'goals' | 'activity' | 'ba' | 'agents' | 'chat' | 'settings'
 
 const TITLE_LIMIT = 60
 
@@ -75,8 +81,11 @@ export function App(): React.JSX.Element {
 
   const pushToast = useCallback((toast: Omit<Toast, 'id'>) => {
     const id = ++toastSeq.current
-    setToasts((prev) => [...prev, { ...toast, id }])
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 8_000)
+    setToasts((prev) => appendToast(prev, { ...toast, id }))
+    const lifetime = toastLifetimeMs(toast.kind)
+    if (lifetime !== null) {
+      setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), lifetime)
+    }
   }, [])
 
   const finishChatActivity = useCallback((conversationId: string, requestId: string) => {
@@ -107,6 +116,9 @@ export function App(): React.JSX.Element {
     },
     [pushToast],
   )
+
+  // Cài đặt là nơi chọn màu; ở đây chỉ sơn theo giá trị đã lưu.
+  useTheme(settings?.theme ?? null)
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -229,6 +241,13 @@ export function App(): React.JSX.Element {
               m.id === event.messageId ? { ...m, status: 'error', errorCode: event.error.code } : m,
             ),
           )
+          // Nạp lại y như nhánh `chat-done`, và vì đúng một lý do: main process đã ghi câu giải
+          // thích ("Mình chưa thể hoàn tất yêu cầu này. …") xuống DB qua `finalizeMessage`, nhưng
+          // bản trong bộ nhớ ở đây có `content` RỖNG khi lỗi xảy ra trước token đầu tiên. Thiếu
+          // dòng này, bong bóng chat chỉ còn lại "Lỗi: <MÃ> · mã yêu cầu <id>" — một mã lỗi trần
+          // không nói được người dùng nên làm gì, và câu giải thích chỉ hiện ra sau khi họ mở lại
+          // hội thoại. Toast có mang message/hint, nhưng toast thì tự tắt.
+          void loadMessages(event.conversationId)
         }
         pushToast({
           kind: event.error.code === 'LLM_CANCELLED' ? 'info' : 'error',
@@ -261,7 +280,12 @@ export function App(): React.JSX.Element {
         }
       }),
 
-      events.onMcpStatus((status) => setMcpStatus(status)),
+      // Badge ở sidebar là trạng thái Jira/Confluence. Redmine/XWiki cũng phát sự kiện này (ADR
+      // 0010) nhưng có trạng thái riêng ở Cài đặt — để chúng ghi đè badge sẽ làm nó nhảy qua lại
+      // giữa các hệ thống và nói sai về Atlassian.
+      events.onMcpStatus((status) => {
+        if (status.system === 'jira' || status.system === 'confluence') setMcpStatus(status)
+      }),
 
       // Main đã khôi phục/focus cửa sổ trước khi gửi event này; ở đây chỉ còn việc đổi đích.
       // Không có xác nhận nào cần hỏi: người dùng vừa tự bấm vào thông báo hoặc menu tray.
@@ -324,6 +348,24 @@ export function App(): React.JSX.Element {
       reportError(error, 'Không tạo được hội thoại.')
     }
   }
+
+  useGlobalShortcuts((action) => {
+    switch (action.kind) {
+      case 'new-conversation':
+        void createConversation()
+        return
+      case 'focus-search':
+        document.getElementById(SIDEBAR_SEARCH_ID)?.focus()
+        return
+      case 'open-settings':
+        setSettingsInitialTab('litellm')
+        setView('settings')
+        return
+      case 'view':
+        setView(action.view)
+        return
+    }
+  }, settings?.features.baWorkbench === true)
 
   const sendMessage = async (
     content: string,
@@ -476,9 +518,10 @@ export function App(): React.JSX.Element {
 
   if (booting) {
     return (
-      <div className="boot">
+      <div className="boot" role="status" aria-busy="true">
+        <NexaMark size={56} className="boot-mark" />
         <div className="boot-logo">Nexa</div>
-        <p>Đang khởi động…</p>
+        <p className="muted">Đang khởi động…</p>
       </div>
     )
   }
@@ -568,6 +611,13 @@ export function App(): React.JSX.Element {
             onError={reportError}
             onToast={pushToast}
           />
+        ) : view === 'agents' ? (
+          <AgentsView
+            models={usableModels}
+            chatGptModels={usableChatGptModels}
+            onError={reportError}
+            onToast={pushToast}
+          />
         ) : view === 'chat' ? (
           <ChatView
             conversation={conversations.find((c) => c.id === activeId) ?? null}
@@ -581,6 +631,7 @@ export function App(): React.JSX.Element {
             onSend={(content, tokens, model) => void sendMessage(content, tokens, model)}
             onCancel={() => void cancelStreaming()}
             onCreateConversation={() => void createConversation()}
+            onConversationChanged={refreshConversations}
             onEditMessage={(id, content) => void editMessage(id, content)}
             onDeleteMessage={(id) => setPendingDeletion({ kind: 'message', id })}
             onError={reportError}
@@ -589,6 +640,7 @@ export function App(): React.JSX.Element {
         ) : (
           <SettingsView
             initialTab={settingsInitialTab}
+            hasChatGptModels={usableChatGptModels.length > 0}
             models={models}
             settings={settings}
             policy={policy}

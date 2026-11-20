@@ -41,6 +41,9 @@ const SECRET_FIELD_NAMES = new Set([
   'litellmapikey',
   'jirapat',
   'confluencepat',
+  /** Header gateway mang API key Redmine (`x-mcp-redmine-x-redmine-api-key`, ADR 0010). */
+  'xmcpredminexredmineapikey',
+  'redmineapikey',
 ])
 
 /**
@@ -80,8 +83,13 @@ function normalizeKey(key: string): string {
 
 /** URL có credential nhúng: https://user:pass@host (§11.2 chặn hẳn dạng này). */
 const URL_CREDENTIAL_RE = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi
-/** `Authorization: Bearer xxx` hoặc `Bearer xxx` trong text tự do. */
-const BEARER_RE = /\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi
+/**
+ * `Authorization: Bearer xxx` hoặc `Bearer xxx` trong text tự do.
+ *
+ * Có `:` trong lớp ký tự vì token XWiki có dạng `xwiki:XWiki.<user>/<n>/<secret>` (ADR 0010):
+ * không có `:` thì regex dừng ở `xwiki` (5 ký tự, dưới ngưỡng 8) và bỏ qua cả token.
+ */
+const BEARER_RE = /\b(bearer\s+)[A-Za-z0-9._~+/=:-]{8,}/gi
 /** JWT ba đoạn base64url. */
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g
 /** Key kiểu OpenAI/LiteLLM. */

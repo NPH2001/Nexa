@@ -1,4 +1,10 @@
-import { ERROR_CODES, NexaError, type ConnectionType, type ErrorCode } from '@nexa/shared-types'
+import {
+  CONNECTION_TYPES,
+  ERROR_CODES,
+  NexaError,
+  type ConnectionType,
+  type ErrorCode,
+} from '@nexa/shared-types'
 import { SECURITY_EVENTS, type Logger, globalRedactor, type Redactor } from '@nexa/observability'
 import {
   MASTER_KEY_REF,
@@ -38,6 +44,8 @@ const MISSING_CREDENTIAL_CODE: Readonly<Record<ConnectionType, ErrorCode>> = {
   jira: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
   confluence: ERROR_CODES.ATLASSIAN_CONFIG_REQUIRED,
   mcpGateway: ERROR_CODES.MCP_GATEWAY_CONFIG_REQUIRED,
+  redmine: ERROR_CODES.REDMINE_CONFIG_REQUIRED,
+  xwiki: ERROR_CODES.XWIKI_CONFIG_REQUIRED,
 }
 
 /**
@@ -194,7 +202,7 @@ export class SecurityService {
    * thì một secret vô tình bị log trước đó sẽ lọt.
    */
   primeRedactor(): void {
-    for (const type of ['litellm', 'openai', 'jira', 'confluence', 'mcpGateway'] as const) {
+    for (const type of CONNECTION_TYPES) {
       try {
         const v = this.backend.get(credentialRef(type))
         if (v !== null) this.redactor.registerSecret(v)

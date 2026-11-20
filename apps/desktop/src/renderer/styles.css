@@ -1,29 +1,127 @@
 /*
- * Giao diện Nexa — nền sáng, điểm nhấn xanh, theo màn hình tham chiếu.
+ * Giao diện Nexa — nền sáng, điểm nhấn xanh, theo màn hình tham chiếu; kèm một chủ đề tối
+ * dùng đúng bộ token đó.
  * Không có font hay ảnh tải từ mạng: CSP chặn `connect-src`, và app phải chạy được offline.
+ *
+ * Quy tắc: mọi màu nằm trong token ở `:root`, và chủ đề tối chỉ định nghĩa LẠI token. Một màu
+ * viết cứng trong quy tắc bên dưới là một chỗ chắc chắn sai màu ở một trong hai chủ đề.
  */
 
 :root {
   color-scheme: light;
   --bg: #f5f9fe;
+  /* Điểm sáng của dải nền ở `.app`; nền phẳng dùng `--bg`. */
+  --bg-canvas-top: #f2f7ff;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
   --border: #dce5f2;
+  /* Đường kẻ mảnh hơn `--border`: chân header chat, viền phân tách trong khung nền sáng. */
+  --border-soft: #edf2f8;
+  /* Khung nội dung nổi trên dải nền — trong suốt có chủ đích để thấy dải nền phía sau. */
+  --surface-panel: rgb(255 255 255 / 28%);
+  /* Lớp nâng rất nhẹ cho thẻ nằm trong khung: card hoạt động, mục tiêu, ghi nhớ, nghiệp vụ. */
+  --surface-subtle: rgb(255 255 255 / 3%);
+  --surface-chip: #edf2f9;
   --text: #141747;
   --text-muted: #626e91;
   --accent: #1761ff;
   --accent-hover: #0d4fe0;
+  /* Màu chữ/icon đặt TRÊN nền `--accent`. Chủ đề tối dùng accent sáng nên chữ phải tối lại. */
+  --accent-on: #ffffff;
   --danger: #c53146;
   --warning: #8c500d;
   --success: #16774b;
   --selection: #dfebfd;
   --message-user: #e5efff;
-  --radius-card: 16px;
+  /* Nền loãng cho khối cảnh báo/lỗi; luôn đi kèm chữ và viền cùng màu semantic. */
+  --danger-wash: #fdecef;
+  --warning-wash: #fef8ec;
+  --warning-border: #fbc573;
+  --scrim: rgb(3 5 9 / 72%);
+  /* Viền sáng mảnh bên trong nút primary đặt trên nền accent. */
+  --highlight-inset: rgb(255 255 255 / 12%);
   --shadow-panel: 0 4px 18px rgb(53 89 141 / 5%);
-  --radius: 8px;
+  --shadow-toast: 0 8px 28px rgb(0 0 0 / 45%);
+
+  /*
+   * Thang chữ. Quy tắc bên dưới chỉ dùng các bậc này, không viết cỡ chữ bằng số.
+   * 12 = metadata, 14 = nav/nội dung, 15 = chat, 20 = tiêu đề, 28 = thương hiệu (DESIGN.md).
+   */
+  --text-2xs: 11px; /* badge, nhãn rủi ro */
+  --text-xs: 12px;
+  --text-sm: 13px; /* chữ phụ trong card */
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px; /* tiêu đề card, modal */
+  --text-xl: 20px;
+  --text-2xl: 28px;
+  --text-display: clamp(22px, 2vw, 28px); /* tiêu đề trang co theo cửa sổ */
+
+  /* Nhịp khoảng cách 4px. 1–2px chỉ dùng cho đường mảnh/badge, không cần token. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  /* Bo góc. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px; /* ô nhập, nút */
+  --radius-md: 12px;
+  --radius-nav: 14px;
+  --radius-card: 16px; /* thẻ, tin nhắn */
+  --radius-composer: 24px;
+  --radius-pill: 999px;
+
+  /* Chuyển động: ngắn, chỉ cho thay đổi trạng thái; tắt hẳn khi reduced-motion. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+
   --font:
     'Segoe UI Variable', 'Segoe UI', -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif;
   --mono: 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+}
+
+/*
+ * Chủ đề tối. `data-theme` do renderer sơn lên `<html>` trước khi React render (`theme.ts`), nên
+ * ở đây KHÔNG dùng `prefers-color-scheme`: chỉ một nguồn sự thật, và lựa chọn "Sáng" của người
+ * dùng không bị hệ điều hành ghi đè. Lựa chọn "Theo hệ thống" được phân giải trong renderer.
+ *
+ * Điểm nhấn sáng lên (#7ba4ff) vì #1761ff làm chữ trên nền tối chỉ đạt ~3.3:1. Đổi lại, nút
+ * primary phải dùng chữ tối — đó là việc của `--accent-on`.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0d1220;
+  --bg-canvas-top: #131b2e;
+  --bg-elevated: #151c2e;
+  --bg-input: #1b2337;
+  --border: #2b3552;
+  --border-soft: #222b42;
+  --surface-panel: rgb(255 255 255 / 4%);
+  --surface-subtle: rgb(255 255 255 / 5%);
+  --surface-chip: #232c46;
+  --text: #e9edf8;
+  --text-muted: #9aa6c4;
+  --accent: #7ba4ff;
+  --accent-hover: #9dbcff;
+  --accent-on: #0d1220;
+  --danger: #ff8f9d;
+  --warning: #f0b45a;
+  --success: #58d39b;
+  --selection: #1e2a4a;
+  --message-user: #1d2c4e;
+  --danger-wash: rgb(255 143 157 / 12%);
+  --warning-wash: rgb(240 180 90 / 12%);
+  --warning-border: #7a6236;
+  --scrim: rgb(2 4 9 / 76%);
+  --shadow-panel: 0 4px 18px rgb(0 0 0 / 35%);
+  --shadow-toast: 0 8px 28px rgb(0 0 0 / 55%);
 }
 
 * {
@@ -41,7 +139,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.55;
   overflow: hidden;
 }
@@ -55,7 +153,7 @@ code {
   color: var(--text-muted);
 }
 .small {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .center {
   text-align: center;
@@ -73,8 +171,8 @@ code {
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
   height: 100%;
-  padding: 10px;
-  background: linear-gradient(135deg, #f2f7ff, var(--bg) 60%);
+  padding: var(--space-3);
+  background: linear-gradient(135deg, var(--bg-canvas-top), var(--bg) 60%);
 }
 
 .boot {
@@ -82,12 +180,26 @@ code {
   place-content: center;
   height: 100%;
   text-align: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .boot-logo {
-  font-size: 32px;
+  font-size: var(--text-2xl);
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+.boot > p {
+  margin: 0;
+}
+/* Nhịp thở chậm của logo báo app đang làm việc, không phải bị treo. Tắt khi reduced-motion. */
+.boot-mark {
+  justify-self: center;
+  animation: nexa-breathe 1.6s ease-in-out infinite;
+}
+@keyframes nexa-breathe {
+  50% {
+    opacity: 0.55;
+    transform: scale(0.96);
+  }
 }
 
 .sidebar {
@@ -101,18 +213,18 @@ code {
 }
 .sidebar-top {
   flex: none;
-  padding: 16px 18px 20px 14px;
+  padding: var(--space-4) var(--space-4) var(--space-5) var(--space-4);
   display: grid;
   gap: 2px;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-height: 56px;
-  margin-bottom: 12px;
-  padding-left: 6px;
-  font-size: 28px;
+  margin-bottom: var(--space-3);
+  padding-left: var(--space-2);
+  font-size: var(--text-2xl);
   font-weight: 700;
   letter-spacing: -1px;
 }
@@ -129,14 +241,14 @@ code {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 16px;
+  gap: var(--space-4);
   min-height: 42px;
   border-color: transparent;
-  border-radius: 14px;
-  padding: 8px 14px;
+  border-radius: var(--radius-nav);
+  padding: var(--space-2) var(--space-4);
   background: transparent;
   text-align: left;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .sidebar .btn-active {
   color: var(--accent);
@@ -145,11 +257,11 @@ code {
 }
 .sidebar .btn-primary {
   justify-content: center;
-  gap: 12px;
-  margin: 14px 0;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
   background: var(--accent);
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%);
+  color: var(--accent-on);
+  box-shadow: inset 0 0 0 1px var(--highlight-inset);
 }
 .sidebar-search {
   position: relative;
@@ -164,16 +276,16 @@ code {
 .sidebar-search .input {
   min-height: 42px;
   padding-left: 44px;
-  border-radius: 14px;
+  border-radius: var(--radius-nav);
   background: transparent;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .sidebar-bottom {
   flex: none;
   margin-top: auto;
-  padding: 16px 14px;
+  padding: var(--space-4) var(--space-4);
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .main {
@@ -183,7 +295,7 @@ code {
   flex-direction: column;
   border-radius: var(--radius-card);
   overflow: hidden;
-  background: rgb(255 255 255 / 28%);
+  background: var(--surface-panel);
 }
 
 /* ── Hôm nay / companion home ─────────────────────────────────────────── */
@@ -191,19 +303,19 @@ code {
 .today {
   flex: 1;
   overflow-y: auto;
-  padding: 32px;
+  padding: var(--space-8);
 }
 .today-hero {
   max-width: 1040px;
-  margin: 0 auto 24px;
+  margin: 0 auto var(--space-6);
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 24px;
+  gap: var(--space-6);
 }
 .today-hero h1 {
-  margin: 2px 0 6px;
-  font-size: clamp(22px, 2vw, 28px);
+  margin: 2px 0 var(--space-1);
+  font-size: var(--text-display);
   line-height: 1.2;
   letter-spacing: -0.02em;
 }
@@ -213,7 +325,7 @@ code {
 .today-eyebrow,
 .today-kicker {
   color: var(--accent-hover);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -223,17 +335,17 @@ code {
   margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
 }
 .today-card {
   min-width: 0;
-  padding: 18px;
+  padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elevated);
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: var(--space-4);
 }
 .today-card-wide {
   grid-column: 1 / -1;
@@ -242,14 +354,14 @@ code {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .today-card h2,
 .today-kicker {
   margin: 0;
 }
 .today-card h2 {
-  font-size: 17px;
+  font-size: var(--text-lg);
 }
 .today-count {
   min-width: 30px;
@@ -257,7 +369,7 @@ code {
   display: inline-grid;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -266,62 +378,62 @@ code {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 /* Bản tin công việc cá nhân (openspec `add-daily-briefing`) */
 .today-briefing {
   max-width: 1040px;
-  margin: 0 auto 16px;
+  margin: 0 auto var(--space-4);
 }
 .today-briefing-summary {
   margin: 0;
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   border-left: 3px solid var(--accent);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-subtle);
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 .today-briefing-notice {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .today-briefing-notice.notice-warning {
   color: var(--warning);
   border-color: var(--warning);
-  background: rgba(240, 161, 58, 0.08);
+  background: var(--warning-wash);
 }
 .today-briefing-group {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .today-briefing-group-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .today-briefing-group-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .today-briefing-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .today-briefing-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-input);
@@ -337,7 +449,7 @@ code {
 .today-briefing-meta {
   display: grid;
   justify-items: end;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .today-list,
@@ -347,50 +459,50 @@ code {
   padding: 0;
   margin: 0;
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .today-checkins {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .today-checkin-item {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-input);
-  padding: 14px;
+  padding: var(--space-4);
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
-  gap: 16px;
+  gap: var(--space-4);
 }
 .today-checkin-copy {
   min-width: 0;
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .today-checkin-copy strong {
-  font-size: 16px;
+  font-size: var(--text-lg);
   overflow-wrap: anywhere;
 }
 .today-checkin-copy p {
   margin: 0;
 }
 .today-checkin-next {
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   border-left: 3px solid var(--accent);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-subtle);
 }
 .today-checkin-actions {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   align-content: start;
 }
 .today-snooze-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: end;
 }
 .today-snooze-row .field {
@@ -399,7 +511,7 @@ code {
 .today-inline-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .today-row {
   width: 100%;
@@ -407,11 +519,11 @@ code {
   border-radius: var(--radius);
   background: var(--bg-input);
   color: var(--text);
-  padding: 11px 12px;
+  padding: var(--space-3) var(--space-3);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   text-align: left;
   cursor: pointer;
 }
@@ -434,15 +546,15 @@ code {
 }
 .today-goal-row {
   width: 100%;
-  padding: 10px;
+  padding: var(--space-3);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   text-align: left;
   cursor: pointer;
 }
@@ -463,7 +575,7 @@ code {
 .today-empty {
   display: grid;
   justify-items: start;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .today-empty p {
   margin: 0;
@@ -472,21 +584,21 @@ code {
 .today-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--space-3);
   margin: 0;
 }
 .today-facts > div {
-  padding: 10px;
+  padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 .today-facts dt {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .today-facts dd {
-  margin: 3px 0 0;
-  font-size: 20px;
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xl);
   font-weight: 650;
 }
 
@@ -496,12 +608,12 @@ code {
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 14px;
+  padding: var(--space-2) var(--space-4);
   font: inherit;
   cursor: pointer;
 }
@@ -522,14 +634,24 @@ code {
   outline: 2px solid var(--accent-hover);
   outline-offset: 2px;
 }
-.btn:disabled {
-  opacity: 0.45;
+/*
+ * Nút bị khoá: dùng màu nền chip và chữ muted, không làm mờ cả nút. Mờ bằng opacity làm chữ tụt
+ * dưới 3:1 ở cả hai chủ đề, và nút primary bị khoá trông như một nút đang bấm được nhưng nhạt.
+ * Lý do bị khoá đi kèm qua `title`/gợi ý ở nơi dùng (DESIGN.md: "explain the prerequisite").
+ */
+.btn:disabled,
+.btn-primary:disabled,
+.btn-danger:disabled {
+  background: var(--surface-chip);
+  border-color: var(--border);
+  color: var(--text-muted);
+  box-shadow: none;
   cursor: not-allowed;
 }
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-on);
   font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) {
@@ -540,14 +662,14 @@ code {
   color: var(--danger);
 }
 .btn-danger:hover:not(:disabled) {
-  background: rgba(239, 77, 90, 0.12);
+  background: var(--danger-wash);
 }
 .btn-block {
   width: 100%;
 }
 .btn-small {
-  padding: 4px 9px;
-  font-size: 12px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
 }
 .btn-active {
   border-color: var(--accent);
@@ -561,9 +683,9 @@ code {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 16px;
-  padding: 4px 6px;
-  border-radius: 6px;
+  font-size: var(--text-lg);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   min-width: 32px;
   min-height: 32px;
 }
@@ -572,7 +694,8 @@ code {
   background: var(--bg-input);
 }
 .icon-btn:disabled {
-  opacity: 0.4;
+  color: var(--border);
+  background: none;
   cursor: not-allowed;
 }
 
@@ -591,7 +714,7 @@ code {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   font: inherit;
   width: 100%;
 }
@@ -604,7 +727,7 @@ code {
   min-width: 140px;
 }
 .input-inline {
-  padding: 4px 8px;
+  padding: var(--space-1) var(--space-2);
 }
 input::placeholder,
 textarea::placeholder {
@@ -614,30 +737,30 @@ textarea::placeholder {
 
 .field {
   display: grid;
-  gap: 5px;
-  margin-bottom: 16px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
 }
 .field > span:first-child {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .checkbox {
   display: flex;
-  gap: 9px;
+  gap: var(--space-2);
   align-items: flex-start;
-  margin-bottom: 9px;
+  margin-bottom: var(--space-2);
   cursor: pointer;
 }
 
 .tag {
   display: inline-block;
-  margin-left: 8px;
-  padding: 1px 7px;
-  border-radius: 99px;
+  margin-left: var(--space-2);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
   background: var(--bg-input);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
 }
 
@@ -646,10 +769,10 @@ textarea::placeholder {
 .goals-page {
   flex: 1;
   overflow-y: auto;
-  padding: 28px;
+  padding: var(--space-7);
   display: grid;
   align-content: start;
-  gap: 18px;
+  gap: var(--space-4);
 }
 .goals-page > * {
   width: min(980px, 100%);
@@ -658,18 +781,18 @@ textarea::placeholder {
 .activity-page {
   flex: 1;
   overflow-y: auto;
-  padding: 28px;
+  padding: var(--space-7);
   display: grid;
   align-content: start;
-  gap: 18px;
+  gap: var(--space-4);
 }
 .activity-page > * {
   width: min(980px, 100%);
   margin-inline: auto;
 }
 .activity-header h1 {
-  margin: 2px 0 6px;
-  font-size: clamp(22px, 2vw, 28px);
+  margin: 2px 0 var(--space-1);
+  font-size: var(--text-display);
   line-height: 1.2;
 }
 .activity-header p {
@@ -679,41 +802,41 @@ textarea::placeholder {
   display: grid;
   /* auto-fit: ba bộ lọc xếp một hàng ở 1280px, tự gập lại khi hẹp. */
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  gap: var(--space-3);
 }
 .activity-filters .field {
   margin-bottom: 0;
 }
 .activity-panel {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .activity-item {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.02);
-  padding: 14px;
+  background: var(--surface-subtle);
+  padding: var(--space-4);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .activity-item-head {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
   align-items: flex-start;
 }
 .activity-item-head p {
-  margin: 4px 0 0;
+  margin: var(--space-1) 0 0;
 }
 .activity-meta {
   margin: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
+  gap: var(--space-2) var(--space-4);
 }
 .activity-meta dt {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .activity-meta dd {
   margin: 2px 0 0;
@@ -723,11 +846,11 @@ textarea::placeholder {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 20px;
+  gap: var(--space-5);
 }
 .goals-header h1 {
-  margin: 2px 0 6px;
-  font-size: clamp(22px, 2vw, 28px);
+  margin: 2px 0 var(--space-1);
+  font-size: var(--text-display);
   line-height: 1.2;
 }
 .goals-header p {
@@ -737,7 +860,7 @@ textarea::placeholder {
 .goal-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .goal-stats .tag,
 .goal-tags .tag {
@@ -746,7 +869,7 @@ textarea::placeholder {
 .goal-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 14px;
+  gap: 0 var(--space-4);
 }
 .goal-form-full {
   grid-column: 1 / -1;
@@ -757,42 +880,42 @@ textarea::placeholder {
 }
 .goal-section {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .goal-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .goal-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.02);
-  padding: 14px;
+  background: var(--surface-subtle);
+  padding: var(--space-4);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .goal-card-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .goal-title-wrap {
   min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: var(--space-2);
 }
 .goal-title-wrap h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
   overflow-wrap: anywhere;
 }
 .goal-next {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   border-left: 3px solid var(--accent);
   background: var(--bg-input);
   overflow-wrap: anywhere;
@@ -801,14 +924,14 @@ textarea::placeholder {
   margin: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 14px;
+  gap: var(--space-2) var(--space-4);
 }
 .goal-meta > div {
   min-width: 0;
 }
 .goal-meta dt {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .goal-meta dd {
   margin: 2px 0 0;
@@ -818,23 +941,23 @@ textarea::placeholder {
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  padding: 2px 7px;
+  padding: 2px var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-2xs);
   white-space: nowrap;
 }
 .attention-overdue {
   color: var(--danger);
   border-color: var(--danger);
-  background: rgba(239, 77, 90, 0.08);
+  background: var(--danger-wash);
 }
 .attention-soon,
 .attention-blocked {
   color: var(--warning);
   border-color: var(--warning);
-  background: rgba(240, 161, 58, 0.08);
+  background: var(--warning-wash);
 }
 .attention-normal {
   color: var(--success);
@@ -870,20 +993,20 @@ textarea::placeholder {
   flex: 1;
   min-height: 140px;
   overflow-y: auto;
-  padding: 0 12px 8px 8px;
+  padding: 0 var(--space-3) var(--space-2) var(--space-2);
 }
 .conversation-list-heading {
-  margin: 8px 18px 14px 6px;
-  font-size: 14px;
+  margin: var(--space-2) var(--space-4) var(--space-4) var(--space-2);
+  font-size: var(--text-base);
   font-weight: 600;
 }
 .conversation-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   min-height: 60px;
-  border-radius: 14px;
+  border-radius: var(--radius-nav);
 }
 .conversation-row.active {
   background: var(--selection);
@@ -895,7 +1018,7 @@ textarea::placeholder {
   top: 10px;
   bottom: 10px;
   width: 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--accent);
 }
 .conversation-row:hover .icon-btn,
@@ -904,33 +1027,33 @@ textarea::placeholder {
 }
 .conversation-row .icon-btn {
   opacity: 0;
-  margin-right: 6px;
+  margin-right: var(--space-2);
 }
 .conversation-item {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
   text-align: left;
   background: none;
   border: none;
   color: inherit;
   font: inherit;
-  padding: 10px 14px 10px 22px;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-6);
   cursor: pointer;
   border-radius: var(--radius);
 }
 .conversation-item .small {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .conversation-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .snippet {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -941,9 +1064,9 @@ textarea::placeholder {
 .mcp-badge {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  font-size: 12px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 .mcp-badge .dot {
@@ -975,10 +1098,10 @@ textarea::placeholder {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-4);
   min-height: 76px;
-  padding: 14px 24px;
-  border-bottom: 1px solid #edf2f8;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elevated);
   flex: none;
 }
@@ -986,14 +1109,14 @@ textarea::placeholder {
   min-width: 0;
 }
 .chat-heading .small {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .chat-header h2 {
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 20px;
+  font-size: var(--text-xl);
   line-height: 1.4;
 }
 .chat-avatar {
@@ -1004,17 +1127,17 @@ textarea::placeholder {
   height: 40px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
-  font-size: 18px;
+  color: var(--accent-on);
+  font-size: var(--text-lg);
 }
 
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 22px 30px 26px 28px;
+  padding: var(--space-6) var(--space-8) var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
@@ -1022,11 +1145,11 @@ textarea::placeholder {
 .message-date {
   align-self: center;
   margin-bottom: 0;
-  padding: 4px 16px;
-  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
-  background: #edf2f9;
-  font-size: 12px;
+  background: var(--surface-chip);
+  font-size: var(--text-xs);
 }
 
 .message {
@@ -1034,13 +1157,13 @@ textarea::placeholder {
   flex: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  padding: 14px 18px;
+  padding: var(--space-4) var(--space-4);
   background: var(--bg-elevated);
   margin-left: 54px;
   width: fit-content;
   min-width: min(440px, calc(100% - 54px));
   max-width: calc(100% - 54px);
-  font-size: 15px;
+  font-size: var(--text-md);
   box-shadow: var(--shadow-panel);
 }
 .message-avatar {
@@ -1065,19 +1188,19 @@ textarea::placeholder {
 .message-header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 .message-header-left {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
   flex-wrap: wrap;
 }
 .message-header-left .small {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .message-actions {
   display: flex;
@@ -1099,29 +1222,175 @@ textarea::placeholder {
 }
 .message-edit-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 6px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 .typing {
   color: var(--text-muted);
   font-style: italic;
 }
 
+/* Markdown của assistant (MarkdownText). Tắt pre-wrap: react-markdown tự lo xuống dòng. */
+.md {
+  white-space: normal;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md blockquote {
+  margin: var(--space-2) 0;
+}
+.md ul,
+.md ol {
+  padding-left: var(--space-6);
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: var(--space-3) 0 var(--space-1);
+  line-height: 1.3;
+}
+.md h1 {
+  font-size: var(--text-xl);
+}
+.md h2 {
+  font-size: var(--text-lg);
+}
+.md h3,
+.md h4 {
+  font-size: var(--text-md);
+}
+.md a {
+  color: var(--accent);
+}
+.md code {
+  padding: 1px var(--space-1);
+  background: var(--surface-chip);
+  border-radius: var(--radius-xs);
+  font-size: 0.92em;
+}
+.md pre {
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  background: var(--surface-chip);
+  border-radius: var(--radius);
+  white-space: pre;
+}
+.md pre code {
+  padding: 0;
+  background: none;
+}
+.md blockquote {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.md-table-wrap {
+  margin: var(--space-2) 0;
+  overflow-x: auto;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.md th,
+.md td {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.md th {
+  background: var(--surface-chip);
+}
+.md tbody tr:nth-child(even) {
+  background: var(--border-soft);
+}
+
+/*
+ * Thẻ file cho nội dung model sinh ra (openspec `add-generated-file-download`).
+ *
+ * `white-space: normal` là bắt buộc: `.message-body` đặt `pre-wrap` cho văn xuôi, và nếu thẻ này
+ * thừa hưởng nó thì mọi dấu xuống dòng trong JSX sẽ thành khoảng trắng thật trên thẻ.
+ */
+.file-block {
+  white-space: normal;
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.file-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.file-block-icon {
+  flex: none;
+}
+.file-block-name {
+  font-family: var(--mono);
+  word-break: break-all;
+}
+.file-block-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.file-block-partial,
+.file-block-disabled {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  border-style: dashed;
+}
+.file-block-disabled .file-block-name {
+  color: var(--text-muted);
+}
+/* Nội dung dài phải cuộn trong chính nó — khung chat không bao giờ được cuộn ngang. */
+.file-block-content {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  white-space: pre;
+}
+
 .tool-calls {
   list-style: none;
-  margin: 10px 0 0;
+  margin: var(--space-2) 0 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .tool-call {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   background: var(--bg-input);
 }
 .tool-call.op-uncertain {
@@ -1135,10 +1404,10 @@ textarea::placeholder {
 }
 
 .risk-badge {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.05em;
-  padding: 1px 6px;
-  border-radius: 99px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
 }
 .risk-badge.risk-read {
@@ -1156,12 +1425,12 @@ textarea::placeholder {
 
 .composer {
   flex: none;
-  margin: 0 12px 14px 16px;
+  margin: 0 var(--space-3) var(--space-4) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 24px;
-  padding: 16px 20px;
+  border-radius: var(--radius-composer);
+  padding: var(--space-4) var(--space-5);
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-panel);
   max-height: 45%;
@@ -1170,7 +1439,7 @@ textarea::placeholder {
 .composer-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: end;
 }
 .composer-row > .composer-input {
@@ -1181,7 +1450,10 @@ textarea::placeholder {
   padding: 0 2px;
   border: 0;
   border-radius: 0;
-  font-size: 15px;
+  /* Ô nhập là một phần của thẻ composer, không phải một ô riêng: nền phải là nền thẻ. Ở chủ đề
+     sáng cả hai đều trắng nên không thấy, ở chủ đề tối thì lộ ra một vệt sáng hơn. */
+  background: transparent;
+  font-size: var(--text-md);
   resize: vertical;
 }
 .composer-row > .composer-input:focus {
@@ -1189,7 +1461,7 @@ textarea::placeholder {
 }
 .composer:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgb(23 97 255 / 10%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .composer-attach {
   grid-row: 2;
@@ -1203,8 +1475,8 @@ textarea::placeholder {
   grid-row: 2;
   min-height: 42px;
   min-width: 90px;
-  border-radius: 14px;
-  font-size: 15px;
+  border-radius: var(--radius-nav);
+  font-size: var(--text-md);
 }
 .composer-input {
   flex: 1;
@@ -1213,7 +1485,7 @@ textarea::placeholder {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   font: inherit;
 }
 .composer-input:focus {
@@ -1224,55 +1496,167 @@ textarea::placeholder {
 .attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 3px 10px;
-  font-size: 12px;
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
 }
 .chip-close {
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 15px;
+  font-size: var(--text-md);
   line-height: 1;
 }
 .warning-tag {
   color: var(--warning);
   border: 1px solid var(--warning);
-  border-radius: 99px;
-  padding: 0 6px;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  font-size: var(--text-2xs);
 }
 
 .warning-inline {
   color: var(--warning);
-  font-size: 12px;
+  font-size: var(--text-xs);
   margin: 0;
 }
 .error-inline {
   color: var(--danger);
-  font-size: 12px;
-  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  margin: var(--space-1) 0 0;
 }
 
 .empty-state {
   display: grid;
   place-content: center;
-  gap: 12px;
+  gap: var(--space-3);
   height: 100%;
   text-align: center;
-  padding: 24px;
+  padding: var(--space-6);
 }
 .empty-state > .nexa-mark {
   justify-self: center;
+}
+
+/* Gợi ý mở đầu của hội thoại trống (ChatView `ChatStarters`). */
+.chat-starters {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  margin: auto;
+  padding: var(--space-6) 0;
+  max-width: 560px;
+  text-align: center;
+}
+.chat-starters h2 {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xl);
+}
+.chat-starters p {
+  margin: 0;
+}
+.chat-starter-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  width: 100%;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-starter {
+  width: 100%;
+  height: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+.chat-starter:hover {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+.chat-starter:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+}
+@media (max-width: 620px) {
+  .chat-starter-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Trạng thái khối dữ liệu: đang tải, trống, lỗi (StateBlocks.tsx) ───── */
+
+/* Ẩn khỏi mắt nhưng vẫn được trình đọc màn hình đọc. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.skeleton-group {
+  display: grid;
+  gap: var(--space-2);
+}
+.skeleton-rows .skeleton {
+  height: 40px;
+}
+.skeleton-rows .skeleton:nth-child(3n) {
+  width: 72%;
+}
+.skeleton-cards {
+  gap: var(--space-3);
+}
+.skeleton-cards .skeleton {
+  height: 88px;
+  border-radius: var(--radius-card);
+}
+.state-empty,
+.state-error {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+.state-error {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-wash);
+}
+.state-title {
+  font-weight: 600;
+}
+.state-text,
+.state-text p {
+  margin: 0;
+  color: var(--text-muted);
+}
+.state-error .state-title {
+  color: var(--danger);
+}
+.state-error .state-text {
+  color: var(--text);
 }
 
 /* ── Cài đặt ──────────────────────────────────────────────────────────── */
@@ -1286,7 +1670,7 @@ textarea::placeholder {
 .tabs {
   display: flex;
   gap: 2px;
-  padding: 0 20px;
+  padding: 0 var(--space-5);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
 }
@@ -1295,7 +1679,9 @@ textarea::placeholder {
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
-  padding: 12px 14px;
+  /* 12px ngang, không phải 14: với đủ mười tab thì 14px làm dải tab tràn đúng ~13px ở cỡ cửa sổ
+     mặc định, và thanh cuộn ngang hiện ra ngay dưới hàng tab. */
+  padding: var(--space-3) var(--space-3);
   font: inherit;
   cursor: pointer;
   white-space: nowrap;
@@ -1307,40 +1693,206 @@ textarea::placeholder {
 .settings-body {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: var(--space-5);
   display: grid;
-  gap: 20px;
+  gap: var(--space-5);
   align-content: start;
   max-width: 860px;
+}
+
+/*
+ * Cài đặt hai cột: danh sách mục theo nhóm bên trái, nội dung bên phải. Thay cho 12 tab nằm
+ * ngang (settings-groups-ui.ts). Dưới 760px danh sách nằm ngang lại và ẩn tiêu đề nhóm.
+ */
+.settings {
+  flex-direction: row;
+}
+.settings-nav {
+  flex: none;
+  width: 220px;
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-3);
+  border-right: 1px solid var(--border-soft);
+  overflow-y: auto;
+}
+.settings-nav-group {
+  display: grid;
+  gap: 2px;
+}
+.settings-nav-heading {
+  padding: 0 var(--space-3) var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.settings-nav .tab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-bottom: none;
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+.settings-nav .tab:hover {
+  color: var(--text);
+  background: var(--surface-chip);
+}
+.settings-nav .tab.active {
+  color: var(--accent);
+  background: var(--selection);
+  font-weight: 600;
+}
+.settings-nav .tab:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: -2px;
+}
+
+/* Chấm trạng thái kết nối; nghĩa nằm ở `title` và CONNECTION_STATUS_LABELS, màu chỉ để quét. */
+.status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.status-dot.status-ok {
+  background: var(--success);
+}
+.status-dot.status-error {
+  background: var(--danger);
+}
+.status-dot.status-untested {
+  background: var(--warning);
+}
+
+/* Hướng dẫn hai bước cho lần chạy đầu. */
+.onboarding {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+.onboarding h2 {
+  margin: 0;
+}
+.onboarding > p {
+  margin: var(--space-1) 0 var(--space-3);
+}
+.onboarding-steps {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-6);
+}
+.onboarding-steps li.done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.onboarding-steps li.done .muted {
+  text-decoration: none;
+}
+.onboarding-steps li.current::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .settings {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: auto;
+    display: flex;
+    gap: 2px;
+    padding: var(--space-2);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  .settings-nav-group {
+    display: contents;
+  }
+  .settings-nav-heading {
+    display: none;
+  }
+  .settings-nav .tab {
+    flex: none;
+    white-space: nowrap;
+  }
 }
 .panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elevated);
-  padding: 18px 20px;
+  padding: var(--space-4) var(--space-5);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .panel h2 {
-  margin: 0 0 6px;
-  font-size: 16px;
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-lg);
+}
+
+/* ── Chọn màu giao diện (Cài đặt → Giao diện) ─────────────────────────── */
+
+.theme-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+.theme-switch-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.theme-switch-option:hover {
+  color: var(--text);
+}
+.theme-switch-option[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--selection);
+  border-color: var(--border);
+}
+.theme-switch-option:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
 }
 .memory-panel-head {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
   align-items: flex-start;
 }
 .memory-stats {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 .memory-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--space-3);
 }
 .memory-form-full {
   grid-column: 1 / -1;
@@ -1354,26 +1906,26 @@ textarea::placeholder {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .memory-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.02);
-  padding: 14px;
+  background: var(--surface-subtle);
+  padding: var(--space-4);
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .memory-card-head {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: flex-start;
 }
 .memory-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .memory-content {
   margin: 0;
@@ -1384,15 +1936,15 @@ textarea::placeholder {
   margin: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
+  gap: var(--space-2) var(--space-4);
 }
 .memory-meta > div {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
 }
 .memory-meta dt {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .memory-meta dd {
   margin: 0;
@@ -1403,12 +1955,12 @@ textarea::placeholder {
 }
 .actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
-  margin-top: 12px;
+  margin-top: var(--space-3);
 }
 .account-status {
-  margin-top: 14px;
+  margin-top: var(--space-4);
   min-height: 24px;
 }
 .account-status p {
@@ -1417,34 +1969,34 @@ textarea::placeholder {
 .account-details {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px 14px;
+  gap: var(--space-2) var(--space-4);
   margin: 0;
 }
 .account-details dt {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .account-details dd {
-  margin: 3px 0 0;
+  margin: var(--space-1) 0 0;
   overflow-wrap: anywhere;
 }
 .account-model-catalog {
-  margin-top: 16px;
-  padding-top: 14px;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
 .account-model-catalog-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .account-model-catalog-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .account-model-state {
-  margin-top: 10px;
+  margin-top: var(--space-2);
   min-height: 24px;
 }
 .account-model-state p {
@@ -1458,30 +2010,30 @@ textarea::placeholder {
   margin-bottom: 0;
 }
 .account-model-note {
-  margin: 10px 0 0;
+  margin: var(--space-2) 0 0;
 }
 
 .model-add {
   display: grid;
   grid-template-columns: 1.4fr 1fr auto auto;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-4);
 }
 .table th,
 .table td {
   text-align: left;
-  padding: 9px 8px;
+  padding: var(--space-2) var(--space-2);
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
 .table th {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   font-weight: 600;
 }
@@ -1489,15 +2041,15 @@ textarea::placeholder {
 /* Dựng theo đúng idiom của .memory-* — không mở một hệ token thứ hai. */
 .ba-stats {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
   align-items: baseline;
-  margin: 8px 0 12px;
+  margin: var(--space-2) 0 var(--space-3);
 }
 .ba-form {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: start;
 }
 .ba-form textarea.input {
@@ -1506,19 +2058,19 @@ textarea::placeholder {
 }
 .ba-list {
   list-style: none;
-  margin: 10px 0 0;
+  margin: var(--space-2) 0 0;
   padding: 0;
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .ba-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.02);
-  padding: 12px 14px;
+  background: var(--surface-subtle);
+  padding: var(--space-3) var(--space-4);
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: flex-start;
 }
 .ba-card.active {
@@ -1526,7 +2078,7 @@ textarea::placeholder {
 }
 .ba-card-main {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   text-align: left;
   background: none;
   border: none;
@@ -1541,17 +2093,17 @@ textarea::placeholder {
   overflow-wrap: anywhere;
 }
 .ba-body {
-  margin: 4px 0 0;
+  margin: var(--space-1) 0 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .ba-code {
-  margin: 8px 0 0;
-  padding: 10px 12px;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-input);
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 320px;
@@ -1575,8 +2127,8 @@ textarea::placeholder {
 .checklist-workspace {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.8fr);
-  gap: 18px;
-  margin-top: 16px;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
 }
 
 .checklist-sidebar,
@@ -1600,7 +2152,7 @@ textarea::placeholder {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .checklist-heading h3,
@@ -1617,10 +2169,10 @@ textarea::placeholder {
 }
 
 .checklist-evidence {
-  margin: 8px 0 0;
-  padding-left: 18px;
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 900px) {
@@ -1640,23 +2192,23 @@ textarea::placeholder {
 
 .row-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 
 .field-list {
   margin: 0;
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .field-list > div {
   display: grid;
   grid-template-columns: 200px 1fr;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .field-list dt {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .field-list dd {
   margin: 0;
@@ -1667,10 +2219,10 @@ textarea::placeholder {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--text-xs);
   background: var(--bg-input);
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
   max-height: 220px;
   overflow: auto;
 }
@@ -1680,16 +2232,16 @@ textarea::placeholder {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(3, 5, 9, 0.72);
+  background: var(--scrim);
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: var(--space-6);
   z-index: 100;
 }
 .modal {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   width: min(760px, 100%);
   max-height: 88vh;
   display: flex;
@@ -1709,27 +2261,27 @@ textarea::placeholder {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
-  padding: 18px 22px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
 }
 .modal-header h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--text-lg);
 }
 .modal-subtitle {
-  margin: 4px 0 0;
-  font-size: 13px;
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
 }
 .modal-body {
-  padding: 18px 22px;
+  padding: var(--space-4) var(--space-6);
   overflow-y: auto;
   display: grid;
-  gap: 18px;
+  gap: var(--space-4);
 }
 .modal-body h3 {
-  margin: 0 0 6px;
-  font-size: 13px;
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -1739,14 +2291,14 @@ textarea::placeholder {
 }
 .impact {
   border-left: 3px solid var(--warning);
-  padding-left: 12px;
+  padding-left: var(--space-3);
 }
 .modal-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 14px 22px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border);
 }
 .modal-footer-end {
@@ -1754,22 +2306,22 @@ textarea::placeholder {
 }
 .modal-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .countdown {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
 .change-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .change-table th,
 .change-table td {
   text-align: left;
-  padding: 6px 8px;
+  padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--border);
   vertical-align: top;
   word-break: break-word;
@@ -1782,23 +2334,23 @@ textarea::placeholder {
 
 .toasts {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: var(--space-4);
+  bottom: var(--space-4);
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   max-width: 420px;
   z-index: 200;
 }
 .toast {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-left-width: 3px;
   border-radius: var(--radius);
-  padding: 10px 12px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: var(--shadow-toast);
 }
 .toast-error {
   border-left-color: var(--danger);
@@ -1814,11 +2366,11 @@ textarea::placeholder {
 }
 .toast-body {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .toast-detail {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   word-break: break-word;
 }
@@ -1827,48 +2379,48 @@ textarea::placeholder {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 17px;
+  font-size: var(--text-lg);
   line-height: 1;
 }
 
 .uncertain-action {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 /* ── Banner thao tác chưa rõ kết quả (§16) ────────────────────────────── */
 
 .uncertain-banner {
-  margin: 12px 20px 0;
+  margin: var(--space-3) var(--space-5) 0;
   border: 1px solid var(--warning);
   border-left-width: 3px;
   border-radius: var(--radius);
-  background: rgba(240, 161, 58, 0.08);
-  padding: 12px 14px;
+  background: var(--warning-wash);
+  padding: var(--space-3) var(--space-4);
 }
 .uncertain-banner-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .uncertain-banner p {
-  margin: 4px 0 8px;
+  margin: var(--space-1) 0 var(--space-2);
 }
 .uncertain-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .uncertain-list li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
 }
 
 /* ── Provider bên ngoài tổ chức ────────────────────────────────────────── */
@@ -1877,35 +2429,35 @@ textarea::placeholder {
   color: var(--warning);
   border: 1px solid var(--warning);
   border-radius: var(--radius);
-  background: rgba(240, 161, 58, 0.08);
-  padding: 9px 12px;
-  margin: 0 0 12px;
-  font-size: 13px;
+  background: var(--warning-wash);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
 }
 .external-tag {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--warning);
-  border: 1px solid #fbc573;
-  border-radius: 99px;
-  padding: 5px 10px;
-  font-size: 12px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
   white-space: nowrap;
-  background: #fff8ea;
+  background: var(--warning-wash);
 }
 .chat-header-right {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
 }
 .chat-header-right .input-compact {
   width: 220px;
   max-width: 100%;
   min-height: 42px;
-  border-radius: 16px;
-  font-size: 14px;
+  border-radius: var(--radius-card);
+  font-size: var(--text-base);
 }
 @media (min-width: 761px) and (max-width: 1100px) {
   .app {
@@ -1917,15 +2469,15 @@ textarea::placeholder {
   .chat-header-right {
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 8px;
+    gap: var(--space-2);
     max-width: 65%;
   }
   .chat-header-right .input-compact {
     width: 220px;
   }
   .sidebar .btn-block {
-    font-size: 14px;
-    gap: 14px;
+    font-size: var(--text-base);
+    gap: var(--space-4);
   }
 }
 .model-add {
@@ -1951,30 +2503,30 @@ textarea::placeholder {
     display: none;
   }
   .chat-header {
-    padding: 14px 16px;
+    padding: var(--space-4) var(--space-4);
   }
   .chat-header-right {
-    gap: 8px;
+    gap: var(--space-2);
   }
   .sidebar-top {
-    padding: 12px 10px;
+    padding: var(--space-3) var(--space-3);
   }
   .sidebar .btn-block {
-    gap: 12px;
-    font-size: 14px;
+    gap: var(--space-3);
+    font-size: var(--text-base);
   }
   .brand {
-    font-size: 26px;
+    font-size: calc(var(--text-2xl) - 2px);
   }
   .conversation-title {
-    font-size: 14px;
+    font-size: var(--text-base);
   }
   .message {
     margin-left: 40px;
     min-width: 0;
     max-width: calc(100% - 40px);
-    padding: 12px;
-    font-size: 15px;
+    padding: var(--space-3);
+    font-size: var(--text-md);
   }
   .message-user {
     margin-left: 0;
@@ -1987,10 +2539,10 @@ textarea::placeholder {
   }
   .message-header {
     flex-wrap: wrap;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .composer {
-    margin: 0 8px 10px;
+    margin: 0 var(--space-2) var(--space-2);
   }
 
   .chat-header-right .external-tag {
@@ -1999,11 +2551,11 @@ textarea::placeholder {
 
   .settings-body,
   .messages {
-    padding: 12px;
+    padding: var(--space-3);
   }
 
   .composer {
-    padding: 10px 12px 12px;
+    padding: var(--space-2) var(--space-3) var(--space-3);
   }
 
   .model-add {
@@ -2034,11 +2586,11 @@ textarea::placeholder {
   }
 
   .goals-page {
-    padding: 20px;
+    padding: var(--space-5);
   }
 
   .today {
-    padding: 20px;
+    padding: var(--space-5);
   }
 
   .today-hero {
@@ -2052,7 +2604,7 @@ textarea::placeholder {
 
   .field-list > div {
     grid-template-columns: 1fr;
-    gap: 4px;
+    gap: var(--space-1);
   }
 }
 
@@ -2091,7 +2643,7 @@ textarea::placeholder {
     grid-column: 1 / -1;
   }
   .sidebar-top .btn-primary {
-    margin: 8px 0;
+    margin: var(--space-2) 0;
   }
 
   .today-grid,
@@ -2111,12 +2663,12 @@ textarea::placeholder {
   .tabs {
     flex-wrap: wrap;
     overflow-x: visible;
-    padding: 0 8px;
+    padding: 0 var(--space-2);
   }
 
   .tab {
     flex: 1 0 auto;
-    padding: 9px 8px;
+    padding: var(--space-2) var(--space-2);
   }
 
   .main,
@@ -2126,7 +2678,7 @@ textarea::placeholder {
   }
 
   .modal-backdrop {
-    padding: 10px;
+    padding: var(--space-3);
   }
 
   .modal {
@@ -2136,9 +2688,99 @@ textarea::placeholder {
   .modal-header,
   .modal-body,
   .modal-footer {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
   }
+}
+
+/* ── Chuyển động ───────────────────────────────────────────────────────── */
+/*
+ * Chỉ cho thay đổi trạng thái (DESIGN.md: "short state transitions; no ambient motion"):
+ * hover/focus/chọn đổi màu mượt, phần tử mới hiện ra có hướng, dialog/toast mở ra không giật.
+ * Không có gì chuyển động khi người dùng không làm gì, trừ skeleton, vì skeleton báo đang tải.
+ */
+:where(
+  .btn,
+  .icon-btn,
+  .link,
+  .tab,
+  .conversation-row,
+  .conversation-item,
+  .today-row,
+  .today-goal-row,
+  .chip-close,
+  .toast-close,
+  .input,
+  .composer-row > .composer-input
+) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+}
+/* Nút hiện ra khi hover (hành động trên tin nhắn, hội thoại) mờ dần thay vì bật/tắt. */
+.message-actions,
+.conversation-row .icon-btn {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+/* Phản hồi khi bấm: lún 1px, đủ để biết bấm đã ăn mà không nhảy bố cục. */
+:where(.btn, .icon-btn):active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+@keyframes nexa-enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes nexa-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+@keyframes nexa-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes nexa-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* Chỉ tin mới nhất: mở một hội thoại dài không làm cả danh sách nhấp nháy. Tin đang stream giữ
+   nguyên phần tử nên không chạy lại hiệu ứng mỗi lần có thêm chữ. */
+.messages > .message:last-of-type {
+  animation: nexa-enter-up var(--dur-base) var(--ease-out) both;
+}
+.modal-backdrop {
+  animation: nexa-fade var(--dur-base) var(--ease-out) both;
+}
+.modal {
+  animation: nexa-pop var(--dur-base) var(--ease-out) both;
+}
+.toast {
+  animation: nexa-enter-up var(--dur-base) var(--ease-out) both;
+}
+
+/* Khối giữ chỗ khi đang tải; hình dáng do nơi dùng đặt (chiều cao, độ rộng). */
+.skeleton {
+  display: block;
+  min-height: 12px;
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--surface-chip) 30%,
+    var(--border-soft) 50%,
+    var(--surface-chip) 70%
+  );
+  background-size: 300% 100%;
+  animation: nexa-shimmer 1.4s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2150,12 +2792,16 @@ textarea::placeholder {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+  :where(.btn, .icon-btn):active:not(:disabled) {
+    transform: none;
+  }
 }
 
 @media (forced-colors: active) {
   .conversation-row.active,
   .tab.active,
-  .btn-active {
+  .btn-active,
+  .theme-switch-option[aria-pressed='true'] {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }

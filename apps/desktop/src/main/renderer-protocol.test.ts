@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { resolve } from 'node:path'
 
 const electronMock = vi.hoisted(() => ({
   registerSchemesAsPrivileged: vi.fn(),
@@ -33,11 +34,13 @@ describe('renderer protocol', () => {
   })
 
   it('chỉ resolve asset bên trong renderer root', () => {
+    // Đường dẫn mong đợi dựng bằng `resolve` chứ không viết cứng dấu gạch: cái đang kiểm là
+    // ranh giới thư mục, không phải kiểu phân tách của từng hệ điều hành.
     expect(resolveRendererPath('/app/renderer', RENDERER_ENTRY_URL)).toBe(
-      '/app/renderer/index.html',
+      resolve('/app/renderer', 'index.html'),
     )
     expect(resolveRendererPath('/app/renderer', 'nexa://app/assets/app.js')).toBe(
-      '/app/renderer/assets/app.js',
+      resolve('/app/renderer', 'assets/app.js'),
     )
     expect(resolveRendererPath('/app/renderer', 'nexa://other/index.html')).toBeNull()
     expect(resolveRendererPath('/app/renderer', 'nexa://app/..%2Fsecret.txt')).toBeNull()

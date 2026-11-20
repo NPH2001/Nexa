@@ -35,6 +35,14 @@ export interface HttpClientOptions {
    * nào bật cờ này (services.ts không bao giờ truyền nó).
    */
   readonly allowInsecureLoopback?: boolean
+  /**
+   * Gọi đúng URL đã cho, KHÔNG tự thêm "/" cuối. Mặc định `false` (giữ hành vi cũ cho gateway).
+   *
+   * Hai loại endpoint đòi hỏi ngược nhau (cả hai đã kiểm với server thật):
+   *   - gateway LiteLLM: thiếu "/" ⇒ 307 redirect (có thể hạ xuống http://), nên phải thêm;
+   *   - endpoint MCP của XWiki (`…/aiLLM/mcp`): có "/" ⇒ 404, nên phải gọi nguyên văn.
+   */
+  readonly exactUrl?: boolean
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
@@ -101,7 +109,8 @@ export class McpHttpClient {
     // dụ có middleware "append slash") trả 307 redirect thêm "/" nếu thiếu — redirect đó còn có
     // thể hạ cấp xuống http://, đúng thứ `McpHttpClient` cố tình từ chối follow (xem JSDoc lớp).
     // Tự thêm "/" ở đây để không bao giờ đi vào redirect đó ngay từ đầu.
-    this.url = parsed.pathname.endsWith('/') ? opts.url : `${opts.url}/`
+    this.url =
+      opts.exactUrl === true || parsed.pathname.endsWith('/') ? opts.url : `${opts.url}/`
   }
 
   get isReady(): boolean {

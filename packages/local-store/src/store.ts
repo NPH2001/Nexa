@@ -96,11 +96,9 @@ export class LocalStore {
       if (applied.has(migration.version)) continue
       this.transaction(() => {
         db.exec(migration.up)
-        db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)').run(
-          migration.version,
-          migration.name,
-          this.nowIso(),
-        )
+        db.prepare(
+          'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
+        ).run(migration.version, migration.name, this.nowIso())
       })
       this.log.info('migration-applied', { version: migration.version, name: migration.name })
     }

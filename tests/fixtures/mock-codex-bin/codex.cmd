@@ -1,0 +1,2 @@
+@echo off
+"%NEXA_E2E_NODE%" "%NEXA_E2E_CODEX_FIXTURE%" %*

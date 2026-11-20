@@ -1,6 +1,7 @@
 import {
   ERROR_CODES,
   EXPAND_TOOLS_TOOL_NAME,
+  formatNexaErrorMessage,
   isExternalProvider,
   NexaError,
   TOOL_PRESET_FLAGS,
@@ -10,8 +11,11 @@ import {
   type LlmProvider,
   type LocalToolDefinition,
   type LocalToolRegistry,
+  type McpTargetSystem,
+  type McpToolSource,
   type MessageRole,
   type OperationStatus,
+  type PreviewContext,
   type RiskLevel,
   type ToolDefinition,
   type ToolPreset,
@@ -28,7 +32,6 @@ import type {
   TokenUsage,
 } from '@nexa/llm-client'
 import type { ProcessedDocument } from '@nexa/document-processor'
-import type { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
 import {
   buildContext,
   toolResultMessage,
@@ -40,7 +43,7 @@ import {
 import { ConfirmationGuard, type ApprovalDecision } from './confirmation-guard.js'
 import { OperationTracker, isUncertainOutcome } from './operation-tracker.js'
 import { assertModelMayReceiveDocuments, assertModelSupportsImages } from './document-policy.js'
-import { selectPresetForHistory } from './tool-preset-selector.js'
+import { clampPreset, selectPresetForHistory } from './tool-preset-selector.js'
 
 /**
  * Tool đã phân giải, nhìn từ đường thực thi.
@@ -57,6 +60,12 @@ interface CallableTarget {
   readonly payload: Record<string, unknown>
   buildPreview(): Promise<ToolPreview>
   execute(): Promise<ToolResultSummary>
+  /**
+   * Chốt payload cuối cùng TRƯỚC khi dựng preview (`ToolDefinition.prepareWrite`). Trả về một
+   * target mới mang payload đã chốt — chính payload đó được xem trước, băm vào approval và thực
+   * thi, nên không có bước nào sau xác nhận đổi được nó.
+   */
+  prepare?(): Promise<CallableTarget>
 }
 
 /** Sự kiện runtime đẩy ra ngoài cho host (main process) chuyển tiếp tới UI. */
@@ -97,8 +106,13 @@ export interface ToolCallSink {
 
 export interface AgentRuntimeDeps {
   readonly llm: OpenAiCompatibleClient
-  /** null khi người dùng chưa cấu hình Atlassian — chat vẫn phải chạy được. */
-  readonly mcp: AtlassianMcpManager | null
+  /**
+   * null khi người dùng chưa cấu hình hệ thống nào — chat vẫn phải chạy được.
+   *
+   * Thường là `McpToolRouter` gộp Atlassian, Redmine và XWiki (ADR 0010); test có thể truyền thẳng
+   * một `AtlassianMcpManager`.
+   */
+  readonly mcp: McpToolSource | null
   readonly guard: ConfirmationGuard
   readonly tracker: OperationTracker
   readonly logger: Logger
@@ -144,6 +158,13 @@ export interface RunTurnInput {
    * chỉ dựng khối context — và loại sạch khối này khi provider nằm ngoài tổ chức.
    */
   readonly baKnowledge?: readonly BaKnowledgeContextItem[]
+  /** Hướng dẫn của agent gắn với hội thoại; nối sau prompt gốc, không thay thế nó. */
+  readonly agentInstructions?: string
+  /**
+   * Trần tool của agent. Vắng ⇒ không giới hạn thêm (như `all`). Chỉ thu hẹp: áp lên preset do
+   * bộ chọn chọn VÀ lên đường mở rộng `nexa_mo_rong_tool`, nên model không "xin" vượt trần được.
+   */
+  readonly toolCeiling?: ToolPreset
   readonly signal?: AbortSignal
   readonly emit: (event: RuntimeEvent) => void
   readonly toolCalls: ToolCallSink
@@ -206,6 +227,9 @@ export class AgentRuntime {
         ? { commitments: input.commitments }
         : {}),
       ...(baKnowledge.length > 0 ? { baKnowledge } : {}),
+      ...(input.agentInstructions !== undefined
+        ? { agentInstructions: input.agentInstructions }
+        : {}),
       budget,
     })
     this.log.info('memory-context', {
@@ -255,8 +279,14 @@ export class AgentRuntime {
     // ADR 0009 — chỉ gửi preset tool phù hợp câu hỏi, không phải cả 98 tool mỗi vòng.
     // `tools` phải gán lại được: model có thể xin danh mục đầy đủ giữa lượt qua tool meta.
     const scoping = settings.features.toolScoping
-    let preset: ToolPreset = scoping ? selectPresetForHistory(input.history) : 'all'
-    let tools = this.buildToolSpecs(preset, scoping && preset !== 'all')
+    // Trần của agent là "preset rộng nhất được phép": `all` khi không có agent. Preset hiệu lực
+    // và đích của đường mở rộng đều bị kẹp vào đó — đây là chỗ duy nhất agent giới hạn tool.
+    const ceiling: ToolPreset = input.toolCeiling ?? 'all'
+    let preset: ToolPreset = clampPreset(
+      scoping ? selectPresetForHistory(input.history, this.availableSystems()) : 'all',
+      ceiling,
+    )
+    let tools = this.buildToolSpecs(preset, scoping && preset !== ceiling)
     this.log.info('tool-preset', {
       requestId: input.requestId,
       preset,
@@ -334,10 +364,10 @@ export class AgentRuntime {
           // Lời gọi này không phải thao tác lên hệ thống đích mà lên chính request: không
           // preview, không xác nhận, không operation_id, không ghi ToolCallSink, và không
           // chiếm hạn mức một-write-mỗi-lượt (vì `continue` bỏ qua toàn bộ đường write).
-          messages.push(toolResultMessage(call.id, this.buildCatalogListing()))
-          if (preset !== 'all') {
-            preset = 'all'
-            tools = this.buildToolSpecs('all', false)
+          messages.push(toolResultMessage(call.id, this.buildCatalogListing(ceiling)))
+          if (preset !== ceiling) {
+            preset = ceiling
+            tools = this.buildToolSpecs(ceiling, false)
             this.log.info('tool-preset', {
               requestId: input.requestId,
               preset,
@@ -372,7 +402,24 @@ export class AgentRuntime {
       }
     }
 
-    // Vượt trần vòng lặp: dừng và nói rõ, thay vì lặp mãi hoặc trả lời cụt lủn.
+    // Hết hạn mức vòng: cho model đúng một lượt cuối để tổng hợp từ kết quả đã có. Chỉ khi nó
+    // vẫn đòi gọi tool mới báo lỗi — người dùng nhận câu trả lời thay vì mất cả lượt.
+    messages.push({
+      role: 'user',
+      content:
+        'Đã hết số bước công cụ cho lượt này. Đừng gọi thêm công cụ; hãy trả lời bằng kết quả đã có và nói rõ phần nào còn chưa làm được.',
+    })
+    const last = await this.streamOnce(messages, tools, input)
+    if (last.usage !== undefined) usage = last.usage
+    if (last.toolCalls.length === 0 && last.text.trim() !== '') {
+      return {
+        text: last.text,
+        truncatedContextCount: context.truncatedCount,
+        ...(usage !== undefined ? { usage } : {}),
+        toolCallCount,
+        uncertainOperationIds,
+      }
+    }
     throw new NexaError(ERROR_CODES.MAX_TOOL_ITERATIONS, { requestId: input.requestId })
   }
 
@@ -481,6 +528,27 @@ export class AgentRuntime {
       }
     }
 
+    // Trần của agent chặn cả lúc CHẠY, không chỉ lúc liệt kê: preset chỉ quyết định model thấy gì,
+    // còn model vẫn có thể đoán tên một tool ngoài khối `tools`. Fail-closed, và không fatal để
+    // model quay lại trả lời bằng tool trong phạm vi.
+    if (
+      input.toolCeiling !== undefined &&
+      !TOOL_PRESET_FLAGS[input.toolCeiling].includes(definition.requiredFeature)
+    ) {
+      this.log.tool('tool-rejected', {
+        toolName: call.function.name,
+        phase: 'failed',
+        requestId: input.requestId,
+        errorCode: ERROR_CODES.TOOL_NOT_ALLOWED,
+      })
+      return {
+        resultForModel:
+          'Lỗi: agent này không được phép dùng công cụ đó. Hãy dùng công cụ khác trong phạm vi hoặc nói rõ với người dùng.',
+        wasWrite: false,
+        fatal: false,
+      }
+    }
+
     const isWrite = this.deps.guard.requiresApproval(definition.riskLevel)
 
     if (isWrite && writesAlreadyThisTurn >= 1) {
@@ -563,16 +631,29 @@ export class AgentRuntime {
    * preview và cách thực thi. Guard và tracker không cần biết tool đó là MCP hay cục bộ.
    */
   private mcpTarget(
-    mcp: AtlassianMcpManager,
+    mcp: McpToolSource,
     definition: ToolDefinition,
     payload: Record<string, unknown>,
+    prepared = false,
   ): CallableTarget {
+    const prepareWrite = definition.prepareWrite
     return {
       name: definition.name,
       riskLevel: definition.riskLevel,
       payload,
       buildPreview: () => this.buildPreview(definition, payload),
       execute: async () => (await mcp.callTool(definition.name, payload)).summary,
+      ...(prepareWrite !== undefined && !prepared
+        ? {
+            prepare: async () => {
+              const next = await prepareWrite(payload, this.previewContext(definition))
+              // Validate lại: `prepareWrite` là code của Nexa, nhưng nó nhúng dữ liệu đọc từ
+              // server (ví dụ số phiên bản) — vẫn phải qua đúng schema như input của model.
+              const validated = mcp.validateInput(definition, next)
+              return this.mcpTarget(mcp, definition, validated, true)
+            },
+          }
+        : {}),
     }
   }
 
@@ -666,14 +747,14 @@ export class AgentRuntime {
         resultForModel: `Lỗi: ${nexa.message}`,
         wasWrite: false,
         fatal,
-        ...(fatal ? { terminalText: formatTerminalError(nexa) } : {}),
+        ...(fatal ? { terminalText: formatNexaErrorMessage(nexa) } : {}),
       }
     }
   }
 
   /** §7.4 — toàn bộ luồng tool thay đổi dữ liệu, tám bước. */
   private async executeWrite(
-    target: CallableTarget,
+    original: CallableTarget,
     input: RunTurnInput,
   ): Promise<{
     resultForModel: string
@@ -682,6 +763,19 @@ export class AgentRuntime {
     terminalText?: string
     uncertainOperationId?: string
   }> {
+    // Bước 1b: chốt payload (ví dụ gắn `base_version` của tài liệu XWiki vừa đọc). Lỗi ở đây
+    // xử lý như lỗi dựng preview: chưa có gì được gửi đi.
+    let target: CallableTarget
+    try {
+      target = original.prepare === undefined ? original : await original.prepare()
+    } catch (error) {
+      const nexa = NexaError.wrap(error)
+      return {
+        resultForModel: `Lỗi khi dựng bản xem trước: ${nexa.message}`,
+        wasWrite: true,
+        fatal: false,
+      }
+    }
     const definition = target
     const payload = target.payload
 
@@ -856,7 +950,6 @@ export class AgentRuntime {
     definition: ToolDefinition,
     payload: Record<string, unknown>,
   ): Promise<ToolPreview> {
-    const mcp = this.deps.mcp as AtlassianMcpManager
     if (definition.buildPreview === undefined) {
       // Không có preview builder cho một tool write là lỗi lập trình, không phải lỗi runtime —
       // nhưng fail closed vẫn tốt hơn là gọi tool không xác nhận.
@@ -865,12 +958,23 @@ export class AgentRuntime {
       })
     }
 
-    return definition.buildPreview(payload, {
-      actingAccount: this.deps.actingAccount(),
+    return definition.buildPreview(payload, this.previewContext(definition))
+  }
+
+  /** Context chung cho `buildPreview` và `prepareWrite`. */
+  private previewContext(definition: ToolDefinition): PreviewContext {
+    const mcp = this.deps.mcp as McpToolSource
+    return {
+      // Redmine biết tài khoản thật từ `get_current_user`; Jira/Confluence dùng mặc định của host.
+      actingAccount: mcp.actingAccount?.(definition.targetSystem) ?? this.deps.actingAccount(),
+      // Jira/Confluence vẫn đọc URL trực tiếp từ kết nối như trước (đổi trong Settings là có hiệu
+      // lực ngay); hệ thống khác hỏi chính source sở hữu tool (ADR 0010).
       targetSystemUrl:
         definition.targetSystem === 'jira'
           ? this.deps.jiraBaseUrl()
-          : this.deps.confluenceBaseUrl(),
+          : definition.targetSystem === 'confluence'
+            ? this.deps.confluenceBaseUrl()
+            : mcp.targetSystemUrl(definition.targetSystem),
       readTool: async (name, toolInput) => {
         if (!mcp.canCallReadTool(name)) {
           throw new NexaError(ERROR_CODES.TOOL_NOT_ALLOWED, { safeDetail: `${name} unavailable` })
@@ -884,7 +988,17 @@ export class AgentRuntime {
           return outcome.rawText
         }
       },
-    })
+    }
+  }
+
+  /**
+   * Hệ thống đang có tool khả dụng (ADR 0010) — để bộ chọn preset biết "task" là Jira hay Redmine.
+   * Tool cục bộ không tính: chúng đứng ngoài preset.
+   */
+  private availableSystems(): McpTargetSystem[] {
+    const mcp = this.deps.mcp
+    if (mcp === null || !mcp.isReady) return []
+    return [...new Set(mcp.availableTools().map((d) => d.targetSystem))]
   }
 
   /** Danh sách tool gửi cho model — chỉ những tool thực sự khả dụng lúc này (§10.1). */
@@ -949,9 +1063,15 @@ export class AgentRuntime {
    * Rút gọn mô tả có chủ ý — mục đích là để model biết tool nào TỒN TẠI; schema đầy đủ đã nằm
    * trong khối `tools` của vòng sau.
    */
-  private buildCatalogListing(): string {
+  private buildCatalogListing(ceiling: ToolPreset): string {
     const mcp = this.deps.mcp
-    const available = mcp === null || !mcp.isReady ? [] : mcp.availableTools()
+    // Danh mục "đầy đủ" chỉ gồm tool trong trần: liệt kê tool ngoài trần là mời model gọi thứ
+    // agent này không được phép dùng.
+    const allowedFlags = new Set<string>(TOOL_PRESET_FLAGS[ceiling])
+    const available =
+      mcp === null || !mcp.isReady
+        ? []
+        : mcp.availableTools().filter((definition) => allowedFlags.has(definition.requiredFeature))
     if (available.length === 0) {
       return 'Hiện không có công cụ nào khả dụng. Hãy trả lời bằng thông tin đã có, hoặc nói rõ với người dùng là chưa kết nối được Jira/Confluence.'
     }
@@ -1002,12 +1122,6 @@ function formatToolResultForModel(summary: ToolResultSummary): string {
 
 function formatToolResultForUser(summary: ToolResultSummary): string {
   return summary.incomplete === true ? `${summary.forUser} · kết quả chưa đầy đủ` : summary.forUser
-}
-
-function formatTerminalError(error: NexaError): string {
-  return `Mình chưa thể hoàn tất yêu cầu này. ${error.message}${
-    error.hint === undefined ? '' : ` ${error.hint}`
-  }`
 }
 
 /**

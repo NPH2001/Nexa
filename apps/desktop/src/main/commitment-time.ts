@@ -30,7 +30,7 @@ const WEEKDAY_WORDS: Readonly<Record<string, number>> = {
   'thu 7': 6,
   'thu bay': 6,
   'chu nhat': 7,
-  'cn': 7,
+  cn: 7,
 }
 
 const UNIT_DAYS: Readonly<Record<string, 'day' | 'week' | 'month'>> = {

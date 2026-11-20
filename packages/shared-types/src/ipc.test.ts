@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { IPC_CHANNEL_NAMES, NEXA_EVENTS, NEXA_EVENT_NAMES } from './channels.js'
+import { FILE_BLOCK_FORMATS, MAX_FILE_BLOCK_BYTES, MAX_FILE_NAME_LENGTH } from './file-blocks.js'
 import { DEFAULT_APP_SETTINGS } from './settings.js'
 import {
+  IPC_SCHEMAS,
   activityListSchema,
   briefingGetSchema,
   briefingRefreshSchema,
   checkInRespondSchema,
   commitmentCreateSchema,
   commitmentUpdateSchema,
+  fileSaveSchema,
+  agentCreateSchema,
+  agentUpdateSchema,
+  conversationSetAgentSchema,
   memoryCreateSchema,
   memoryUpdateSchema,
 } from './ipc.js'
@@ -186,5 +192,107 @@ describe('os notification settings', () => {
     // Chỉ đổi hành vi MINIMIZE. Đóng cửa sổ vẫn thoát app — không có setting nào lật được
     // ngữ nghĩa đó, vì nó là bất biến credential chứ không phải một tuỳ chọn giao diện.
     expect(DEFAULT_APP_SETTINGS.minimizeToTrayEnabled).toBe(false)
+  })
+})
+
+describe('file:save schema', () => {
+  const valid = { fileName: 'so-do.drawio', format: 'drawio' as const, content: '<mxfile/>' }
+
+  it('nhận payload hợp lệ', () => {
+    expect(fileSaveSchema.parse(valid)).toEqual(valid)
+  })
+
+  it('loại mọi trường đường dẫn renderer gửi kèm', () => {
+    const parsed = fileSaveSchema.parse({
+      ...valid,
+      path: 'C:\\Windows\\System32\\evil.drawio',
+      filePath: '/etc/passwd',
+      directory: 'C:\\',
+    })
+
+    expect(parsed).toEqual(valid)
+    expect(Object.keys(parsed)).toEqual(['fileName', 'format', 'content'])
+  })
+
+  it('từ chối định dạng ngoài allowlist', () => {
+    expect(() => fileSaveSchema.parse({ ...valid, format: 'exe' })).toThrow()
+    expect(() => fileSaveSchema.parse({ ...valid, format: 'html' })).toThrow()
+  })
+
+  it('từ chối nội dung rỗng và nội dung vượt trần', () => {
+    expect(() => fileSaveSchema.parse({ ...valid, content: '' })).toThrow()
+    expect(() =>
+      fileSaveSchema.parse({ ...valid, content: 'x'.repeat(MAX_FILE_BLOCK_BYTES + 1) }),
+    ).toThrow()
+  })
+
+  it('từ chối tên file rỗng và tên file quá dài', () => {
+    expect(() => fileSaveSchema.parse({ ...valid, fileName: '' })).toThrow()
+    expect(() =>
+      fileSaveSchema.parse({ ...valid, fileName: `${'a'.repeat(MAX_FILE_NAME_LENGTH)}.drawio` }),
+    ).toThrow()
+  })
+
+  it('mọi định dạng trong allowlist đều qua được schema', () => {
+    for (const format of FILE_BLOCK_FORMATS) {
+      expect(fileSaveSchema.parse({ ...valid, format }).format).toBe(format)
+    }
+  })
+})
+
+describe('danh sách channel', () => {
+  it('có file:save cạnh file:pick', () => {
+    expect(IPC_CHANNEL_NAMES).toContain('file:save')
+    expect(Object.keys(IPC_SCHEMAS)).toContain('file:save')
+  })
+})
+
+describe('agent IPC schemas', () => {
+  const id = '91f4f2a1-46a7-4ab4-b596-c0d53bb8708d'
+
+  it('áp default an toàn khi tạo agent: trần all, không model, mọi nhóm cục bộ bật', () => {
+    expect(agentCreateSchema.parse({ name: 'BA' })).toEqual({
+      name: 'BA',
+      icon: '🤖',
+      instructions: '',
+      toolCeiling: 'all',
+      localGroups: { commitments: true, baWorkbench: true },
+      modelId: null,
+      modelProvider: null,
+    })
+  })
+
+  it('từ chối tên rỗng, hướng dẫn quá dài, icon ngoài danh sách, trần ngoài preset', () => {
+    expect(() => agentCreateSchema.parse({ name: '   ' })).toThrow()
+    expect(() => agentCreateSchema.parse({ name: 'a'.repeat(61) })).toThrow()
+    expect(() => agentCreateSchema.parse({ name: 'a', instructions: 'x'.repeat(4001) })).toThrow()
+    expect(() => agentCreateSchema.parse({ name: 'a', icon: 'zzz' })).toThrow()
+    expect(() => agentCreateSchema.parse({ name: 'a', toolCeiling: 'jira-admin' })).toThrow()
+  })
+
+  it('không nhận profileId từ renderer', () => {
+    expect(() => agentCreateSchema.parse({ name: 'a', profileId: 'other' })).toThrow()
+  })
+
+  it('model và provider phải cùng có hoặc cùng vắng', () => {
+    expect(() => agentCreateSchema.parse({ name: 'a', modelId: 'm' })).toThrow(/set together/)
+    expect(() => agentCreateSchema.parse({ name: 'a', modelProvider: 'litellm' })).toThrow(
+      /set together/,
+    )
+    expect(() => agentUpdateSchema.parse({ id, modelId: 'm' })).toThrow(/set together/)
+    expect(
+      agentCreateSchema.parse({ name: 'a', modelId: 'm', modelProvider: 'litellm' }).modelId,
+    ).toBe('m')
+  })
+
+  it('update cần ít nhất một trường sửa được', () => {
+    expect(() => agentUpdateSchema.parse({ id })).toThrow(/At least one editable agent field/)
+    expect(agentUpdateSchema.parse({ id, name: 'Mới' }).name).toBe('Mới')
+  })
+
+  it('gắn agent cho hội thoại cho phép bỏ agent bằng null', () => {
+    expect(
+      conversationSetAgentSchema.parse({ conversationId: id, agentId: null }).agentId,
+    ).toBeNull()
   })
 })

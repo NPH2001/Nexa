@@ -3,7 +3,9 @@ import {
   ERROR_CODES,
   NEXA_EVENTS,
   NexaError,
+  formatNexaErrorMessage,
   isExternalProvider,
+  type Agent,
   type ChatDeltaEvent,
   type ChatDoneEvent,
   type ChatErrorEvent,
@@ -152,8 +154,7 @@ export class ChatController {
           sourcePathHash: doc.sourcePathHash,
           // §8.3: chỉ lưu text đã trích xuất nếu chính sách cho phép. Ảnh không có text, và
           // KHÔNG bao giờ lưu bản sao ảnh — §8.1 cấm giữ bản sao file, base64 cũng là bản sao.
-          extractedText:
-            settings.features.storeExtractedText && doc.text !== '' ? doc.text : null,
+          extractedText: settings.features.storeExtractedText && doc.text !== '' ? doc.text : null,
           extractedChars: doc.charCount,
           ...(doc.pageCount !== undefined ? { pageCount: doc.pageCount } : {}),
           ...(doc.suspectedScan === true ? { suspectedScan: true } : {}),
@@ -187,6 +188,7 @@ export class ChatController {
           reasoningEffort: input.reasoningEffort ?? model.defaultReasoningEffort ?? undefined,
           prompt: input.content,
           history: chatGptHistory,
+          agentInstructions: this.resolveAgent(conversation.id)?.instructions,
           controller,
         })
       } else {
@@ -209,6 +211,20 @@ export class ChatController {
     } finally {
       if (!backgroundStarted) this.activeConversationId = null
     }
+  }
+
+  /**
+   * Agent đang gắn với hội thoại, hoặc null ⇒ persona mặc định.
+   *
+   * Đọc ở main process mỗi lượt, không tin renderer. Agent không thuộc profile hiện tại coi như
+   * không có (fail-closed về persona mặc định). Agent đã archive vẫn được dùng: hội thoại đã gắn
+   * nó từ trước không bị đổi persona giữa chừng.
+   */
+  private resolveAgent(conversationId: string): Agent | null {
+    const agentId = this.services.conversations.get(conversationId)?.agentId ?? null
+    if (agentId === null) return null
+    const agent = this.services.agents.get(agentId)
+    return agent !== null && agent.profileId === this.services.profileId ? agent : null
   }
 
   /** §9.3 "hỗ trợ cancel từ UI". */
@@ -339,6 +355,7 @@ export class ChatController {
     reasoningEffort?: string
     prompt: string
     history: readonly { role: 'user' | 'assistant'; content: string }[]
+    agentInstructions: string | undefined
     controller: AbortController
   }): Promise<void> {
     const { requestId, conversationId, assistantMessageId } = params
@@ -350,6 +367,9 @@ export class ChatController {
           ? {}
           : { reasoningEffort: params.reasoningEffort }),
         prompt: params.prompt,
+        ...(params.agentInstructions === undefined
+          ? {}
+          : { agentInstructions: params.agentInstructions }),
         history: params.history,
         signal: params.controller.signal,
         onDelta: (delta) => {
@@ -389,9 +409,7 @@ export class ChatController {
           ? text
           : cancelled
             ? 'Đã dừng theo yêu cầu.'
-            : `Mình chưa thể hoàn tất yêu cầu này. ${nexa.message}${
-                nexa.hint === undefined ? '' : ` ${nexa.hint}`
-              }`
+            : formatNexaErrorMessage(nexa)
 
       this.services.conversations.finalizeMessage(
         assistantMessageId,
@@ -516,12 +534,21 @@ export class ChatController {
     }
 
     try {
+      const agent = this.resolveAgent(conversationId)
+      // Công tắc nhóm cục bộ của agent chỉ AND với setting toàn cục: agent không bật được thứ
+      // setting đã tắt, chỉ tắt thêm được.
+      const settingsNow = this.services.settings.get()
+      const commitmentToolsOn =
+        settingsNow.agentCommitmentToolsEnabled && (agent?.localGroups.commitments ?? true)
+      const baToolsOn = settingsNow.features.baWorkbench && (agent?.localGroups.baWorkbench ?? true)
+
       const runtime = new AgentRuntime({
         llm: this.services.connections.buildLlmClient(
           params.modelProvider,
           this.services.settings.get().llmTimeoutMs,
         ),
-        mcp: this.services.mcp,
+        // Router gộp Jira/Confluence, Redmine và XWiki (ADR 0010).
+        mcp: this.services.mcpRouter,
         guard: this.services.guard,
         tracker: this.services.tracker,
         logger: this.services.logger,
@@ -539,7 +566,7 @@ export class ChatController {
         // với các tổ hợp bật/tắt của hai cờ. Thêm tool BA vào tập CỐ ĐỊNH thì được; chọn tool BA
         // theo ngữ cảnh câu hỏi thì không.
         localTools: composeLocalToolRegistries([
-          this.services.settings.get().agentCommitmentToolsEnabled
+          commitmentToolsOn
             ? createCommitmentToolRegistry({
                 profileId: this.services.profileId,
                 conversationId,
@@ -548,7 +575,7 @@ export class ChatController {
                 logger: this.services.logger,
               })
             : null,
-          this.services.settings.get().features.baWorkbench
+          baToolsOn
             ? createBaToolRegistry({
                 profileId: this.services.profileId,
                 knowledge: this.services.baKnowledge,
@@ -606,7 +633,8 @@ export class ChatController {
               .map((commitment) => ({
                 title: commitment.title,
                 nextAction: commitment.nextAction,
-                status: commitment.status === 'blocked' ? ('blocked' as const) : ('active' as const),
+                status:
+                  commitment.status === 'blocked' ? ('blocked' as const) : ('active' as const),
                 dueAt: commitment.dueAt,
                 checkInAt: commitment.checkInAt,
               }))
@@ -645,6 +673,9 @@ export class ChatController {
         ...(commitmentContext.length > 0 ? { commitments: commitmentContext } : {}),
         ...(baKnowledge.length > 0 ? { baKnowledge } : {}),
         ...(params.documents.length > 0 ? { documents: params.documents } : {}),
+        ...(agent !== null
+          ? { agentInstructions: agent.instructions, toolCeiling: agent.toolCeiling }
+          : {}),
         signal: params.controller.signal,
         toolCalls: sink,
         emit: (event) => {
@@ -702,9 +733,7 @@ export class ChatController {
           ? text
           : cancelled
             ? 'Đã dừng theo yêu cầu.'
-            : `Mình chưa thể hoàn tất yêu cầu này. ${nexa.message}${
-                nexa.hint === undefined ? '' : ` ${nexa.hint}`
-              }`
+            : formatNexaErrorMessage(nexa)
 
       // Giữ lại phần text đã stream: người dùng đã đọc nó, xoá đi là mất thông tin.
       this.services.conversations.finalizeMessage(

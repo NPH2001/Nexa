@@ -10,6 +10,7 @@ import {
   briefingItemKicker,
   describeBriefingReason,
   describeBriefingSource,
+  formatBriefingDueDate,
   formatBriefingTimestamp,
   isBriefingSourceBroken,
 } from './briefing-ui.js'
@@ -19,7 +20,7 @@ function reason(over: Partial<BriefingReasonView> = {}): BriefingReasonView {
 }
 
 function source(status: BriefingSourceStatusName): BriefingSourceStateView {
-  return { source: 'jira', status, fetchedAt: null, itemCount: 0, truncatedCount: 0 }
+  return { source: 'redmine', status, fetchedAt: null, itemCount: 0, truncatedCount: 0 }
 }
 
 describe('describeBriefingReason', () => {
@@ -90,26 +91,26 @@ describe('nhãn nhóm', () => {
   })
 })
 
-describe('briefingItemKicker', () => {
-  const item = (over: Partial<BriefingItemView>): BriefingItemView => ({
-    id: 'jira:DT-1',
-    source: 'jira',
-    title: 'A',
-    detail: null,
-    reference: 'DT-1',
-    url: null,
-    sourceConversationId: null,
-    status: 'In Progress',
-    group: 'in_progress',
-    reason: reason({ kind: 'in_progress', at: null, days: null }),
-    at: null,
-    updatedAt: '2026-08-30T00:00:00.000Z',
-    inActiveSprint: false,
-    ...over,
-  })
+const item = (over: Partial<BriefingItemView> = {}): BriefingItemView => ({
+  id: 'redmine:#1',
+  source: 'redmine',
+  title: 'A',
+  detail: null,
+  reference: '#1',
+  url: null,
+  sourceConversationId: null,
+  status: 'In Progress',
+  group: 'in_progress',
+  reason: reason({ kind: 'in_progress', at: null, days: null }),
+  at: null,
+  dueAt: null,
+  updatedAt: '2026-08-30T00:00:00.000Z',
+  ...over,
+})
 
-  it('hiện issue key với việc Jira và nhãn cam kết với việc trong Nexa', () => {
-    expect(briefingItemKicker(item({}))).toBe('DT-1')
+describe('briefingItemKicker', () => {
+  it('hiện mã issue với việc Redmine và nhãn cam kết với việc trong Nexa', () => {
+    expect(briefingItemKicker(item({}))).toBe('#1')
     expect(briefingItemKicker(item({ source: 'commitment', reference: null }))).toBe('Cam kết')
   })
 })
@@ -117,5 +118,29 @@ describe('briefingItemKicker', () => {
 describe('formatBriefingTimestamp', () => {
   it('trả dấu gạch cho mốc không đọc được thay vì "Invalid Date"', () => {
     expect(formatBriefingTimestamp('không phải ngày')).toBe('—')
+  })
+})
+
+describe('formatBriefingDueDate', () => {
+  it('nói ngày hết hạn bằng mốc tuyệt đối, theo định dạng Việt Nam', () => {
+    // Redmine trả `due_date` không giờ; main neo vào giữa trưa UTC nên ngày địa phương không lệch.
+    expect(formatBriefingDueDate(item({ dueAt: '2026-09-12T12:00:00.000Z' }))).toBe('12/09/2026')
+  })
+
+  it('im lặng khi mục chưa đặt hạn thay vì hiện nhãn rỗng', () => {
+    expect(formatBriefingDueDate(item({ dueAt: null }))).toBeNull()
+  })
+
+  it('không hiện gì khi hạn không đọc được', () => {
+    expect(formatBriefingDueDate(item({ dueAt: 'hôm nào đó' }))).toBeNull()
+  })
+
+  it('lấy hạn thật chứ không lấy mốc đã quyết định nhóm', () => {
+    const withCheckIn = item({
+      source: 'commitment',
+      at: '2026-09-01T03:00:00.000Z',
+      dueAt: '2026-09-20T03:00:00.000Z',
+    })
+    expect(formatBriefingDueDate(withCheckIn)).toBe('20/09/2026')
   })
 })

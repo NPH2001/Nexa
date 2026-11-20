@@ -1,4 +1,5 @@
 import type {
+  Agent,
   ChatErrorEvent,
   ActivityEvent,
   ActivityActor,
@@ -32,6 +33,7 @@ import type {
   ConnectionType,
   Conversation,
   DailyBriefingView,
+  FileBlockFormat,
   LlmProvider,
   Envelope,
   ErrorEnvelope,
@@ -105,6 +107,12 @@ async function call<T>(channel: string, payload?: unknown): Promise<T> {
   return raw.data
 }
 
+/** Cấu hình agent gửi lên main; không có `profileId` — main tự bind. */
+export type AgentPayload = Pick<
+  Agent,
+  'name' | 'icon' | 'instructions' | 'toolCeiling' | 'localGroups' | 'modelId' | 'modelProvider'
+>
+
 export const api = {
   connections: {
     list: () => call<Connection[]>('connection:list'),
@@ -154,6 +162,8 @@ export const api = {
       call<{ ok: boolean }>('conversation:rename', { id, title }),
     remove: (id: string) => call<{ ok: boolean }>('conversation:delete', { id }),
     archive: (id: string) => call<{ ok: boolean }>('conversation:archive', { id }),
+    setAgent: (conversationId: string, agentId: string | null) =>
+      call<{ ok: boolean }>('conversation:setAgent', { conversationId, agentId }),
     search: (query: string) =>
       call<{
         hits: {
@@ -172,6 +182,16 @@ export const api = {
   messages: {
     edit: (id: string, content: string) => call<{ ok: boolean }>('message:edit', { id, content }),
     remove: (id: string) => call<{ ok: boolean }>('message:delete', { id }),
+  },
+
+  agents: {
+    list: (includeArchived = false) => call<Agent[]>('agent:list', { includeArchived }),
+    create: (input: AgentPayload) => call<Agent>('agent:create', input),
+    update: (id: string, patch: Partial<AgentPayload>) =>
+      call<Agent>('agent:update', { id, ...patch }),
+    archive: (id: string) => call<Agent>('agent:archive', { id }),
+    restore: (id: string) => call<Agent>('agent:restore', { id }),
+    remove: (id: string) => call<{ ok: boolean }>('agent:delete', { id }),
   },
 
   memory: {
@@ -398,6 +418,15 @@ export const api = {
     pick: (accept: 'all' | 'text' = 'all') =>
       call<{ token: string; fileName: string; sizeBytes: number }[]>('file:pick', { accept }),
     release: (fileToken: string) => call<{ ok: boolean }>('file:release', { fileToken }),
+    /**
+     * Lưu một khối nội dung do model sinh ra. Không có tham số đường dẫn — nơi lưu do hộp thoại
+     * của hệ điều hành quyết định, và kết quả cũng không mang đường dẫn về đây.
+     */
+    save: (input: { fileName: string; format: FileBlockFormat; content: string }) =>
+      call<{ saved: true; fileName: string } | { saved: false; canceled: true }>(
+        'file:save',
+        input,
+      ),
   },
 
   tools: {

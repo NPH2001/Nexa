@@ -253,9 +253,10 @@ function resolveWhen(
   now: Date,
 ): ResolvedWhen {
   return {
-    dueAt: input.due_at === undefined || input.due_at === null
-      ? null
-      : resolveCommitmentTimestamp(input.due_at, now),
+    dueAt:
+      input.due_at === undefined || input.due_at === null
+        ? null
+        : resolveCommitmentTimestamp(input.due_at, now),
     checkInAt:
       input.check_in_at === undefined || input.check_in_at === null
         ? null

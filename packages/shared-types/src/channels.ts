@@ -28,9 +28,17 @@ export const IPC_CHANNEL_NAMES = [
   'conversation:delete',
   'conversation:archive',
   'conversation:search',
+  'conversation:setAgent',
   'message:list',
   'message:edit',
   'message:delete',
+
+  'agent:list',
+  'agent:create',
+  'agent:update',
+  'agent:archive',
+  'agent:restore',
+  'agent:delete',
 
   'memory:list',
   'memory:create',
@@ -88,6 +96,7 @@ export const IPC_CHANNEL_NAMES = [
 
   'file:pick',
   'file:release',
+  'file:save',
 
   'tool:approve',
   'tool:cancel',

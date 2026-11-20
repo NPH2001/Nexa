@@ -1,4 +1,5 @@
 export * from './errors.js'
+export * from './file-blocks.js'
 export * from './result.js'
 export * from './domain.js'
 export * from './settings.js'

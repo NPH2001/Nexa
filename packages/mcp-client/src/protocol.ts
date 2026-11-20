@@ -156,3 +156,28 @@ export class LineFramer {
 export function encodeMessage(message: JsonRpcRequest | JsonRpcNotification): string {
   return `${JSON.stringify(message)}\n`
 }
+
+/**
+ * Khớp tên tool quy ước của Nexa (`mcpToolName`, ví dụ `jira_get_issue`) với tên THẬT server
+ * công bố (ADR-0005). Thử khớp đúng tuyệt đối trước (transport stdio, package cài cục bộ); nếu
+ * không có, thử khớp tên server nào tận cùng bằng `-${mcpToolName}` (gateway thêm tiền tố
+ * namespace, ví dụ `atlassian-jira_get_issue`).
+ *
+ * Nhiều tên cùng khớp hậu tố ⇒ trả `null` thay vì đoán bừa — mơ hồ về việc gọi tool nào là một
+ * lỗi cấu hình cần biết, không phải thứ nên tự động chọn một trong số đó.
+ */
+export function resolveServerToolName(
+  mcpToolName: string,
+  serverTools: ReadonlyMap<string, McpToolDescriptor>,
+): string | null {
+  if (serverTools.has(mcpToolName)) return mcpToolName
+
+  const suffix = `-${mcpToolName}`
+  let found: string | null = null
+  for (const name of serverTools.keys()) {
+    if (!name.endsWith(suffix)) continue
+    if (found !== null) return null
+    found = name
+  }
+  return found
+}

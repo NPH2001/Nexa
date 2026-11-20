@@ -175,6 +175,11 @@ export function ConfirmationDialog(props: {
           <span id="confirm-countdown" className="countdown" role="timer" aria-live="off">
             Xác nhận còn hiệu lực {Math.max(0, secondsLeft)} giây
           </span>
+          {/* Bộ đếm hiển thị không đọc lên (đọc mỗi giây thì không nghe được gì khác). Vùng này
+              chỉ đổi chữ khi vượt mốc, nên trình đọc màn hình báo đúng ba lần. */}
+          <span className="sr-only" aria-live="polite">
+            {countdownAnnouncement(secondsLeft)}
+          </span>
           <div className="modal-actions">
             {/* Mục 7: nhãn nút rõ ràng — không dùng "Tiếp tục" */}
             <button
@@ -201,6 +206,15 @@ export function ConfirmationDialog(props: {
   )
 }
 
+/** Câu báo cho trình đọc màn hình; chỉ đổi khi vượt mốc 60/30/10 giây. */
+function countdownAnnouncement(secondsLeft: number): string {
+  if (secondsLeft <= 0) return 'Yêu cầu xác nhận đã hết hạn.'
+  for (const mark of [10, 30, 60]) {
+    if (secondsLeft <= mark) return `Còn khoảng ${String(mark)} giây để xác nhận.`
+  }
+  return ''
+}
+
 function remainingSeconds(expiresAt: string): number {
   return Math.round((new Date(expiresAt).getTime() - Date.now()) / 1000)
 }
@@ -215,6 +229,10 @@ function targetSystemLabel(targetSystem: ToolPreview['targetSystem']): string {
       return 'Jira'
     case 'confluence':
       return 'Confluence'
+    case 'redmine':
+      return 'Redmine'
+    case 'xwiki':
+      return 'XWiki'
     case 'local':
       return 'Dữ liệu trên máy bạn'
   }

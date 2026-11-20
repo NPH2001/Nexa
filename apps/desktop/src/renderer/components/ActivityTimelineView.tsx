@@ -7,11 +7,13 @@ import type {
   ActivityType,
 } from '@nexa/shared-types/renderer'
 import { api, BridgeError } from '../bridge.js'
+import { formatDateTime } from './datetime-ui.js'
+import { InlineError, LoadingSkeleton } from './StateBlocks.js'
 
 const TYPE_OPTIONS: Array<{ value: ActivityType | 'all'; label: string }> = [
   { value: 'all', label: 'Tất cả loại' },
   { value: 'suggestion', label: 'Gợi ý check-in' },
-  { value: 'memory_mutation', label: 'Memory' },
+  { value: 'memory_mutation', label: 'Nexa nhớ' },
   { value: 'commitment_mutation', label: 'Cam kết' },
   { value: 'tool_preview', label: 'Tool preview' },
   { value: 'confirmation', label: 'Xác nhận' },
@@ -67,7 +69,7 @@ export function labelForActivityAction(action: ActivityAction): string {
 export function labelForActivityType(type: ActivityType): string {
   const labels: Record<ActivityType, string> = {
     suggestion: 'Gợi ý check-in',
-    memory_mutation: 'Memory',
+    memory_mutation: 'Nexa nhớ',
     commitment_mutation: 'Cam kết',
     tool_preview: 'Tool preview',
     confirmation: 'Xác nhận',
@@ -93,16 +95,6 @@ function labelForActivityStatus(status: ActivityStatus): string {
   return labels[status]
 }
 
-function formatActivityTimestamp(value: string): string {
-  return new Date(value).toLocaleString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 /** Record ghi trước khi có cột actor không có nguồn để hiển thị — nói vậy, đừng đoán là "bạn". */
 export function labelForActivityActor(actor: ActivityActor | null): string {
   if (actor === 'agent') return 'Nexa đề xuất'
@@ -112,7 +104,7 @@ export function labelForActivityActor(actor: ActivityActor | null): string {
 
 function formatSubject(event: ActivityEvent): string {
   if (event.subjectLabel !== null) return event.subjectLabel
-  if (event.subjectType === 'memory') return 'Memory'
+  if (event.subjectType === 'memory') return 'Nexa nhớ'
   if (event.subjectType === 'commitment') return 'Cam kết'
   if (event.subjectType === 'tool') return event.subjectId ?? 'Tool'
   if (event.subjectType === 'ba_document') return event.subjectLabel ?? 'Tài liệu nghiệp vụ'
@@ -153,7 +145,7 @@ export function ActivityTimelineView(props: {
       if (loadSequence !== loadSequenceRef.current) return
       setLoadFailed(true)
       setErrorRequestId(error instanceof BridgeError ? (error.requestId ?? null) : null)
-      onError(error, 'Không tải được timeline hoạt động.')
+      onError(error, 'Không tải được dòng thời gian hoạt động.')
     } finally {
       if (loadSequence === loadSequenceRef.current) setLoading(false)
     }
@@ -170,8 +162,8 @@ export function ActivityTimelineView(props: {
           <p className="today-eyebrow">Dấu vết tác tử</p>
           <h1 id="activity-title">Hoạt động</h1>
           <p className="muted">
-            Timeline này chỉ hiển thị metadata an toàn: không có secret, payload thô hay nội dung
-            memory nhạy cảm.
+            Dòng thời gian này chỉ hiện thông tin tóm tắt an toàn: không có mật khẩu, khoá truy cập,
+            dữ liệu thô hay nội dung ghi nhớ nhạy cảm.
           </p>
         </div>
       </header>
@@ -223,27 +215,20 @@ export function ActivityTimelineView(props: {
 
       <section className="panel activity-panel">
         {loading ? (
-          <p className="muted" role="status">
-            Đang tải hoạt động…
-          </p>
+          <LoadingSkeleton label="Đang tải hoạt động…" rows={4} />
         ) : loadFailed ? (
-          <div className="today-empty">
-            <p>Không tải được hoạt động với bộ lọc hiện tại.</p>
-            {errorRequestId !== null && (
-              <p className="muted small">
-                Mã yêu cầu: <code>{errorRequestId}</code>
-              </p>
-            )}
-            <button type="button" className="btn" onClick={() => void load()}>
-              Thử lại
-            </button>
-          </div>
+          <InlineError
+            title="Không tải được hoạt động với bộ lọc hiện tại."
+            detail="Bộ lọc vẫn được giữ nguyên; thử lại sẽ tải đúng bộ lọc này."
+            requestId={errorRequestId}
+            onRetry={() => void load()}
+          />
         ) : items.length === 0 ? (
           <div className="today-empty">
             <p>Chưa có hoạt động nào khớp bộ lọc này.</p>
           </div>
         ) : (
-          <ol className="activity-list" aria-label="Timeline hoạt động">
+          <ol className="activity-list" aria-label="Dòng thời gian hoạt động">
             {items.map((event) => (
               <li key={event.id} className="activity-item">
                 <div className="activity-item-head">
@@ -258,7 +243,7 @@ export function ActivityTimelineView(props: {
                 <dl className="activity-meta">
                   <div>
                     <dt>Thời điểm</dt>
-                    <dd>{formatActivityTimestamp(event.createdAt)}</dd>
+                    <dd>{formatDateTime(event.createdAt)}</dd>
                   </div>
                   <div>
                     <dt>Đối tượng</dt>

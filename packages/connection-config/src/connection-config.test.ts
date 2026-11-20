@@ -513,3 +513,74 @@ describe('loadOrgPolicy', () => {
     expect(policy.allowDirectOpenAi).toBe(false)
   })
 })
+
+describe('ConnectionService — Redmine và XWiki (ADR 0010)', () => {
+  function withTester(tested: string[]) {
+    const base = makeServices()
+    const connections = new ConnectionService({
+      repo: base.repo,
+      audit: base.audit,
+      security: base.security,
+      profileId: base.store.profileId,
+      policy: DEFAULT_ORG_POLICY,
+      logger: base.logger,
+      testAtlassian: (type) => {
+        tested.push(type)
+        return Promise.resolve({ ok: true, checkedAt: new Date().toISOString(), detail: `ok ${type}` })
+      },
+    })
+    return { ...base, connections }
+  }
+
+  it('lưu được không cần username, và secret đi vào secure storage', () => {
+    const { connections, security } = withTester([])
+    for (const type of ['redmine', 'xwiki'] as const) {
+      const saved = connections.save({
+        type,
+        baseUrl: type === 'redmine' ? 'https://redmine.internal' : 'https://wiki.internal/rest/wikis/xwiki/aiLLM/mcp',
+        username: 'bi-bo-qua',
+        secret: `${type}-fake-secret-0123456789`,
+        enabled: true,
+      })
+      expect(saved.username).toBeNull()
+      expect(saved.hasCredential).toBe(true)
+      expect(security.readCredential(type)).toBe(`${type}-fake-secret-0123456789`)
+    }
+  })
+
+  it('chưa cấu hình ⇒ mã lỗi riêng của từng hệ thống, không gọi tester', async () => {
+    const tested: string[] = []
+    const { connections } = withTester(tested)
+    expect((await connections.test('redmine')).errorCode).toBe(ERROR_CODES.REDMINE_CONFIG_REQUIRED)
+    expect((await connections.test('xwiki')).errorCode).toBe(ERROR_CODES.XWIKI_CONFIG_REQUIRED)
+    expect(tested).toEqual([])
+  })
+
+  it('đã cấu hình ⇒ chuyển đúng loại kết nối cho tester MCP', async () => {
+    const tested: string[] = []
+    const { connections } = withTester(tested)
+    connections.save({
+      type: 'xwiki',
+      baseUrl: 'https://wiki.internal/rest/wikis/xwiki/aiLLM/mcp',
+      username: null,
+      secret: 'xwiki-fake-secret-0123456789',
+      enabled: true,
+    })
+    const result = await connections.test('xwiki')
+    expect(result).toMatchObject({ ok: true, detail: 'ok xwiki' })
+    expect(tested).toEqual(['xwiki'])
+  })
+
+  it('URL XWiki vẫn phải là HTTPS', () => {
+    const { connections } = withTester([])
+    expect(() =>
+      connections.save({
+        type: 'xwiki',
+        baseUrl: 'http://wiki.internal/rest/wikis/xwiki/aiLLM/mcp',
+        username: null,
+        secret: 'xwiki-fake-secret-0123456789',
+        enabled: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_URL' }))
+  })
+})

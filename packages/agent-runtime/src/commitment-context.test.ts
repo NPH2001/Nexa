@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  MAX_COMMITMENTS_IN_CONTEXT,
-  buildContext,
-  type CommitmentContextItem,
-} from './index.js'
+import { MAX_COMMITMENTS_IN_CONTEXT, buildContext, type CommitmentContextItem } from './index.js'
 
 const item = (overrides: Partial<CommitmentContextItem> = {}): CommitmentContextItem => ({
   title: 'Hoàn tất bản thử nghiệm',

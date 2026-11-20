@@ -1,8 +1,12 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
-import { DEFAULT_APP_SETTINGS, type AppSettings, type Commitment } from '@nexa/shared-types'
+import {
+  DEFAULT_APP_SETTINGS,
+  type AppSettings,
+  type Commitment,
+  type McpToolSource,
+} from '@nexa/shared-types'
 import { Logger, MemorySink } from '@nexa/observability'
 import type { CommitmentRepository } from '@nexa/local-store'
-import type { AtlassianMcpManager } from '@nexa/atlassian-mcp-manager'
 import type { ChatRequest, ChatResult, RequestContext } from '@nexa/llm-client'
 import { DailyBriefingService, type DailyBriefingDeps } from './briefing-service.js'
 import type { BriefingSummaryLlm } from './briefing-summary.js'
@@ -30,8 +34,8 @@ function commitment(over: Partial<Commitment> = {}): Commitment {
   }
 }
 
-function jiraPayload(issues: unknown[]): string {
-  return JSON.stringify({ total: issues.length, issues })
+function redminePayload(issues: unknown[]): string {
+  return JSON.stringify({ total_count: issues.length, issues })
 }
 
 interface Harness {
@@ -42,17 +46,19 @@ interface Harness {
   readonly complete: CompleteMock
 }
 
-function harness(over: {
-  readonly commitments?: readonly Commitment[]
-  readonly settings?: Partial<AppSettings>
-  readonly mcp?: AtlassianMcpManager | null
-  readonly callTool?: ReturnType<typeof vi.fn>
-  readonly complete?: CompleteMock
-  readonly now?: () => Date
-} = {}): Harness {
+function harness(
+  over: {
+    readonly commitments?: readonly Commitment[]
+    readonly settings?: Partial<AppSettings>
+    readonly redmine?: Pick<McpToolSource, 'callTool'> | null
+    readonly callTool?: ReturnType<typeof vi.fn>
+    readonly complete?: CompleteMock
+    readonly now?: () => Date
+  } = {},
+): Harness {
   const sink = new MemorySink()
   const listSpy = vi.fn().mockReturnValue([...(over.commitments ?? [])])
-  const callTool = over.callTool ?? vi.fn().mockResolvedValue({ rawText: jiraPayload([]) })
+  const callTool = over.callTool ?? vi.fn().mockResolvedValue({ rawText: redminePayload([]) })
   const complete: CompleteMock =
     over.complete ??
     (vi.fn().mockResolvedValue({
@@ -65,11 +71,11 @@ function harness(over: {
     profileId: PROFILE,
     commitments: { list: listSpy } as unknown as CommitmentRepository,
     settings: () => ({ ...DEFAULT_APP_SETTINGS, ...over.settings }),
-    mcp:
-      over.mcp === null
+    redmine:
+      over.redmine === null
         ? () => null
-        : () => ({ callTool } as unknown as AtlassianMcpManager),
-    jiraBaseUrl: () => 'https://jira.corp.local/',
+        : () => ({ callTool }) as unknown as Pick<McpToolSource, 'callTool'>,
+    redmineBaseUrl: () => 'https://redmine.corp.local/',
     summary: {
       resolveModel: () => ({ modelId: 'gpt-4o-mini', provider: 'litellm' }),
       buildLlmClient: (): BriefingSummaryLlm => ({ complete }),
@@ -88,9 +94,7 @@ describe('DailyBriefingService — ghép hai nguồn', () => {
     const { service } = harness({
       commitments: [commitment()],
       callTool: vi.fn().mockResolvedValue({
-        rawText: jiraPayload([
-          { key: 'DT-1', summary: 'Sửa lỗi đăng nhập', duedate: '2026-09-01' },
-        ]),
+        rawText: redminePayload([{ id: 1, subject: 'Sửa lỗi đăng nhập', due_date: '2026-09-01' }]),
       }),
     })
 
@@ -100,18 +104,16 @@ describe('DailyBriefingService — ghép hai nguồn', () => {
     expect(view.localDate).toBe('2026-09-01')
     expect(view.totalItems).toBe(2)
     expect(view.groups.find((g) => g.group === 'overdue')?.items[0]?.id).toBe('commitment:c1')
-    expect(view.groups.find((g) => g.group === 'due_today')?.items[0]?.id).toBe('jira:DT-1')
+    expect(view.groups.find((g) => g.group === 'due_today')?.items[0]?.id).toBe('redmine:#1')
   })
 
   it('dựng link issue từ base URL đã cấu hình', async () => {
     const { service } = harness({
-      callTool: vi
-        .fn()
-        .mockResolvedValue({ rawText: jiraPayload([{ key: 'DT-9', summary: 'A' }]) }),
+      callTool: vi.fn().mockResolvedValue({ rawText: redminePayload([{ id: 9, subject: 'A' }]) }),
     })
     const view = await service.get()
-    const item = view.groups.flatMap((g) => g.items).find((i) => i.id === 'jira:DT-9')
-    expect(item?.url).toBe('https://jira.corp.local/browse/DT-9')
+    const item = view.groups.flatMap((g) => g.items).find((i) => i.id === 'redmine:#9')
+    expect(item?.url).toBe('https://redmine.corp.local/issues/9')
   })
 
   it('chỉ lấy cam kết đang chạy, bỏ cam kết đã tạm gác', async () => {
@@ -136,7 +138,7 @@ describe('DailyBriefingService — ghép hai nguồn', () => {
 })
 
 describe('DailyBriefingService — hỏng một nguồn', () => {
-  it('vẫn trả phần cam kết khi Jira lỗi', async () => {
+  it('vẫn trả phần cam kết khi Redmine lỗi', async () => {
     const { service } = harness({
       commitments: [commitment()],
       callTool: vi.fn().mockRejectedValue(new Error('gateway down')),
@@ -145,40 +147,40 @@ describe('DailyBriefingService — hỏng một nguồn', () => {
     const view = await service.get()
 
     expect(view.totalItems).toBe(1)
-    expect(view.sources.find((s) => s.source === 'jira')?.status).toBe('error')
+    expect(view.sources.find((s) => s.source === 'redmine')?.status).toBe('error')
     expect(view.sources.find((s) => s.source === 'commitment')?.status).toBe('ok')
   })
 
-  it('phân biệt "chưa kết nối Jira" với "không có việc nào"', async () => {
-    const { service } = harness({ mcp: null, commitments: [commitment()] })
+  it('phân biệt "chưa kết nối Redmine" với "không có việc nào"', async () => {
+    const { service } = harness({ redmine: null, commitments: [commitment()] })
     const view = await service.get()
-    const jira = view.sources.find((s) => s.source === 'jira')
-    expect(jira?.status).toBe('not_configured')
-    expect(jira?.itemCount).toBe(0)
+    const redmine = view.sources.find((s) => s.source === 'redmine')
+    expect(redmine?.status).toBe('not_configured')
+    expect(redmine?.itemCount).toBe(0)
   })
 
-  it('cờ jiraSearch tắt thành trạng thái chính sách, không phải lỗi', async () => {
+  it('cờ redmineRead tắt thành trạng thái chính sách, không phải lỗi', async () => {
     const { service, callTool } = harness({
-      settings: { features: { ...DEFAULT_APP_SETTINGS.features, jiraSearch: false } },
+      settings: { features: { ...DEFAULT_APP_SETTINGS.features, redmineRead: false } },
     })
     const view = await service.get()
-    expect(view.sources.find((s) => s.source === 'jira')?.status).toBe('disabled_by_policy')
+    expect(view.sources.find((s) => s.source === 'redmine')?.status).toBe('disabled_by_policy')
     expect(callTool).not.toHaveBeenCalled()
   })
 
-  it('báo phần Jira còn sót lại thay vì im lặng cắt', async () => {
+  it('báo phần Redmine còn sót lại thay vì im lặng cắt', async () => {
     const { service } = harness({
       callTool: vi.fn().mockResolvedValue({
-        rawText: JSON.stringify({ total: 90, issues: [{ key: 'DT-1', summary: 'A' }] }),
+        rawText: JSON.stringify({ total_count: 90, issues: [{ id: 1, subject: 'A' }] }),
       }),
     })
     const view = await service.get()
-    expect(view.sources.find((s) => s.source === 'jira')?.truncatedCount).toBe(89)
+    expect(view.sources.find((s) => s.source === 'redmine')?.truncatedCount).toBe(89)
   })
 })
 
 describe('DailyBriefingService — cache', () => {
-  it('mở lại trong cùng ngày dùng cache, không gọi lại Jira', async () => {
+  it('mở lại trong cùng ngày dùng cache, không gọi lại Redmine', async () => {
     const { service, callTool } = harness()
     await service.get()
     await service.get()
@@ -192,7 +194,7 @@ describe('DailyBriefingService — cache', () => {
     expect(callTool).toHaveBeenCalledTimes(2)
   })
 
-  it('không cache một lần Jira hỏng tạm thời — mở lại Today là thử lại', async () => {
+  it('không cache một lần Redmine hỏng tạm thời — mở lại Today là thử lại', async () => {
     const callTool = vi.fn().mockRejectedValue(new Error('gateway down'))
     const { service } = harness({ callTool })
     await service.get()
@@ -200,8 +202,8 @@ describe('DailyBriefingService — cache', () => {
     expect(callTool).toHaveBeenCalledTimes(2)
   })
 
-  it('vẫn cache khi Jira chỉ là chưa cấu hình', async () => {
-    const { service, listSpy } = harness({ mcp: null })
+  it('vẫn cache khi Redmine chỉ là chưa cấu hình', async () => {
+    const { service, listSpy } = harness({ redmine: null })
     await service.get()
     await service.get()
     expect(listSpy).toHaveBeenCalledTimes(1)
@@ -230,17 +232,17 @@ describe('DailyBriefingService — cờ tắt', () => {
 })
 
 describe('DailyBriefingService — chỉ đọc và kín tiếng', () => {
-  it('không gọi tool nào ngoài jira_search', async () => {
+  it('không gọi tool nào ngoài redmine_search_issues', async () => {
     const { service, callTool } = harness({ commitments: [commitment()] })
     await service.get()
-    for (const [name] of callTool.mock.calls) expect(name).toBe('jira_search')
+    for (const [name] of callTool.mock.calls) expect(name).toBe('redmine_search_issues')
   })
 
   it('không ghi nội dung cam kết hay tiêu đề issue vào log', async () => {
     const { service, sink } = harness({
       commitments: [commitment({ title: 'Chốt hợp đồng ABBANK', nextAction: 'Gửi pháp chế' })],
       callTool: vi.fn().mockResolvedValue({
-        rawText: jiraPayload([{ key: 'DT-1', summary: 'Bí mật thương vụ' }]),
+        rawText: redminePayload([{ id: 1, subject: 'Bí mật thương vụ' }]),
       }),
     })
     await service.get()

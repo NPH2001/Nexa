@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash, createDecipheriv, createCipheriv, randomBytes } from 'node:crypto'
-import { ERROR_CODES, NexaError } from '@nexa/shared-types'
+import { ERROR_CODES, NexaError, type ConnectionType } from '@nexa/shared-types'
 
 /**
  * §8.2 / §11.1: secret không bao giờ nằm dạng rõ trên đĩa.
@@ -254,7 +254,7 @@ export class MemoryBackend implements SecureStorageBackend {
  * để cấu hình xuất ra và secure storage nói cùng một ngôn ngữ.
  */
 export function credentialRef(
-  kind: 'litellm' | 'openai' | 'jira' | 'confluence' | 'mcpGateway',
+  kind: ConnectionType,
   name = 'default',
 ): string {
   return `secure://${kind}/${name}`

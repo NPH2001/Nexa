@@ -1,11 +1,6 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, Menu, Notification, Tray, dialog } from 'electron'
-import {
-  NEXA_EVENTS,
-  NexaError,
-  type McpStatusEvent,
-  type NavigateView,
-} from '@nexa/shared-types'
+import { NEXA_EVENTS, NexaError, type McpStatusEvent, type NavigateView } from '@nexa/shared-types'
 import { FileSink, Logger, globalRedactor } from '@nexa/observability'
 import { ChatController } from './chat-controller.js'
 import { CheckInNotifier, type NotificationHandle } from './check-in-notifier.js'
@@ -121,6 +116,7 @@ function openWindow(activeServices: NexaServices): BrowserWindow {
     logger: activeServices.logger,
     allowedDomains: activeServices.policy.allowedDomains,
     isDevelopment,
+    theme: activeServices.settings.get().theme,
   })
 
   mainWindow.on('closed', () => {
@@ -148,14 +144,25 @@ function openWindow(activeServices: NexaServices): BrowserWindow {
 
 /** Khởi chạy MCP ở nền: chat với LLM không được phải chờ Atlassian sẵn sàng. */
 async function startMcp(activeServices: NexaServices): Promise<void> {
-  if (activeServices.mcp === null) return
-  try {
-    await activeServices.mcp.start()
-  } catch (error) {
-    activeServices.logger.warn('mcp-autostart-failed', {
-      errorCode: NexaError.wrap(error).code,
-    })
-  }
+  // Ba source khởi chạy song song và độc lập (ADR 0010): Redmine lỗi không làm Jira chờ hay lỗi theo.
+  const sources = [
+    { system: 'atlassian', source: activeServices.mcp },
+    { system: 'redmine', source: activeServices.redmine },
+    { system: 'xwiki', source: activeServices.xwiki },
+  ] as const
+  await Promise.all(
+    sources.map(async ({ system, source }) => {
+      if (source === null) return
+      try {
+        await source.start()
+      } catch (error) {
+        activeServices.logger.warn('mcp-autostart-failed', {
+          system,
+          errorCode: NexaError.wrap(error).code,
+        })
+      }
+    }),
+  )
 }
 
 /** §8.3 — áp chính sách lưu giữ lúc khởi động rồi mỗi 6 giờ. */
@@ -300,8 +307,7 @@ function adaptWindow(window: BrowserWindow): RevealWindow {
     focus: () => window.focus(),
     isLoading: () => window.webContents.isLoading(),
     onceLoaded: (listener) => window.webContents.once('did-finish-load', listener),
-    sendNavigate: (view: NavigateView) =>
-      window.webContents.send(NEXA_EVENTS.navigate, { view }),
+    sendNavigate: (view: NavigateView) => window.webContents.send(NEXA_EVENTS.navigate, { view }),
   }
 }
 

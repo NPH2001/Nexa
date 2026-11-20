@@ -1,0 +1,450 @@
+[
+  {
+    "name": "list_wikis",
+    "description": "List the wikis this endpoint can search and act on: the current wiki plus every other wiki in the farm you can access. Use a listed wiki id with the 'wiki' parameter of query_documents, get_tree, get_schema, query_objects, get_history or get_links, or as the wiki prefix of any document reference.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "get_schema",
+    "description": "Describe an XWiki class: with no arguments, list all classes with instance counts; with class=\"<reference>\", show that class's field definitions (types, list values, defaults, validation).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Optional reference of the class document (e.g. \"Blog.BlogPostClass\"). Omit for a catalog of this wiki's classes with instance counts.",
+          "type": "string"
+        },
+        "wiki": {
+          "description": "Optional wiki id to survey or inspect instead of the current wiki (see list_wikis). One wiki per call.",
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_tree",
+    "description": "Survey a wiki (omit root: per-space summary with page counts and recency) or explore a subtree (root: indented tree of pages). Every ref is get_document-ready; re-call with a ref as root to zoom in.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "description": "Optional page reference to explore from (dotted, e.g. \"Sales.WebHome\" or \"Sales\"). Omit for a survey of the whole wiki: one summary line per top-level space.",
+          "type": "string"
+        },
+        "wiki": {
+          "description": "Optional wiki id to render instead of the current wiki (see list_wikis). One wiki per call.",
+          "type": "string"
+        },
+        "depth": {
+          "description": "How many levels deep to render (default 2, clamped to 1-4). Explore mode only (when root is given).",
+          "type": "integer"
+        },
+        "limit": {
+          "description": "Maximum child pages shown per node (default 50, clamped to 1-200). A node with more children is marked with ⋯. In a survey (no root), caps the top-level spaces listed.",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "Skip this many of the root's direct children before listing (default 0), to page a very wide root. In a survey (no root), skips that many top-level spaces.",
+          "type": "integer"
+        },
+        "showHidden": {
+          "description": "If true, include hidden pages (default false: hidden pages are always excluded, regardless of your profile preference).",
+          "type": "boolean"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_links",
+    "description": "Read the link graph around one document. direction=\"in\" (default) lists the pages whose links point AT it (backlinks - \"who links here?\", including links to a missing page that needs repair). direction=\"out\" lists the document's own resolved outgoing links, including links stored in its objects' fields. direction=\"both\" lists both.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "The document whose links to inspect, e.g. \"Help.GettingStarted\" or \"xwiki:Sandbox.WebHome\". A wiki-id prefix reaches another wiki (see list_wikis).",
+          "type": "string"
+        },
+        "wiki": {
+          "description": "Optional wiki id to inspect instead of the current wiki (see list_wikis). One wiki per call.",
+          "type": "string"
+        },
+        "direction": {
+          "description": "\"in\" (default): the pages linking TO this document (backlinks). \"out\": this document's own outgoing links (documents and attachments). \"both\": both sections.",
+          "type": "string"
+        },
+        "locale": {
+          "description": "Only with direction=\"out\": read the outgoing links of a specific translation, e.g. \"fr\" or \"pt_BR\". Omit for the default language version.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Backlinks per page (default 50, max 200). Backlink list only - not valid with direction=\"out\".",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "How many backlinks to skip (paging; default 0). Backlink list only - not valid with direction=\"out\".",
+          "type": "integer"
+        },
+        "showHidden": {
+          "description": "If true, list hidden pages in the backlink list, each marked (hidden) (default false: hidden backlinks are only counted, regardless of your profile preference). Backlink list only - not valid with direction=\"out\".",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reference"
+      ]
+    }
+  },
+  {
+    "name": "get_history",
+    "description": "Read a document's revision history. Default: a newest-first page of revisions (minor edits included) with date, author and comment per version. version=\"X.Y\" returns that revision's source content (a read-only historical snapshot). from=\"X.Y\" (optionally with to=\"X.Y\"; default the current version) returns a unified diff of the content between two revisions. After a \"Version conflict\" error, call with from=<your base_version> to see what changed before retrying.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "The document whose history to read, e.g. \"Help.GettingStarted\" or \"xwiki:Sandbox.WebHome\". A wiki-id prefix reaches another wiki (see list_wikis).",
+          "type": "string"
+        },
+        "wiki": {
+          "description": "Optional wiki id to read from instead of the current wiki (see list_wikis). One wiki per call.",
+          "type": "string"
+        },
+        "locale": {
+          "description": "Read the history of a specific translation, e.g. \"fr\" or \"pt_BR\". Translations have separate histories. Omit for the default language version.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Return the source content of this revision (e.g. \"2.1\") instead of the revision list. Cannot be combined with from/to.",
+          "type": "string"
+        },
+        "from": {
+          "description": "Return a unified diff of the content from this revision (e.g. \"2.1\") to the 'to' revision. After a \"Version conflict\" error, pass your stale base_version here to see what changed.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Newer end of the diff; requires 'from'. Omit for the current version.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Revisions per page in list mode (default 20, max 100). List mode only - not valid with version or from/to.",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "List mode: how many of the NEWEST revisions to skip (paging; default 0). Version mode: 1-based line to continue a truncated content read from, as given by the truncation note. Not valid with from/to.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reference"
+      ]
+    }
+  },
+  {
+    "name": "get_attachment",
+    "description": "Read an attachment from a document. Text attachments (text/*, JSON, XML, YAML, SVG, scripts) are returned inline under the ~6000-token output budget, with offset continuation for longer files; PDF and office documents return their extracted text (formatting not preserved); images up to 2 MB (PNG, JPEG, GIF, WebP) are returned as viewable image content; every other type returns the metadata header with a download URL instead of content. The filename must match exactly, as listed by get_document's Attachments header line.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "The document holding the attachment, e.g. \"Help.GettingStarted\" or \"xwiki:Sandbox.WebHome\". A wiki-id prefix reaches another wiki (see list_wikis).",
+          "type": "string"
+        },
+        "filename": {
+          "description": "Exact attachment filename, as listed by get_document.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Line offset into text content for continuing a truncated read. Default 0.",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Return only the metadata header and download URL, skipping content. Default false.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reference",
+        "filename"
+      ]
+    }
+  },
+  {
+    "name": "query_objects",
+    "description": "Find structured objects (XObjects) by class and field filters: each result names the document holding the object, the object number and the requested field values. get_schema lists the classes and each class's fields. With document and no class, lists every object on that document across classes - class, number and document version only, no field values.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Reference of the class whose objects to find (e.g. \"Blog.BlogPostClass\"). get_schema with no arguments lists the classes of this wiki. Optional only when document is given: without it, every object on that document is listed (class and number only, no field values).",
+          "type": "string"
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional conditions, each \"<field> <op> <value>\": the field is the first word, the op the second (one of =, !=, >, <, contains), and the rest is the value (it may contain spaces). All conditions must match. get_schema class=\"...\" lists the fields."
+        },
+        "select": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional field names to show for each match (at most 10)."
+        },
+        "document": {
+          "description": "Optional document reference: only that document's objects of the class. Without class, lists every object on the document.",
+          "type": "string"
+        },
+        "sort": {
+          "description": "Optional ordering by an object field: \"<field> asc\" or \"<field> desc\". Objects with no stored row for the field are excluded; a stored empty value is included and sorts where the database orders nulls.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of results to return (default: 10, max: 25).",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "0-based index of the first result to return (default: 0). Use with limit to page through results; the result footer tells you the offset of the next page.",
+          "type": "integer"
+        },
+        "wiki": {
+          "description": "Optional wiki id to query instead of the current wiki (see list_wikis). One wiki per call.",
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "write_document",
+    "description": "Create a new XWiki document or replace the full content of an existing one. Write XWiki 2.1 syntax, NOT Markdown - `man xwiki-syntax` is the reference. Overwriting requires base_version from get_document. Pass locale to create or overwrite a translation. For small targeted changes prefer edit_document.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "The document reference to create or overwrite, e.g. \"Sandbox.WebHome\" or \"xwiki:Help.Foo\". A wiki-id prefix reaches another wiki (see list_wikis).",
+          "type": "string"
+        },
+        "content": {
+          "description": "The complete new document source.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Optional new title. Kept unchanged when omitted. Pass an empty string to clear the title.",
+          "type": "string"
+        },
+        "hidden": {
+          "description": "Optional: set the page's hidden flag (hidden pages are technical pages excluded from normal browsing and search). Kept unchanged when omitted.",
+          "type": "boolean"
+        },
+        "locale": {
+          "description": "Write a specific translation of the document, e.g. \"fr\" or \"pt_BR\" (exact-match, like get_document). Omit for the default language version, which must exist before a translation can be created.",
+          "type": "string"
+        },
+        "base_version": {
+          "description": "The version shown by get_document for the same locale; omit when creating (a new document or a new translation).",
+          "type": "string"
+        },
+        "comment": {
+          "description": "Version comment shown in the document history. Stored prefixed with [AI]. Default: a generic [AI] comment.",
+          "type": "string"
+        },
+        "major": {
+          "description": "Set true to record this save as a major version. Default false (minor). Creation is always major.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reference",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "query_documents",
+    "description": "Search XWiki documents in the wiki's Solr index, queried with Solr Extended DisMax (edismax) syntax; also browses (empty query). Each result includes the document reference (use with get_document) and a matched snippet. `man query_documents` shows examples and filters.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "Search terms in edismax syntax: \"exact phrases\", +required and -excluded terms, OR, wildcard*. Rephrase the user's question into keywords. Matched mainly against document titles (high weight) and content. Leave empty to browse/list documents instead of searching.",
+          "type": "string"
+        },
+        "wiki": {
+          "description": "Which wiki to search: omit for this wiki, a wiki id for one specific wiki, or \"all\" for every reachable wiki. list_wikis shows the reachable wikis.",
+          "type": "string"
+        },
+        "space": {
+          "description": "Optional local space reference (e.g. \"Help\" or \"Help.Guides\"). Restricts results to that space and all its children.",
+          "type": "string"
+        },
+        "author": {
+          "description": "Optional last author. A user name or reference - \"Admin\", \"XWiki.Admin\" and \"xwiki:XWiki.Admin\" all resolve to the same user.",
+          "type": "string"
+        },
+        "locale": {
+          "description": "Optional content language filter, e.g. \"fr\" or \"pt_BR\". Matches documents whose content is in that language (translation rows and default rows alike). Exact match against the stored form: \"fr\" does not match \"fr_FR\" rows; use the underscore form for regional variants.",
+          "type": "string"
+        },
+        "modifiedWithin": {
+          "description": "Optional relative modification window. One of: day, week, month, year. Ignored if 'modifiedRange' is also provided.",
+          "type": "string"
+        },
+        "modifiedRange": {
+          "description": "Advanced. A raw Solr date-range expression on the last-modified date, e.g. \"[NOW-7DAY TO NOW]\" or \"[2026-01-01T00:00:00Z TO NOW]\". Overrides 'modifiedWithin' when both are given.",
+          "type": "string"
+        },
+        "sort": {
+          "description": "Result ordering. One of: relevance (default; with an empty query the default is newest), newest, oldest, title.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of results to return (default: 10, max: 25).",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "0-based index of the first result to return (default: 0). Use with limit to page through results; the result footer tells you the offset of the next page.",
+          "type": "integer"
+        },
+        "includeHidden": {
+          "description": "If true, also match hidden documents (technical pages excluded from normal browsing, e.g. configuration and class definitions). Default false.",
+          "type": "boolean"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_document",
+    "description": "Read an XWiki document's raw source content. Returns the full source if it fits the ~6000-token output budget; if larger, returns a heading OUTLINE (a map, not the content), or a capped head when the document has no headings. Output is line-numbered (like cat -n); when forming edit strings later, do NOT include the line-number prefix. Pass offset=1 with no limit to read from the start instead of the outline (output beyond the token budget is truncated with a continuation offset). For format=\"html\", offset/limit do not apply: use outline=true, then section.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "The document reference to read, e.g. \"Help.GettingStarted\" or \"xwiki:Sandbox.WebHome\". A wiki-id prefix reaches another wiki (see list_wikis).",
+          "type": "string"
+        },
+        "locale": {
+          "description": "Read a specific translation of the document, e.g. \"fr\" or \"pt_BR\". Omit for the default language version.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "1-based line number to start reading from. Use with limit to read a slice of a large document.",
+          "type": "integer"
+        },
+        "limit": {
+          "description": "Number of lines to read from offset. Omit (with offset=1) to read from the start; output beyond the token budget is truncated with a continuation offset.",
+          "type": "integer"
+        },
+        "outline": {
+          "description": "If true, return the document's heading outline (a map with line numbers) instead of its content. Default false.",
+          "type": "boolean"
+        },
+        "rendered": {
+          "description": "If true, return the page RENDERED to plain text (macros executed, includes expanded) - useful for script-driven pages whose source is opaque. Plain text, so structure (tables, link targets) is flattened. Read-only: do NOT form edit strings from it. Default false (raw editable source).",
+          "type": "boolean"
+        },
+        "format": {
+          "description": "Output format for rendered=true: \"plain\" (default) or \"html\". HTML preserves structure (tables, links, message boxes) at a higher token cost.",
+          "type": "string"
+        },
+        "section": {
+          "description": "With rendered=true and format=\"html\": return one section by its heading anchor as listed by outline=true (e.g. \"#HInstallation\" or \"#(intro)\"), from that heading to the next heading of the same or higher level.",
+          "type": "string"
+        },
+        "detail": {
+          "description": "With rendered=true and format=\"html\": \"stripped\" (default) removes presentation attributes for token economy; \"full\" keeps all markup attributes (long values shortened) so you can verify attributes you wrote. Not browser-faithful either way.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference"
+      ]
+    }
+  },
+  {
+    "name": "man",
+    "description": "Show documentation for the available MCP tools and reference pages. Call with no arguments for a categorized catalog; pass 'tool' with a tool or reference-page name to get its full manual page (synopsis, options, description, examples).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "description": "Name of the tool or reference page to show. Omit for the categorized catalog.",
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "edit_document",
+    "description": "Edit an XWiki document by exact search-and-replace on its raw source (the text returned by get_document - always read first). For targeted changes; to create a document prefer write_document. Pass locale to edit a translation. Write XWiki 2.1 syntax, NOT Markdown - `man xwiki-syntax` is the reference; `man edit_document` shows examples.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "The document reference to edit or create, e.g. \"Sandbox.WebHome\" or \"xwiki:Help.Foo\". A wiki-id prefix reaches another wiki (see list_wikis).",
+          "type": "string"
+        },
+        "title": {
+          "description": "Optional new title. May be set alone (retitle) or together with edits. Pass an empty string to clear the title.",
+          "type": "string"
+        },
+        "hidden": {
+          "description": "Optional: set the page's hidden flag (hidden pages are technical pages excluded from normal browsing and search). Kept unchanged when omitted.",
+          "type": "boolean"
+        },
+        "locale": {
+          "description": "Edit a specific translation of the document, e.g. \"fr\" or \"pt_BR\" (exact-match, like get_document). Omit for the default language version, which must exist before a translation can be created.",
+          "type": "string"
+        },
+        "base_version": {
+          "description": "Optional optimistic lock: the document version you read (shown by get_document for the same locale). The save is refused if the document has changed since, instead of silently overwriting the concurrent change. Writes through this server to the same document are serialized, so the check is reliable against other MCP writes; a save made in the wiki UI or on another cluster node can still land in between.",
+          "type": "string"
+        },
+        "comment": {
+          "description": "Version comment shown in the document history. Stored prefixed with [AI]. Default: a generic [AI] comment.",
+          "type": "string"
+        },
+        "major": {
+          "description": "Set true to record this edit as a major version. Default false (minor). Creation is always major.",
+          "type": "boolean"
+        },
+        "edits": {
+          "type": "array",
+          "description": "Edits applied in order, then saved as a single version.",
+          "items": {
+            "properties": {
+              "old_string": {
+                "description": "Exact source text to replace, copied verbatim from get_document (no line-number prefix); it must match the current source exactly (whitespace included) and be unique unless replace_all is true. Empty old_string on a non-existent document writes new_string as the whole body.",
+                "type": "string"
+              },
+              "new_string": {
+                "description": "Replacement text.",
+                "type": "string"
+              },
+              "replace_all": {
+                "description": "Replace every occurrence instead of requiring a unique match.",
+                "type": "boolean"
+              }
+            },
+            "type": "object",
+            "required": [
+              "old_string",
+              "new_string"
+            ]
+          }
+        }
+      },
+      "required": [
+        "reference"
+      ]
+    }
+  }
+]

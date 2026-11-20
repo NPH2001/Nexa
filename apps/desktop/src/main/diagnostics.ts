@@ -36,6 +36,8 @@ export function exportDiagnostics(services: NexaServices): DiagnosticsBundle {
     secureStorageBackend: services.security.backendName,
     secureStorageProductionGrade: services.security.isProductionGrade,
     mcpState: services.mcp?.statusSnapshot.state ?? 'not-configured',
+    redmineMcpState: services.redmine?.statusSnapshot.state ?? 'not-configured',
+    xwikiMcpState: services.xwiki?.statusSnapshot.state ?? 'not-configured',
     connections: services.connections.list().map((c) => ({
       type: c.type,
       // Chỉ hostname, không đường dẫn đầy đủ và tuyệt đối không username.

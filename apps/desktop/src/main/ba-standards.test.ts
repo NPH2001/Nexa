@@ -69,10 +69,7 @@ describe('bộ mẫu ship kèm bản cài', () => {
 
   it('log chỉ ghi id và tên trường sai, không ghi nội dung mẫu', () => {
     const { logger, sink } = testLogger()
-    loadTemplates(
-      { templates: [{ id: 'hong', name: 'Mẫu nội bộ tuyệt mật', version: 1 }] },
-      logger,
-    )
+    loadTemplates({ templates: [{ id: 'hong', name: 'Mẫu nội bộ tuyệt mật', version: 1 }] }, logger)
     const logged = sink.asText()
     expect(logged).toContain('hong')
     expect(logged).not.toContain('Mẫu nội bộ tuyệt mật')

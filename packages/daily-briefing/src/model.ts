@@ -18,7 +18,7 @@
 export const BRIEFING_GROUPS = ['overdue', 'due_today', 'due_this_week', 'in_progress'] as const
 export type BriefingGroup = (typeof BRIEFING_GROUPS)[number]
 
-export const BRIEFING_SOURCES = ['commitment', 'jira'] as const
+export const BRIEFING_SOURCES = ['commitment', 'redmine'] as const
 export type BriefingSource = (typeof BRIEFING_SOURCES)[number]
 
 /**
@@ -48,13 +48,13 @@ export interface BriefingReason {
 }
 
 export interface BriefingItem {
-  /** Ổn định giữa các lần dựng: `commitment:<id>` hoặc `jira:<key>`. */
+  /** Ổn định giữa các lần dựng: `commitment:<id>` hoặc `redmine:<key>`. */
   readonly id: string
   readonly source: BriefingSource
   readonly title: string
   /** Bước tiếp theo của cam kết, hoặc tên trạng thái của issue. */
   readonly detail: string | null
-  /** Issue key với nguồn Jira; `null` với cam kết. */
+  /** Mã issue (`#123`) với nguồn Redmine; `null` với cam kết. */
   readonly reference: string | null
   /** Hội thoại nguồn của cam kết, để Today mở lại đúng chỗ. */
   readonly sourceConversationId: string | null
@@ -63,9 +63,14 @@ export interface BriefingItem {
   readonly reason: BriefingReason
   /** Mốc thời gian dùng để xếp hạng, ISO 8601. */
   readonly at: string | null
+  /**
+   * Hạn hoàn thành, ISO 8601 — luôn là hạn, kể cả khi `at` đang là lịch check-in.
+   *
+   * Tách khỏi `at` vì `at` trả lời "vì sao mục này nằm ở nhóm này", còn giao diện cần nói đúng
+   * "ngày hết hạn". Dùng chung một field sẽ hiện lịch quay lại dưới nhãn hạn chót.
+   */
+  readonly dueAt: string | null
   readonly updatedAt: string
-  /** Chỉ đúng với issue Jira đang nằm trong sprint chạy. */
-  readonly inActiveSprint: boolean
 }
 
 export interface BriefingGroupResult {
@@ -103,7 +108,6 @@ export interface BriefingIssueInput {
   readonly statusName: string
   readonly dueAt: string | null
   readonly updatedAt: string
-  readonly inActiveSprint: boolean
 }
 
 export interface BriefingInput {
